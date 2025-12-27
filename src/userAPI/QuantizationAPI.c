@@ -28,8 +28,3 @@ quantization_t *quantizationInitAsym(uint8_t qBits, roundingMode_t roundingMode)
     initAsymQuantization(qC, q);
     return q;
 }
-
-void freeQuantization(quantization_t *quantization) {
-    freeReservedMemory(quantization->qConfig);
-    freeReservedMemory(quantization);
-}

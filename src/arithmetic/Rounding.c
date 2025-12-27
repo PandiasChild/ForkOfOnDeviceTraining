@@ -6,7 +6,7 @@
 
 // round to even, when fractional is EXACTLY 0.5
 int32_t roundHTE(float input) {
-    return round(input); //round(input);
+    return round(input);
 }
 
 float randfloat() {

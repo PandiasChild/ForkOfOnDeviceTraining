@@ -62,16 +62,14 @@ static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t si
         quantization_t *q = *reserveMemory(sizeof(quantization_t));
         switch (currentQ->type) {
         case FLOAT32:
-            q->type = FLOAT32;
-            q->qConfig = NULL;
+            initFloat32Quantization(q);
             break;
         case SYM_INT32:
             q->type = SYM_INT32;
             symInt32QConfig_t *currentQC = currentQ->qConfig;
             symInt32QConfig_t *qC = *reserveMemory(sizeof(symInt32QConfig_t));
-            qC->scale = currentQC->scale;
-            qC->roundingMode = currentQC->roundingMode;
-            q->qConfig = qC;
+            initSymInt32QConfig(currentQC->roundingMode, qC);
+            initSymInt32Quantization(qC, q);
             break;
         default:
             break;
@@ -118,16 +116,13 @@ static void initGradTensor(tensor_t *grad, tensor_t *layerOutput, layer_t *layer
     quantization_t *q = *reserveMemory(sizeof(quantization_t));
     switch (currentQ->type) {
     case FLOAT32:
-        q->type = FLOAT32;
-        q->qConfig = NULL;
+        initFloat32Quantization(q);
         break;
     case SYM_INT32:
-        q->type = SYM_INT32;
         symInt32QConfig_t *currentQC = currentQ->qConfig;
         symInt32QConfig_t *qC = *reserveMemory(sizeof(symInt32QConfig_t));
-        qC->scale = currentQC->scale;
-        qC->roundingMode = currentQC->roundingMode;
-        q->qConfig = qC;
+        initSymInt32QConfig(currentQC->roundingMode, qC);
+        initSymInt32Quantization(qC, q);
         break;
     default:
         break;
@@ -191,6 +186,8 @@ trainingStats_t *calculateGrads(layer_t **model, size_t sizeNetwork,
     copyTensor(trainingStats->output, layerOutputs[sizeNetwork]);
 
     // LOSS
+
+    // TODO this is hardcoded and needs to be changed!!!
     lossFunctions_t mseFns = lossFunctions[MSE];
 
     float loss = mseFns.forward(layerOutputs[sizeNetwork], label);

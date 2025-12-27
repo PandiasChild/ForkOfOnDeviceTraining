@@ -39,8 +39,6 @@ float mseLossForwardSymInt32(tensor_t *output, tensor_t *label) {
     setTensorValuesForConversion((uint8_t *)labelFloatData, &labelFloatQ, label, &labelFloat);
     convertTensor(label, &labelFloat);
 
-
-
     float *outputFloatArr = (float *)outputFloat.data;
     float *labelFloatArr = (float *)labelFloat.data;
 

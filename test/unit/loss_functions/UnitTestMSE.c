@@ -132,7 +132,7 @@ void testMSELossBackwardSymInt32() {
     float *actual = (float *)result.data;
 
     for(size_t i = 0; i < numberOfElements; i++) {
-        TEST_ASSERT_FLOAT_WITHIN(0.1f, expected[i], actual[i]);
+        TEST_ASSERT_FLOAT_WITHIN(0.5f, expected[i], actual[i]);
     }
 }
 

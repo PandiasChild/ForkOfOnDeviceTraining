@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+float findAbsMaxFloat(uint8_t *bytes, size_t numberOfElements);
 float findMaxFloat(uint8_t *bytes, size_t numberOfElements);
 float findMinFloat(uint8_t *bytes, size_t numberOfElements);
 

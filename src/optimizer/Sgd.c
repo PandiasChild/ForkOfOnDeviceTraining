@@ -87,7 +87,7 @@ static void sgdStepMFloat(optimizer_t *optim) {
         parameter_t *param = optim->parameter[i];
         size_t numberOfValues = calcNumberOfElementsByParameter(param);
         float *gradArr = (float *)param->grad->data;
-        float *dataArr = (float *)param->param->data;
+        float *paramArr = (float *)param->param->data;
 
         states_t *states = optim->states[i];
         tensor_t *state = states->stateBuffers[0];
@@ -95,9 +95,9 @@ static void sgdStepMFloat(optimizer_t *optim) {
         float *stateArr = (float *)state->data;
 
         for (size_t elementIndex = 0; elementIndex < numberOfValues; ++elementIndex) {
-            float grad = gradArr[elementIndex] + sgd->weightDecay * dataArr[elementIndex];
+            float grad = gradArr[elementIndex] + sgd->weightDecay * paramArr[elementIndex];
             stateArr[elementIndex] = sgd->momentumFactor * stateArr[elementIndex] + grad;
-            dataArr[elementIndex] -= sgd->learningRate * stateArr[elementIndex];
+            paramArr[elementIndex] -= sgd->learningRate * stateArr[elementIndex];
         }
     }
 }
@@ -115,7 +115,6 @@ static void sgdStepMSymInt32(optimizer_t *optim) {
         uint8_t paramFloatData[numberOfValues * sizeof(float)];
         setTensorValuesForConversion(paramFloatData, &paramFloatQ, param->param, &paramFloat);
         convertTensor(param->param, &paramFloat);
-
         float *paramFloatArr = (float *)paramFloat.data;
 
         tensor_t gradFloat;
@@ -125,7 +124,6 @@ static void sgdStepMSymInt32(optimizer_t *optim) {
         uint8_t *gradFloatDataBytes = (uint8_t *)gradFloatData;
         setTensorValuesForConversion(gradFloatDataBytes, &gradFloatQ, param->grad, &gradFloat);
         convertTensor(param->grad, &gradFloat);
-
         float *gradFloatArr = (float *)gradFloat.data;
 
         states_t *states = optim->states[i];
@@ -139,8 +137,6 @@ static void sgdStepMSymInt32(optimizer_t *optim) {
         setTensorValuesForConversion(stateFloatData, &stateFloatQ, state,
                                      &stateFloat);
         convertTensor(state, &stateFloat);
-
-
         float *stateFloatArr = (float *)stateFloat.data;
 
         for (size_t j = 0; j < numberOfValues; ++j) {
@@ -178,7 +174,7 @@ void sgdZeroGrad(optimizer_t *optimizer) {
 
         if(param->grad->quantization->type == SYM_INT32) {
             symInt32QConfig_t *symIntQ = param->grad->quantization->qConfig;
-            symIntQ->scale = 0.f;
+            symIntQ->scale = 1.f;
         }
     }
 }

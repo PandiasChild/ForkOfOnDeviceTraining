@@ -55,25 +55,31 @@ void testReluForwardFloat() {
 }
 
 void testReluForwardSymInt32() {
+    size_t numberOfValues = 6;
+    size_t dims[] = {2, 3};
+    size_t numberOfDims = 2;
+
     float inputData[] = {-1.f, 0.f, 1.f, 2.f, 5.f, -6.f};
-    size_t inputDims[] = {2, 3};
-    size_t inputNumberOfDims = 2;
-    tensor_t *input = tensorInitSymInt32(inputData, inputDims, inputNumberOfDims, HTE, NULL);
+    tensor_t *input = tensorInitSymInt32(inputData, dims, numberOfDims, HTE, NULL);
 
     float outputData[6];
-    size_t outputDims[] = {2, 3};
-    size_t outputNumberOfDims = 2;
-    tensor_t *output = tensorInitSymInt32(outputData, outputDims, outputNumberOfDims, HTE, NULL);
+    tensor_t *output = tensorInitSymInt32(outputData, dims, numberOfDims, HTE, NULL);
 
     quantization_t *symIntQ = quantizationInitSymInt32(HTE);
     layer_t *reluLayer = reluLayerInit(symIntQ, symIntQ);
     layerFunctions_t reluFns = layerFunctions[RELU];
     reluFns.forward(reluLayer, input, output);
 
-    int32_t expected[] = {0, 0, 1, 2, 5, 0};
-    int32_t *actual = (int32_t *)output->data;
+    float outputFloatData[6];
+    tensor_t *outputFloat = tensorInitFloat(outputFloatData, dims, numberOfDims, NULL);
+    convertTensor(output, outputFloat);
 
-    TEST_ASSERT_EQUAL_INT32_ARRAY(expected, actual, 6);
+    float expected[] = {0, 0, 1, 2, 5, 0};
+    float *actual = (float *)outputFloat->data;
+
+    for(size_t i = 0; i < numberOfValues; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(0.1f, expected[i], actual[i]);
+    }
 }
 
 void testReluBackwardFloat() {
@@ -104,7 +110,7 @@ void testReluBackwardFloat() {
 }
 
 void testReluBackwardSymInt32() {
-    size_t numberOfElements = 6;
+    size_t numberOfValues = 6;
 
     size_t dims[] = {6};
     size_t numberOfDims = 1;
@@ -115,7 +121,7 @@ void testReluBackwardSymInt32() {
     float lossData[] = {0.f, 2.f, -4.f, 6.f, 3.f, 2.f};
     tensor_t *loss = tensorInitSymInt32(lossData, dims, numberOfDims, HTE, NULL);
 
-    float propLossData[numberOfElements];
+    float propLossData[numberOfValues];
     tensor_t *propLoss = tensorInitSymInt32(propLossData, dims, numberOfDims, HTE, NULL);
 
     quantization_t *symIntQ = quantizationInitSymInt32(HTE);
@@ -123,10 +129,16 @@ void testReluBackwardSymInt32() {
     layerFunctions_t reluFns = layerFunctions[RELU];
     reluFns.backward(reluLayer, forwardInput, loss, propLoss);
 
-    int32_t expected[] = {0, 0, -4, 6, 3, 0};
-    int32_t *actual = (int32_t *)propLoss->data;
+    float expected[] = {0, 0, -4, 6, 3, 0};
 
-    TEST_ASSERT_EQUAL_INT32_ARRAY(expected, actual, numberOfElements);
+    float propLossFloatData[6];
+    tensor_t *propLossFloat = tensorInitFloat(propLossFloatData, dims, numberOfDims, NULL);
+    convertTensor(propLoss, propLossFloat);
+    float *actual = (float *)propLossFloat->data;
+
+    for(size_t i = 0; i < numberOfValues; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(0.1f, expected[i], actual[i]);
+    }
 }
 
 

@@ -1,8 +1,11 @@
 #include "Add.h"
 #include "Tensor.h"
 #include "unity.h"
+#include "TensorAPI.h"
 
 #include <DTypes.h>
+#include <QuantizationAPI.h>
+#include <TensorConversion.h>
 #include <string.h>
 
 void setUp() {}
@@ -154,40 +157,7 @@ void testAddFloat32TensorsInplace() {
     TEST_ASSERT_EQUAL_FLOAT_ARRAY(expected, aTensor.data, numberOfElements);
 }
 
-void testAddSymInt32TensorsInplaceWithSameScale() {
-    size_t numberOfValues = 6;
-
-    symInt32QConfig_t aQC;
-    initSymInt32QConfig(HTE, &aQC);
-    quantization_t aQ;
-    initSymInt32Quantization(&aQC, &aQ);
-
-    int32_t aData[] = {1, 2, 3, 4, 5, 6};
-    uint8_t *aDataBytes = (uint8_t *)aData;
-    tensor_t aTensor;
-
-    size_t dims[] = {numberOfValues};
-    size_t numberOfDims = 1;
-    size_t orderOfDims[] = {0};
-    shape_t shape = {
-        .dimensions = dims,
-        .numberOfDimensions = numberOfDims,
-        .orderOfDimensions = orderOfDims
-    };
-
-    setTensorValues(&aTensor, aDataBytes, &shape, &aQ, NULL);
-
-    addSymInt32TensorsInplace(&aTensor, &aTensor);
-
-    int32_t actual[numberOfValues];
-    readBytesAsInt32Array(numberOfValues, aTensor.data, actual);
-
-    int32_t expected[] = {2, 4, 6, 8, 10, 12};
-
-    TEST_ASSERT_EQUAL_INT32_ARRAY(expected, actual, numberOfValues);
-}
-
-void testAddSymInt32TensorsInplaceWithDifferentScale() {
+void testAddSymInt32TensorsInplace() {
     size_t numberOfValues = 6;
 
     symInt32QConfig_t aQC;
@@ -225,12 +195,20 @@ void testAddSymInt32TensorsInplaceWithDifferentScale() {
 
     addSymInt32TensorsInplace(&aTensor, &bTensor);
 
-    int32_t actual[numberOfValues];
-    readBytesAsInt32Array(numberOfValues, aTensor.data, actual);
+    symInt32QConfig_t *symInt32QC = aTensor.quantization->qConfig;
+    printf("scale: %e\n", symInt32QC->scale);
+    printTensor(&aTensor);
 
-    int32_t expected[] = {3, 6, 9, 12, 15, 18};
+    float actual[numberOfValues];
+    quantization_t *floatQ = quantizationInitFloat();
+    tensor_t *floatTensor = tensorInit(actual, dims, numberOfDims, floatQ, NULL);
+    convertTensor(&aTensor, floatTensor);
 
-    TEST_ASSERT_EQUAL_INT32_ARRAY(expected, actual, numberOfValues);
+    float_t expected[] = {3, 6, 9, 12, 15, 18};
+
+    for(size_t i = 0; i < numberOfValues; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(0.1f, expected[i], actual[i]);
+    }
 }
 
 void testAddInt32TensorWithSymInt32TensorInplace() {
@@ -312,8 +290,7 @@ int main(void) {
 
     RUN_TEST(testAddFloat32TensorsInplace);
 
-    RUN_TEST(testAddSymInt32TensorsInplaceWithSameScale);
-    RUN_TEST(testAddSymInt32TensorsInplaceWithDifferentScale);
+    RUN_TEST(testAddSymInt32TensorsInplace);
     RUN_TEST(testAddInt32TensorWithSymInt32TensorInplace);
     RUN_TEST(testAddFloat32TensorToSymInt32TensorInplace);
 

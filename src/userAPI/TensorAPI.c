@@ -285,15 +285,16 @@ quantization_t *getQLike(quantization_t *quantization) {
     case SYM_INT32:
         symInt32QConfig_t *likeSymInt32QC = *reserveMemory(sizeof(symInt32QConfig_t));
         symInt32QConfig_t *symInt32QC = quantization->qConfig;
-        likeSymInt32QC->roundingMode = symInt32QC->roundingMode;
-        likeQ->qConfig = likeSymInt32QC;
+
+        initSymInt32QConfig(symInt32QC->roundingMode, likeSymInt32QC);
+        initSymInt32Quantization(likeSymInt32QC, likeQ);
         break;
     case ASYM:
         asymQConfig_t *likeAsymQC = *reserveMemory(sizeof(asymQConfig_t));
         asymQConfig_t *asymQC = quantization->qConfig;
-        likeAsymQC->qBits = asymQC->qBits;
-        likeAsymQC->roundingMode = asymQC->roundingMode;
-        likeQ->qConfig = likeAsymQC;
+
+        initAsymQConfig(asymQC->qBits, asymQC->roundingMode, likeAsymQC);
+        initAsymQuantization(likeAsymQC, likeQ);
         break;
     default:
         return NULL;

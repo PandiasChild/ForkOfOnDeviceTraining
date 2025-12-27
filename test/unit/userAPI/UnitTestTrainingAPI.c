@@ -11,6 +11,7 @@
 #include "Linear.h"
 
 void testCalcGradsLinearFloat_WeightsMatchPyTorch() {
+    size_t numberOfWeights = 6;
     float weightData[] = {1.f, 1.f, 1.f, 1.f, 1.f, 1.f};
     size_t weightDims[] = {2, 3};
     size_t weightNumberOfDims = 2;

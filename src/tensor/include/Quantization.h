@@ -17,6 +17,7 @@ typedef struct symInt32QConfig
 {
     float scale;
     roundingMode_t roundingMode;
+    uint8_t qMaxBits;
 } symInt32QConfig_t;
 
 typedef struct symQConfig
@@ -41,8 +42,9 @@ typedef struct quantization
     void* qConfig;
 } quantization_t;
 
-
+// Important: This sets qMaxBits to 16
 void initSymInt32QConfig(roundingMode_t roundingMode, symInt32QConfig_t* symInt32QConfig);
+void initSymInt32QConfigWithQMaxBits(roundingMode_t roundingMode, symInt32QConfig_t *symInt32QConfig, uint8_t qMaxBits);
 void initSymQConfig(uint8_t qBits, roundingMode_t roundingMode, symQConfig_t* symQConfig);
 void initAsymQConfig(uint8_t qBits, roundingMode_t roundingMode, asymQConfig_t* asymQConfig);
 

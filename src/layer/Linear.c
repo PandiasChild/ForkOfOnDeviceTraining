@@ -65,6 +65,7 @@ void linearCalcWeightGradsFloat32(tensor_t *forwardInput, tensor_t *loss, tensor
 
     matmulFloat32Tensors(loss, forwardInput, &intermediateWGrad);
     addFloat32TensorsInplace(weightGrads, &intermediateWGrad);
+
 }
 
 void linearCalcWeightGradsFloatWithConversion(linearConfig_t *linearConfig, tensor_t *forwardInput,
@@ -223,7 +224,22 @@ void backwardFloat(linearConfig_t *linearConfig, tensor_t *forwardInput, tensor_
 
 
 void linearCalcWeightGradsSymInt32(tensor_t *loss, tensor_t *forwardInput, tensor_t *weightGrads) {
-    matmulSymInt32Tensors(loss, forwardInput, weightGrads);
+    size_t numberOfWeights = calcNumberOfElementsByTensor(weightGrads);
+
+    symInt32QConfig_t *wgQC = weightGrads->quantization->qConfig;
+
+    tensor_t intermediateWGrad;
+    int32_t intermediateWGradData[numberOfWeights];
+    symInt32QConfig_t intermediateWGradQC;
+    initSymInt32QConfig(wgQC->roundingMode, &intermediateWGradQC);
+    quantization_t intermediateWGradQ;
+    initSymInt32Quantization(&intermediateWGradQC, &intermediateWGradQ);
+    setTensorValues(&intermediateWGrad, (uint8_t *)intermediateWGradData, weightGrads->shape,
+                    &intermediateWGradQ, weightGrads->sparsity);
+
+    matmulSymInt32Tensors(loss, forwardInput, &intermediateWGrad);
+
+    addSymInt32TensorsInplace(weightGrads, &intermediateWGrad);
 }
 
 void linearCalcWeightGradsSymInt32WithConversion(linearConfig_t *linearConfig, tensor_t *loss,
@@ -253,7 +269,7 @@ void linearCalcWeightGradsSymInt32WithConversion(linearConfig_t *linearConfig, t
 
     tensor_t lossSymInt32;
     size_t sizeLoss = calcNumberOfElementsByTensor(loss);
-    uint32_t lossSymInt32Data[sizeLoss];
+    int32_t lossSymInt32Data[sizeLoss];
     quantization_t lossSymInt32Q;
     symInt32QConfig_t lossSymInt32QC;
     initSymInt32QConfig(roundingMode, &lossSymInt32QC);
@@ -280,16 +296,7 @@ void linearCalcWeightGradsSymInt32WithConversion(linearConfig_t *linearConfig, t
         wG = &wGSymInt32;
     }
 
-    tensor_t intermediateWG;
-    int32_t intermediateWGData[sizeWeightGrads];
-    quantization_t intermediateWGQ;
-    symInt32QConfig_t intermediateWGQC;
-    initSymInt32QConfig(roundingMode, &intermediateWGQC);
-    initSymInt32Quantization(&intermediateWGQC, &intermediateWGQ);
-    setTensorValues(&intermediateWG, (uint8_t *)intermediateWGData, wG->shape, &intermediateWGQ, wG->sparsity);
-
-    linearCalcWeightGradsSymInt32(l, fwdIn, &intermediateWG);
-    addSymInt32TensorsInplace(wG, &intermediateWG);
+    linearCalcWeightGradsSymInt32(l, fwdIn, wG);
     convertTensor(wG, paramWG);
 }
 
@@ -308,7 +315,7 @@ void linearCalcBiasGradsSymInt32WithConversion(linearConfig_t *linearConfig, ten
 
     tensor_t lossSymInt32;
     size_t sizeLoss = calcNumberOfElementsByTensor(l);
-    uint32_t lossSymInt32Data[sizeLoss];
+    int32_t lossSymInt32Data[sizeLoss];
     quantization_t lossSymInt32Q;
     symInt32QConfig_t lossSymInt32QC;
     initSymInt32QConfig(roundingMode, &lossSymInt32QC);
@@ -322,7 +329,7 @@ void linearCalcBiasGradsSymInt32WithConversion(linearConfig_t *linearConfig, ten
 
     tensor_t bGSymInt32;
     size_t sizeBias = calcNumberOfElementsByTensor(bG);
-    uint32_t bGSymInt32Data[sizeBias];
+    int32_t bGSymInt32Data[sizeBias];
     quantization_t bGSymInt32Q;
     symInt32QConfig_t bGSymInt32QC;
     initSymInt32QConfig(roundingMode, &bGSymInt32QC);
@@ -355,7 +362,7 @@ void linearCalcPropLossSymInt32WithConversion(linearConfig_t *linearConfig, tens
 
     tensor_t wSymInt32;
     size_t sizeWeights = calcNumberOfElementsByTensor(w);
-    uint32_t wSymInt32Data[sizeWeights];
+    int32_t wSymInt32Data[sizeWeights];
     quantization_t wSymInt32Q;
     symInt32QConfig_t wSymInt32QC;
     initSymInt32QConfig(roundingMode, &wSymInt32QC);
@@ -369,7 +376,7 @@ void linearCalcPropLossSymInt32WithConversion(linearConfig_t *linearConfig, tens
 
     tensor_t lSymInt32;
     size_t sizeL = calcNumberOfElementsByTensor(l);
-    uint32_t lSymInt32Data[sizeL];
+    int32_t lSymInt32Data[sizeL];
     quantization_t lSymInt32Q;
     symInt32QConfig_t lSymInt32QC;
     initSymInt32QConfig(roundingMode, &lSymInt32QC);
@@ -401,7 +408,7 @@ void backwardSymInt32(linearConfig_t *linearConfig, tensor_t *forwardInput, tens
     initSymInt32QConfig(weightGradsSymInt32QC->roundingMode, &intermediateWeightGradsQC);
     quantization_t intermediateWeightGradsQ;
     initSymInt32Quantization(&intermediateWeightGradsQC, &intermediateWeightGradsQ);
-    uint32_t intermediateWeightGradsData[numberOfWeights];
+    int32_t intermediateWeightGradsData[numberOfWeights];
     setTensorValues(&intermediateWeightGradsSymInt32, (uint8_t *)intermediateWeightGradsData,
                     weightGrads->shape, &intermediateWeightGradsQ, NULL);
 

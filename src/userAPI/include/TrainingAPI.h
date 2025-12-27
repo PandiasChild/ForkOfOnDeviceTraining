@@ -19,4 +19,6 @@ trainingStats_t *trainingEpoch(layer_t **model, size_t sizeNetwork,
 
 void freeTrainingStats(trainingStats_t *trainingStats);
 
+void scaleGradients(layer_t **model, size_t modelSize, float scale);
+
 #endif //TRAINING_H

@@ -159,7 +159,7 @@ void testConversionFloatInt() {
 void testConversionFloatSymInt32() {
     uint8_t numValues = 6;
 
-    float floatData[] = {1.1f, 2.1f, 3.1f, 4.1f, -1.1f, -2.1f};
+    float floatData[] = {1.5f, 2.9f, 3.2f, 4.5f, -1.2f, -6.7f};
     size_t dims[] = {numValues};
     size_t numberOfDims = 1;
     size_t orderOfDims[] = {0};
@@ -185,9 +185,19 @@ void testConversionFloatSymInt32() {
     setTensorValues(&symInt32Tensor, (uint8_t *)symInt32Data, &shape, &symInt32Q, NULL);
     convertTensor(&floatTensor, &symInt32Tensor);
 
-    int32_t expected[] = {1, 2, 3, 4, -1, -2};
+    float expectedScale = 0.000204474f;
+    int32_t expectedData[] = {7336, 14183, 15650, 22008, -5869, -32767};
 
-    TEST_ASSERT_EQUAL_INT32_ARRAY(expected, symInt32Tensor.data, numValues);
+    symInt32QConfig_t *outputSymInt32QC = symInt32Tensor.quantization->qConfig;
+    TEST_ASSERT_FLOAT_WITHIN(0.000001f, expectedScale, outputSymInt32QC->scale);
+    TEST_ASSERT_EQUAL_INT32_ARRAY(expectedData, symInt32Tensor.data, numValues);
+
+    convertTensor(&symInt32Tensor, &floatTensor);
+    float expectedFloat[] = {1.5f, 2.9f, 3.2f, 4.5f, -1.2f, -6.7f};
+    float *actualFloat = (float *)floatTensor.data;
+    for (size_t i = 0; i < 6; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(0.0001f, expectedFloat[i], actualFloat[i]);
+    }
 }
 
 void testConversionFloatAsym() {

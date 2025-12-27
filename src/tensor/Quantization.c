@@ -7,6 +7,13 @@
 void initSymInt32QConfig(roundingMode_t roundingMode, symInt32QConfig_t *symInt32QConfig) {
     symInt32QConfig->roundingMode = roundingMode;
     symInt32QConfig->scale = 1.f;
+    symInt32QConfig->qMaxBits = 16;
+}
+
+void initSymInt32QConfigWithQMaxBits(roundingMode_t roundingMode, symInt32QConfig_t *symInt32QConfig, uint8_t qMaxBits) {
+    symInt32QConfig->roundingMode = roundingMode;
+    symInt32QConfig->scale = 1.f;
+    symInt32QConfig->qMaxBits = qMaxBits;
 }
 
 void initSymQConfig(uint8_t qBits, roundingMode_t roundingMode, symQConfig_t *symQConfig) {

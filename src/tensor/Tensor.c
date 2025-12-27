@@ -32,12 +32,12 @@ size_t calcBytesPerElement(quantization_t *quantization) {
         return sizeof(int32_t);
     case FLOAT32:
         return sizeof(float);
+    case SYM_INT32:
+        return sizeof(int32_t);
     case ASYM:
         asymQConfig_t *asymQConfig = quantization->qConfig;
         uint32_t qBits = asymQConfig->qBits;
         return ceil((float)qBits / (float)8);
-    default:
-        return 0;
     }
 }
 
@@ -47,6 +47,8 @@ size_t calcBitsPerElement(quantization_t *quantization) {
         return sizeof(int32_t) * 8;
     case FLOAT32:
         return sizeof(float) * 8;
+    case SYM_INT32:
+        return sizeof(int32_t) * 8;
     case ASYM:
         asymQConfig_t *asymQConfig = quantization->qConfig;
         return asymQConfig->qBits;
@@ -284,7 +286,7 @@ void printTensor(tensor_t *t) {
     case SYM_INT32:
         symInt32QConfig_t *symQC = q->qConfig;
         printf("SYM_INT32 \n");
-        printf("scale=%f\n", symQC->scale);
+        printf("scale=%e\n", symQC->scale);
         printf("Data \n");
         for (size_t i = 0; i < numValues; i++) {
             size_t byteIndex = i * sizeof(int32_t);
@@ -295,7 +297,7 @@ void printTensor(tensor_t *t) {
     case ASYM:
         asymQConfig_t *lq = q->qConfig;
         printf("ASYM\n");
-        printf("scale=%f\n", lq->scale);
+        printf("scale=%e\n", lq->scale);
         printf("offset=%i\n", lq->zeroPoint);
         printf("Data \n");
         for (size_t i = 0; i < numValues; i++) {

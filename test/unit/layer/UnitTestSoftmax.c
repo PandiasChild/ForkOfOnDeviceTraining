@@ -25,7 +25,7 @@ void unitTestSoftmaxForwardFloat() {
     layerFunctions_t softmaxFns = layerFunctions[SOFTMAX];
     softmaxFns.forward(softmaxLayer, input, output);
 
-    float expected[] = {2.3008e-03, 6.2543e-03, 1.7001e-02, 4.6213e-02, 9.2822e-01, 1.5503e-05};
+    float expected[] = {2.3008e-03f, 6.2543e-03f, 1.7001e-02f, 4.6213e-02f, 9.2822e-01f, 1.5503e-05f};
 
     float *actual = (float *)output->data;
 
@@ -37,28 +37,31 @@ void unitTestSoftmaxForwardFloat() {
 void unitTestSoftmaxForwardSymInt32() {
     size_t inputSize = 6;
 
+    size_t dims[] = {2, 3};
+    size_t numberOfDims = 2;
+
     float inputData[] = {-1.f, 0.f, 1.f, 2.f, 5.f, -6.f};
-    size_t inputDims[] = {2, 3};
-    size_t inputNumberOfDims = 2;
-    tensor_t *input = tensorInitSymInt32(inputData, inputDims, inputNumberOfDims, HTE, NULL);
+
+    tensor_t *input = tensorInitSymInt32(inputData, dims, numberOfDims, HTE, NULL);
 
     float outputData[inputSize];
-    size_t outputDims[] = {2, 3};
-    size_t outputNumberOfDims = 2;
-    tensor_t *output = tensorInitSymInt32(outputData, outputDims, outputNumberOfDims, HTE, NULL);
+    tensor_t *output = tensorInitSymInt32(outputData, dims, numberOfDims, HTE, NULL);
 
     quantization_t *symIntQ = quantizationInitSymInt32(HTE);
     layer_t *softmaxLayer = softmaxLayerInit(symIntQ, symIntQ);
     layerFunctions_t softmaxFns = layerFunctions[SOFTMAX];
     softmaxFns.forward(softmaxLayer, input, output);
 
+    float outputFloatData[inputSize];
+    tensor_t *outputFloat = tensorInitFloat(outputFloatData, dims, numberOfDims, NULL);
+    convertTensor(output, outputFloat);
 
-    int32_t expected[] = {0, 0, 0, 0, 1, 0};
+    float expected[] = {2.3008e-03f, 6.2543e-03f, 1.7001e-02f, 4.6213e-02f, 9.2822e-01f, 1.5503e-05f};
+    float *actual = (float *)outputFloat->data;
 
-    // TODO check behaviour
-    // does it even make sense to do softmax in int32??
-
-    TEST_ASSERT_EQUAL_INT32_ARRAY(expected, output->data, 6);
+    for(size_t i = 0; i < inputSize; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(0.1f, expected[i], actual[i]);
+    }
 }
 
 void unitTestSoftmaxBackwardFloat() {
@@ -85,8 +88,8 @@ void unitTestSoftmaxBackwardFloat() {
     layerFunctions_t softmaxFns = layerFunctions[SOFTMAX];
     softmaxFns.backward(softmaxLayer, input, loss, propLoss);
 
-    float expected[] = {-6.9173e-03, -6.2947e-03, -1.1912e-01, 1.3834e-01, -5.9973e-03,
-                        -1.5603e-05};
+    float expected[] = {-6.9173e-03f, -6.2947e-03f, -1.1912e-01f, 1.3834e-01f, -5.9973e-03f,
+                        -1.5603e-05f};
 
     float *actual = (float *)propLoss->data;
 
@@ -98,7 +101,7 @@ void unitTestSoftmaxBackwardFloat() {
 void unitTestSoftmaxBackwardSymInt32() {
     size_t inputSize = 6;
 
-    float inputData[] = {2.3008e-03, 6.2543e-03, 1.7001e-02, 4.6213e-02, 9.2822e-01, 1.5503e-05};
+    float inputData[] = {2.3008e-03f, 6.2543e-03f, 1.7001e-02f, 4.6213e-02f, 9.2822e-01f, 1.5503e-05f};
     size_t inputDims[] = {2, 3};
     size_t inputNumberOfDims = 2;
     tensor_t *input = tensorInitSymInt32(inputData, inputDims, inputNumberOfDims, HTE, NULL);
@@ -118,16 +121,13 @@ void unitTestSoftmaxBackwardSymInt32() {
     layerFunctions_t softmaxFns = layerFunctions[SOFTMAX];
     softmaxFns.backward(softmaxLayer, input, loss, propLoss);
 
-    float expected[] = {-6.9173e-03, -6.2947e-03, -1.1912e-01, 1.3834e-01, -5.9973e-03,
-                        -1.5603e-05};
+    float expected[] = {-6.9173e-03f, -6.2947e-03f, -1.1912e-01f, 1.3834e-01f, -5.9973e-03f,
+                        -1.5603e-05f};
 
     float propLossDataFloat[inputSize];
     tensor_t *propLossFloat = tensorInitFloat(propLossDataFloat, propLossDims, propLossNumberOfDims, NULL);
-
-
     convertTensor(propLoss, propLossFloat);
-
-    float *actual = (float *)propLoss->data;
+    float *actual = (float *)propLossFloat->data;
 
     for (size_t i = 0; i < inputSize; i++) {
         TEST_ASSERT_FLOAT_WITHIN(0.01f, expected[i], actual[i]);

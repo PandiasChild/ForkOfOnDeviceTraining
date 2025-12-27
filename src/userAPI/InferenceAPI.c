@@ -50,15 +50,14 @@ static void initPingPongBufferOutput(tensor_t *buffer, layer_t *currentLayer, sh
     quantization_t *q = *reserveMemory(sizeof(quantization_t));
     switch (currentQ->type) {
     case FLOAT32:
-        q->type = FLOAT32;
-        q->qConfig = NULL;
+        initFloat32Quantization(q);
         break;
     case SYM_INT32:
-        q->type = SYM_INT32;
         symInt32QConfig_t *currentQC = currentQ->qConfig;
         symInt32QConfig_t *symInt32QC = *reserveMemory(sizeof(symInt32QConfig_t));
-        symInt32QC->roundingMode = currentQC->roundingMode;
-        q->qConfig = symInt32QC;
+
+        initSymInt32QConfig(currentQC->roundingMode, symInt32QC);
+        initSymInt32Quantization(symInt32QC, q);
         break;
     default:
         break;
@@ -92,6 +91,7 @@ static void initPingPongBufferInput(tensor_t *input, tensor_t *buffer) {
         q->qConfig = NULL;
         break;
     case SYM_INT32:
+
         q->type = SYM_INT32;
         symInt32QConfig_t *currentQC = currentQ->qConfig;
         symInt32QConfig_t *symInt32QC = *reserveMemory(sizeof(symInt32QConfig_t));
@@ -126,12 +126,12 @@ tensor_t *inference(layer_t **model, size_t numberOfLayers, tensor_t *input) {
         forwardFn_t forward = layerFunctions[currentLayerType].forward;
 
         if (!toggle) {
-            initPingPongBufferOutput(&pong, currentLayer, input->shape, input->sparsity);
+            initPingPongBufferOutput(&pong, currentLayer, ping.shape, ping.sparsity);
             forward(currentLayer, &ping, &pong);
             deInitPingPongBuffer(&ping);
             toggle = true;
         } else {
-            initPingPongBufferOutput(&ping, currentLayer, input->shape, input->sparsity);
+            initPingPongBufferOutput(&ping, currentLayer, pong.shape, pong.sparsity);
             forward(currentLayer, &pong, &ping);
             deInitPingPongBuffer(&pong);
             toggle = false;

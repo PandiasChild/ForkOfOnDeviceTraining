@@ -12,6 +12,4 @@ quantization_t* quantizationInitSymInt32(roundingMode_t roundingMode);
 
 quantization_t* quantizationInitAsym(uint8_t qBits, roundingMode_t roundingMode);
 
-void freeQuantization(quantization_t* quantization);
-
 #endif //QUANTIZATIONAPI_H
