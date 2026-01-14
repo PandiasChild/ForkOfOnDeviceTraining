@@ -225,11 +225,11 @@ void byteConversion(uint8_t *dataIn, size_t dataInBits, uint8_t *dataOut, size_t
 }
 
 
-tensor_t *getTensorFromParameter(parameter_t *parameter) {
+tensor_t *getParamFromParameter(parameter_t *parameter) {
     return parameter->param;
 }
 
-tensor_t *getGradTensorFromParameter(parameter_t *parameter) {
+tensor_t *getGradFromParameter(parameter_t *parameter) {
     return parameter->grad;
 }
 

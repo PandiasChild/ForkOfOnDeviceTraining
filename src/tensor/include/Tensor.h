@@ -53,8 +53,8 @@ uint8_t readByte(uint8_t data, uint8_t startbit, uint8_t endbit);
 
 void byteConversion(uint8_t* dataIn, size_t dataInBits, uint8_t* dataOut, size_t dataOutBits, size_t numValues);
 
-tensor_t* getTensorFromParameter(parameter_t* parameter);
-tensor_t* getGradTensorFromParameter(parameter_t* parameter);
+tensor_t* getParamFromParameter(parameter_t* parameter);
+tensor_t* getGradFromParameter(parameter_t* parameter);
 
 size_t calcBytesPerElement(quantization_t* quantization);
 size_t calcBitsPerElement(quantization_t* quantization);

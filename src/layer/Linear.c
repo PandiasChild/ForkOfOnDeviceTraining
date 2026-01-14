@@ -41,8 +41,8 @@ void linearForwardSymInt32(tensor_t *w, tensor_t *b, tensor_t *input, tensor_t *
 void linearForward(layer_t *linearLayer, tensor_t *input, tensor_t *output) {
     linearConfig_t *linearConfig = linearLayer->config->linear;
 
-    tensor_t *weights = getTensorFromParameter(linearConfig->weights);
-    tensor_t *bias = getTensorFromParameter(linearConfig->bias);
+    tensor_t *weights = getParamFromParameter(linearConfig->weights);
+    tensor_t *bias = getParamFromParameter(linearConfig->bias);
 
     switch (linearConfig->forwardQ->type) {
     case FLOAT32:
@@ -75,7 +75,7 @@ void linearCalcWeightGradsFloat32(tensor_t *forwardInput, tensor_t *loss, tensor
 
 void linearCalcWeightGradsFloatWithConversion(linearConfig_t *linearConfig, tensor_t *forwardInput,
                                               tensor_t *loss) {
-    tensor_t *paramWG = getGradTensorFromParameter(linearConfig->weights);
+    tensor_t *paramWG = getGradFromParameter(linearConfig->weights);
     tensor_t *wG = paramWG;
     tensor_t *fwdIn = forwardInput;
     tensor_t *l = loss;
@@ -128,7 +128,7 @@ void linearCalcBiasGradsFloat32(tensor_t *loss, tensor_t *biasGrad) {
 }
 
 void linearCalcBiasGradsFloatWithConversion(linearConfig_t *linearConfig, tensor_t *loss) {
-    tensor_t *paramBG = getGradTensorFromParameter(linearConfig->bias);
+    tensor_t *paramBG = getGradFromParameter(linearConfig->bias);
     tensor_t *bG = paramBG;
     tensor_t *l = loss;
 
@@ -170,7 +170,7 @@ void linearCalcPropLossFloat32(tensor_t *loss, tensor_t *weights, tensor_t *prop
 
 void linearCalcPropLossFloatWithConversion(linearConfig_t *linearConfig, tensor_t *loss,
                                            tensor_t *propLoss) {
-    tensor_t *w = getTensorFromParameter(linearConfig->weights);
+    tensor_t *w = getParamFromParameter(linearConfig->weights);
     tensor_t *l = loss;
     tensor_t *pL = propLoss;
 
@@ -208,9 +208,9 @@ void backwardFloat(linearConfig_t *linearConfig, tensor_t *forwardInput, tensor_
     size_t numberOfWeights =
         calcNumberOfElementsByShape(linearConfig->weights->param->shape);
 
-    tensor_t *weightGrad = getGradTensorFromParameter(linearConfig->weights);
+    tensor_t *weightGrad = getGradFromParameter(linearConfig->weights);
 
-    tensor_t *biasGrad = getGradTensorFromParameter(linearConfig->bias);
+    tensor_t *biasGrad = getGradFromParameter(linearConfig->bias);
 
     tensor_t intermediateWGrad;
     uint8_t intermediateWGradData[numberOfWeights * sizeof(float)];
@@ -222,7 +222,7 @@ void backwardFloat(linearConfig_t *linearConfig, tensor_t *forwardInput, tensor_
 
     linearCalcBiasGradsFloat32(loss, biasGrad);
 
-    tensor_t *weightData = getTensorFromParameter(linearConfig->weights);
+    tensor_t *weightData = getParamFromParameter(linearConfig->weights);
 
     linearCalcPropLossFloat32(loss, weightData, propLossTensor);
 }
@@ -252,7 +252,7 @@ void linearCalcWeightGradsSymInt32WithConversion(linearConfig_t *linearConfig, t
     symInt32QConfig_t *symInt32QC = linearConfig->weightGradQ->qConfig;
     roundingMode_t roundingMode = symInt32QC->roundingMode;
 
-    tensor_t *paramWG = getGradTensorFromParameter(linearConfig->weights);
+    tensor_t *paramWG = getGradFromParameter(linearConfig->weights);
     tensor_t *wG = paramWG;
     tensor_t *fwdIn = forwardInput;
     tensor_t *l = loss;
@@ -314,7 +314,7 @@ void linearCalcBiasGradsSymInt32WithConversion(linearConfig_t *linearConfig, ten
     symInt32QConfig_t *symInt32QC = linearConfig->weightGradQ->qConfig;
     roundingMode_t roundingMode = symInt32QC->roundingMode;
 
-    tensor_t *paramBG = getGradTensorFromParameter(linearConfig->bias);
+    tensor_t *paramBG = getGradFromParameter(linearConfig->bias);
     tensor_t *bG = paramBG;
     tensor_t *l = loss;
 
@@ -362,7 +362,7 @@ void linearCalcPropLossSymInt32WithConversion(linearConfig_t *linearConfig, tens
     symInt32QConfig_t *symInt32QC = linearConfig->weightGradQ->qConfig;
     roundingMode_t roundingMode = symInt32QC->roundingMode;
 
-    tensor_t *w = getTensorFromParameter(linearConfig->weights);
+    tensor_t *w = getParamFromParameter(linearConfig->weights);
     tensor_t *l = loss;
 
     tensor_t wSymInt32;
@@ -402,9 +402,9 @@ void backwardSymInt32(linearConfig_t *linearConfig, tensor_t *forwardInput, tens
     size_t numberOfWeights =
         calcNumberOfElementsByShape(linearConfig->weights->param->shape);
 
-    tensor_t *weights = getTensorFromParameter(linearConfig->weights);
-    tensor_t *weightGrads = getGradTensorFromParameter(linearConfig->weights);
-    tensor_t *biasGrads = getGradTensorFromParameter(linearConfig->bias);
+    tensor_t *weights = getParamFromParameter(linearConfig->weights);
+    tensor_t *weightGrads = getGradFromParameter(linearConfig->weights);
+    tensor_t *biasGrads = getGradFromParameter(linearConfig->bias);
 
     symInt32QConfig_t *weightGradsSymInt32QC = weightGrads->quantization->qConfig;
 

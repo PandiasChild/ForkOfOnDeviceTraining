@@ -361,6 +361,7 @@ void matmulSymIntTensors(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputT
     symInt32QConfig_t *aSymInt32QC = aTensor->quantization->qConfig;
     symInt32QConfig_t *bSymInt32QC = bTensor->quantization->qConfig;
     symInt32QConfig_t *outputSymInt32QC = outputTensor->quantization->qConfig;
+
     outputSymInt32QC->scale = aSymInt32QC->scale * bSymInt32QC->scale;
 }
 

@@ -21,4 +21,6 @@ add_elastic_ai_unit_test(
         SgdAPI
         QuantizationAPI
         LossFunction
+        InferenceAPI
+        ReluAPI
 )
