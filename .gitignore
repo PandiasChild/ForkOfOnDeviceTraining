@@ -11,6 +11,7 @@
 .venv
 */__pycache__/
 config.bin
+*.npy
 
 # Compiled Object files
 *.slo
@@ -117,3 +118,6 @@ build/
 .devenv.flake.nix
 .direnv/
 devenv.local.nix
+
+### data loader folder with MNIST
+/test/unit/data_loader/data/

@@ -1,10 +1,11 @@
 include(unit_test.cmake)
 
 add_subdirectory(arithmetic)
-add_subdirectory(tensor)
+add_subdirectory(csv)
+add_subdirectory(data_loader)
 add_subdirectory(layer)
-add_subdirectory(userAPI)
 add_subdirectory(loss_functions)
 add_subdirectory(optimizer)
-add_subdirectory(csv)
+add_subdirectory(tensor)
+add_subdirectory(userAPI)
 

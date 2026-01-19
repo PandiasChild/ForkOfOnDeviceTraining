@@ -5,8 +5,8 @@
 #include <string.h>
 #include <stdlib.h>
 
-#include "Layer.h"
 #include "LossFunction.h"
+#include "Layer.h"
 #include "Optimizer.h"
 #include "TensorAPI.h"
 #include "StorageAPI.h"

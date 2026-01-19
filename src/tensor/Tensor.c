@@ -275,6 +275,7 @@ void printTensor(tensor_t *t) {
     printf("TENSOR BEGIN \n");
     size_t numValues = calcNumberOfElementsByTensor(t);
     int32_t data[numValues];
+
     switch (q->type) {
     case INT32:
         printf("INT32Q \n");

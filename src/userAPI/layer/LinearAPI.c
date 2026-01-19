@@ -1,7 +1,6 @@
 #define SOURCE_FILE "LINEAR_API"
 
 #include <stdlib.h>
-#include <stdio.h>
 
 #include "Layer.h"
 #include "Tensor.h"
