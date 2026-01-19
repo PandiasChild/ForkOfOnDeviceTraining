@@ -31,11 +31,11 @@ static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t si
         switch (currentLayer->type) {
         case LINEAR:
             linearConfig_t *linearConfig = currentLayer->config->linear;
-            currentQ = linearConfig->propLossQ;
+            currentQ = linearConfig->forwardQ;
             break;
         case RELU:
             reluConfig_t *reluConfig = currentLayer->config->relu;
-            currentQ = reluConfig->backwardQ;
+            currentQ = reluConfig->forwardQ;
             break;
         default:
             break;
