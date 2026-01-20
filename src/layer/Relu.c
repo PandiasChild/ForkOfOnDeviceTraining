@@ -1,13 +1,15 @@
-#include <string.h>
+#define SOURCE_FILE "RELU"
 
-#include "Relu.h"
+#include <string.h>
+#include <stdlib.h>
+
 #include "Tensor.h"
 #include "Comparison.h"
 #include "DTypes.h"
-#include "TensorConversion.h"
 #include "Layer.h"
+#include "Common.h"
+#include "Relu.h"
 
-#include <stdio.h>
 
 void reluInitConfig(reluConfig_t *reluConfig, quantization_t *forwardQ, quantization_t *backwardQ) {
     reluConfig->forwardQ = forwardQ;
@@ -36,7 +38,8 @@ void reluForward(layer_t *reluLayer, tensor_t *input, tensor_t *output) {
         reluForwardSymInt32(input, output);
         break;
     default:
-        break;
+        PRINT_ERROR("Unknown QType!");
+        exit(1);
     }
 }
 
@@ -88,7 +91,8 @@ void reluBackward(layer_t *reluLayer, tensor_t *forwardInput, tensor_t *loss,
         reluBackwardSymInt32(forwardInput, loss, propLoss);
         break;
     default:
-        break;
+        PRINT_ERROR("Unknown QType!");
+        exit(1);
     }
 }
 

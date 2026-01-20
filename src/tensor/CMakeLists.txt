@@ -43,5 +43,6 @@ target_link_libraries(Tensor PRIVATE
         m
         Rounding
         Quantization
+        Common
 )
 

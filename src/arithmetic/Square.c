@@ -1,6 +1,4 @@
-#include <stddef.h>
-
-#include "Square.h"
+#define SOURCE_FILE "SQUARE"
 
 #ifdef TRACK_INSTRUCTIONS
 #define SQUARE_FUNC_INT squareInt32WithInstructionCounter
@@ -9,6 +7,11 @@
 #define SQUARE_FUNC_INT squareInt
 #define SQUARE_FUNC_FLOAT squareFloat
 #endif
+
+#include <stddef.h>
+
+#include "Square.h"
+
 
 size_t squareInstructionCounter = 0;
 

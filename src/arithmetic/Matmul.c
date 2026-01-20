@@ -1,11 +1,4 @@
-#include "Common.h"
-#include "Matmul.h"
-#include "Mul.h"
-#include "Tensor.h"
-#include "Arithmetic.h"
-#include "DTypes.h"
-
-#include <stdio.h>
+#define SOURCE_FILE "MATMUL"
 
 #ifdef TRACK_INSTRUCTIONS
 #define MATMUL_FUNC_INT matmulIntTensorsWithInstructionCounter
@@ -17,12 +10,23 @@
 #define MATMUL_FUNC_SYM_INT32 matmulSymIntTensors
 #endif
 
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "Common.h"
+#include "Matmul.h"
+#include "Mul.h"
+#include "Tensor.h"
+#include "Arithmetic.h"
+#include "DTypes.h"
+
+
 size_t matmulInstructionCounter = 0;
 
 void matmulIntTensors(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTensor) {
     if (aTensor->shape->numberOfDimensions > 2 || bTensor->shape->numberOfDimensions > 2) {
-        PRINT_ERROR("Error: Matmul only supports up to 2D Tensors\n");
-        return;
+        PRINT_ERROR("Matmul only supports up to 2D Tensors");
+        exit(1);
     }
 
     size_t aNumberOfDims = aTensor->shape->numberOfDimensions;
@@ -51,9 +55,9 @@ void matmulIntTensors(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTens
     size_t resultCounter = 0;
 
     if (aColumns != bRows) {
-        printf("Error Matmul: Rows dont match Columns\n");
-        //printf("bRows: %lu, bCols: %lu\n", bRows, bColumns);
-        return;
+        PRINT_ERROR("Rows dont match Columns");
+        PRINT_DEBUG("bRows: %lu, bCols: %lu\n", bRows, bColumns);
+        exit(1);
     }
 
     for (size_t rowIndex = 0; rowIndex < aRows; rowIndex++) {
@@ -88,7 +92,6 @@ void matmulIntTensors(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTens
                 result += mulInt32s(aValue, bValue);
 
             }
-            //printf("result: %i\n", result);
 
             size_t outputByteIndex = resultCounter * sizeof(int32_t);
 
@@ -101,8 +104,8 @@ void matmulIntTensors(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTens
 void matmulIntTensorsWithInstructionCounter(tensor_t *aTensor, tensor_t *bTensor,
                                             tensor_t *outputTensor) {
     if (aTensor->shape->numberOfDimensions > 2 || bTensor->shape->numberOfDimensions > 2) {
-        printf("Error: Matmul only supports up to 2D Tensors\n");
-        return;
+        PRINT_ERROR("Matmul only supports up to 2D Tensors");
+        exit(1);
     }
 
     size_t aNumberOfDims = aTensor->shape->numberOfDimensions;
@@ -131,9 +134,9 @@ void matmulIntTensorsWithInstructionCounter(tensor_t *aTensor, tensor_t *bTensor
     size_t resultCounter = 0;
 
     if (aColumns != bRows) {
-        printf("Error Matmul: Rows dont match Columns\n");
-        //printf("bRows: %lu, bCols: %lu\n", bRows, bColumns);
-        return;
+        PRINT_ERROR("Rows dont match Columns");
+        PRINT_DEBUG("bRows: %lu, bCols: %lu\n", bRows, bColumns);
+        exit(1);
     }
 
     for (size_t rowIndex = 0; rowIndex < aRows; rowIndex++) {
@@ -168,7 +171,6 @@ void matmulIntTensorsWithInstructionCounter(tensor_t *aTensor, tensor_t *bTensor
                 result += mulInt32s(aValue, bValue);
 
             }
-            //printf("result: %i\n", result);
 
             size_t outputByteIndex = resultCounter * sizeof(int32_t);
 
@@ -185,8 +187,8 @@ void matmulInt32Tensors(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTe
 
 void matmulFloatTensors(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTensor) {
     if (aTensor->shape->numberOfDimensions > 2 || bTensor->shape->numberOfDimensions > 2) {
-        printf("Error: Matmul only supports up to 2D Tensors\n");
-        return;
+        PRINT_ERROR("Matmul only supports up to 2D Tensors");
+        exit(1);
     }
 
     size_t aNumberOfDims = aTensor->shape->numberOfDimensions;
@@ -216,11 +218,10 @@ void matmulFloatTensors(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTe
 
     size_t resultCounter = 0;
 
-    //printf("aCol: %lu, bRows: %lu\n", aColumns, bRows);
-
     if (aColumns != bRows) {
-        printf("Error Matmul: Rows dont match Columns\n");
-        return;
+        PRINT_ERROR("Rows dont match Columns");
+        PRINT_DEBUG("bRows: %lu, bCols: %lu\n", bRows, bColumns);
+        exit(1);
     }
 
     for (size_t rowIndex = 0; rowIndex < aRows; rowIndex++) {
@@ -268,8 +269,8 @@ void matmulFloatTensors(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTe
 void matmulFloatTensorsWithInstructionCounter(tensor_t *aTensor, tensor_t *bTensor,
                                               tensor_t *outputTensor) {
     if (aTensor->shape->numberOfDimensions > 2 || bTensor->shape->numberOfDimensions > 2) {
-        printf("Error: Matmul only supports up to 2D Tensors\n");
-        return;
+        PRINT_ERROR("Matmul only supports up to 2D Tensors");
+        exit(1);
     }
 
     size_t aNumberOfDims = aTensor->shape->numberOfDimensions;
@@ -302,8 +303,9 @@ void matmulFloatTensorsWithInstructionCounter(tensor_t *aTensor, tensor_t *bTens
     //printf("aCol: %lu, bRows: %lu\n", aColumns, bRows);
 
     if (aColumns != bRows) {
-        printf("Error Matmul: Rows dont match Columns\n");
-        return;
+        PRINT_ERROR("Rows dont match Columns");
+        PRINT_DEBUG("bRows: %lu, bCols: %lu\n", bRows, bColumns);
+        exit(1);
     }
 
     for (size_t rowIndex = 0; rowIndex < aRows; rowIndex++) {

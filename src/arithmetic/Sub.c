@@ -1,9 +1,4 @@
-#include "Sub.h"
-#include "Arithmetic.h"
-#include "DTypes.h"
-#include "TensorConversion.h"
-
-#include <stdio.h>
+#define SOURCE_FILE "SUB"
 
 #ifdef TRACK_INSTRUCTIONS
 #define SUB_FUNC_INT subIntsWithInstructionCounter
@@ -12,6 +7,15 @@
 #define SUB_FUNC_INT subInts
 #define SUB_FUNC_FLOAT subFloats
 #endif
+
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "Arithmetic.h"
+#include "DTypes.h"
+#include "TensorConversion.h"
+#include "Common.h"
+#include "Sub.h"
 
 size_t subInstructionCounter = 0;
 
@@ -81,12 +85,13 @@ void subFloat32ElementWithFloat32TensorInplace(tensor_t *a, float b) {
     floatElementWithTensorArithmeticInplace(a, b, sub);
 }
 
-void subSymInt32Tensors(tensor_t* aTensor, tensor_t* bTensor, tensor_t* outputTensor) {
+void subSymInt32Tensors(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTensor) {
     size_t aNumberOfValues = calcNumberOfElementsByTensor(aTensor);
     size_t bNumberOfValues = calcNumberOfElementsByTensor(bTensor);
 
-    if(aNumberOfValues != bNumberOfValues) {
-        printf("Error in subSymInt32Tensors: mismatched number of Values\n");
+    if (aNumberOfValues != bNumberOfValues) {
+        PRINT_ERROR("Mismatched number of Values!");
+        exit(1);
     }
 
     symInt32QConfig_t *aSymInt32QConfig = aTensor->quantization->qConfig;
@@ -96,7 +101,7 @@ void subSymInt32Tensors(tensor_t* aTensor, tensor_t* bTensor, tensor_t* outputTe
     float aScale = aSymInt32QConfig->scale;
     float bScale = bSymInt32QConfig->scale;
 
-    if(aScale == bScale) {
+    if (aScale == bScale) {
         outputSymInt32QConfig->scale = aScale;
 
         int32_t aValues[aNumberOfValues];
@@ -105,13 +110,11 @@ void subSymInt32Tensors(tensor_t* aTensor, tensor_t* bTensor, tensor_t* outputTe
         readBytesAsInt32Array(aNumberOfValues, bTensor->data, bValues);
         int32_t outputValues[aNumberOfValues];
 
-        for(size_t i = 0; i < aNumberOfValues; i++) {
+        for (size_t i = 0; i < aNumberOfValues; i++) {
             outputValues[i] = SUB_FUNC_INT(aValues[i], bValues[i]);
         }
         writeInt32ArrayToByteArray(aNumberOfValues, outputValues, outputTensor->data);
-    }
-
-    else {
+    } else {
         tensor_t aFloat;
         quantization_t aFloatQ;
         initFloat32Quantization(&aFloatQ);
@@ -132,12 +135,13 @@ void subSymInt32Tensors(tensor_t* aTensor, tensor_t* bTensor, tensor_t* outputTe
     }
 }
 
-void subSymInt32TensorsInplace(tensor_t* aTensor, tensor_t* bTensor) {
+void subSymInt32TensorsInplace(tensor_t *aTensor, tensor_t *bTensor) {
     size_t aNumberOfValues = calcNumberOfElementsByTensor(aTensor);
     size_t bNumberOfValues = calcNumberOfElementsByTensor(bTensor);
 
-    if(aNumberOfValues != bNumberOfValues) {
-        printf("Error in subSymInt32Tensors: mismatched number of Values\n");
+    if (aNumberOfValues != bNumberOfValues) {
+        PRINT_ERROR("Mismatched number of Values!");
+        exit(1);
     }
 
     symInt32QConfig_t *aSymInt32QConfig = aTensor->quantization->qConfig;
@@ -146,20 +150,18 @@ void subSymInt32TensorsInplace(tensor_t* aTensor, tensor_t* bTensor) {
     float aScale = aSymInt32QConfig->scale;
     float bScale = bSymInt32QConfig->scale;
 
-    if(aScale == bScale) {
+    if (aScale == bScale) {
         int32_t aValues[aNumberOfValues];
         readBytesAsInt32Array(aNumberOfValues, aTensor->data, aValues);
         int32_t bValues[aNumberOfValues];
         readBytesAsInt32Array(aNumberOfValues, bTensor->data, bValues);
         int32_t outputValues[aNumberOfValues];
 
-        for(size_t i = 0; i < aNumberOfValues; i++) {
+        for (size_t i = 0; i < aNumberOfValues; i++) {
             outputValues[i] = SUB_FUNC_INT(aValues[i], bValues[i]);
         }
         writeInt32ArrayToByteArray(aNumberOfValues, outputValues, aTensor->data);
-    }
-
-    else {
+    } else {
         quantization_t floatQ;
         initFloat32Quantization(&floatQ);
         uint8_t aFloatData[aNumberOfValues * sizeof(float)];

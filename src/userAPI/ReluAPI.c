@@ -1,6 +1,9 @@
+#define SOURCE_FILE "RELU_API"
+
 #include "StorageAPI.h"
 #include "ReluAPI.h"
 #include "Relu.h"
+
 
 layer_t *reluLayerInit(quantization_t *forwardQ, quantization_t *backwardQ) {
     layer_t *reluLayer = *reserveMemory(sizeof(layer_t));

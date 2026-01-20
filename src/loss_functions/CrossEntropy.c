@@ -1,6 +1,12 @@
+#define SOURCE_FILE "CROSS_ENTROPY"
+
+#include <stdlib.h>
+
 #include "CrossEntropy.h"
 #include "TensorConversion.h"
 #include "Log.h"
+#include "Common.h"
+
 
 float crossEntropyForwardFloat(tensor_t *softmaxOutput, tensor_t *distribution) {
     size_t numberOfValues = calcNumberOfElementsByTensor(softmaxOutput);
@@ -73,6 +79,7 @@ void crossEntropySoftmaxBackward(tensor_t *softmaxOutput, tensor_t *distribution
     case ASYM:
         crossEntropySoftmaxBackwardAsym(softmaxOutput, distribution, loss);
     default:
-        break;
+        PRINT_ERROR("Unknown QType!");
+        exit(1);
     }
 }

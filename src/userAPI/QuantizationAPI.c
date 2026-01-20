@@ -1,5 +1,8 @@
+#define SOURCE_FILE "QUANTIZATION_API"
+
 #include "StorageAPI.h"
 #include "QuantizationAPI.h"
+
 
 quantization_t *quantizationInitFloat() {
     quantization_t *q = *reserveMemory(sizeof(quantization_t));

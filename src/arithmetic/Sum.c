@@ -1,3 +1,5 @@
+#define SOURCE_FILE "SUM"
+
 #include "Add.h"
 #include "Sum.h"
 

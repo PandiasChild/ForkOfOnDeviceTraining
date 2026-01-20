@@ -5,6 +5,7 @@ target_link_libraries(Add PRIVATE
         DTypes
         Arithmetic
         TensorConversion
+        Common
 )
 
 add_library(Arithmetic Arithmetic.c)
@@ -18,6 +19,7 @@ target_link_libraries(Arithmetic PRIVATE
         Mul
         Square
         Sub
+        Common
 )
 
 add_library(Comparison Comparison.c)
@@ -25,6 +27,7 @@ target_include_directories(Comparison PUBLIC include)
 target_link_libraries(Comparison PRIVATE
         Tensor
         DTypes
+        Common
 )
 
 add_library(Div Div.c)
@@ -33,6 +36,7 @@ target_link_libraries(Div PRIVATE
         Tensor
         DTypes
         Arithmetic
+        Common
 )
 
 add_library(Log Log.c)
@@ -41,6 +45,7 @@ target_link_libraries(Log PRIVATE
         Tensor
         DTypes
         Arithmetic
+        Common
 )
 
 add_library(Matmul Matmul.c)
@@ -50,6 +55,7 @@ target_link_libraries(Matmul PRIVATE
         Tensor
         DTypes
         Mul
+        Common
 )
 
 add_library(Mul Mul.c)
@@ -58,6 +64,7 @@ target_link_libraries(Mul PRIVATE
         Tensor
         DTypes
         Arithmetic
+        Common
 )
 
 add_library(MinMax MinMax.c)
@@ -65,19 +72,23 @@ target_include_directories(MinMax PUBLIC include)
 target_link_libraries(MinMax PRIVATE
         Tensor
         DTypes
+        Common
 )
 
 add_library(Rounding Rounding.c)
 target_include_directories(Rounding PUBLIC include)
 target_link_libraries(Rounding PRIVATE
         m
-)
+        Common
+)#include "Common.h"
+
 
 add_library(Square Square.c)
 target_include_directories(Square PUBLIC include)
 target_link_libraries(Square PRIVATE
         Tensor
         DTypes
+        Common
 )
 
 add_library(Sub Sub.c)
@@ -86,6 +97,7 @@ target_link_libraries(Sub PRIVATE
         Tensor
         DTypes
         Arithmetic
+        Common
 )
 
 add_library(Sum Sum.c)
@@ -94,6 +106,7 @@ target_link_libraries(Sum PRIVATE
         Add
         Tensor
         Rounding
+        Common
 )
 
 

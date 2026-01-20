@@ -34,6 +34,7 @@ target_link_libraries(Linear PRIVATE
         Quantization
         TensorConversion
         Layer
+        Common
 )
 
 add_library(QuantizationLayer QuantizationLayer.c)
@@ -52,6 +53,7 @@ target_link_libraries(Relu PRIVATE
         Arithmetic
         Comparison
         Layer
+        Common
 )
 
 add_library(Softmax Softmax.c)
@@ -61,6 +63,7 @@ target_link_libraries(Softmax PRIVATE
         Tensor
         Arithmetic
         Layer
+        Common
 )
 
 add_library(CommonLayerLibs INTERFACE)

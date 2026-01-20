@@ -1,14 +1,19 @@
-#include <math.h>
-
-#include "Softmax.h"
-#include "TensorConversion.h"
-
-#include <stdio.h>
-#include <string.h>
+#define SOURCE_FILE "SOFTMAX"
 
 #define EULER_APPROX = 2.71828
 
-void softmaxInitConfig(softmaxConfig_t *softmaxConfig, quantization_t *forwardQ, quantization_t *backwardQ) {
+#include <math.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+#include "Softmax.h"
+#include "TensorConversion.h"
+#include "Common.h"
+
+
+void softmaxInitConfig(softmaxConfig_t *softmaxConfig, quantization_t *forwardQ,
+                       quantization_t *backwardQ) {
     softmaxConfig->forwardQ = forwardQ;
     softmaxConfig->backwardQ = backwardQ;
 }
@@ -67,14 +72,16 @@ static void softmaxForwardSymInt32(tensor_t *input, tensor_t *output) {
 }
 
 void softmaxForward(layer_t *softmaxLayer, tensor_t *input, tensor_t *output) {
-    switch (input->quantization->type) {
+    switch (softmaxLayer->config->softmax->forwardQ->type) {
     case FLOAT32:
         softmaxForwardFloat(input, output);
         break;
     case SYM_INT32:
         softmaxForwardSymInt32(input, output);
-    default:
         break;
+    default:
+        PRINT_ERROR("Unknown QType!");
+        exit(1);
     }
 }
 
@@ -158,7 +165,7 @@ static void softmaxBackwardSymInt32(tensor_t *input, tensor_t *loss, tensor_t *p
 }
 
 void softmaxBackward(layer_t *softmaxLayer, tensor_t *input, tensor_t *loss, tensor_t *propLoss) {
-    switch (loss->quantization->type) {
+    switch (softmaxLayer->config->softmax->backwardQ->type) {
     case FLOAT32:
         softmaxBackwardFloat(input, loss, propLoss);
         break;
@@ -166,7 +173,8 @@ void softmaxBackward(layer_t *softmaxLayer, tensor_t *input, tensor_t *loss, ten
         softmaxBackwardSymInt32(input, loss, propLoss);
         break;
     default:
-        break;
+        PRINT_ERROR("Unknown QType!");
+        exit(1);
     }
 }
 

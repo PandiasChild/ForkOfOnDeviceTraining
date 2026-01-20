@@ -1,8 +1,12 @@
-#include "CSVHelper.h"
+#define SOURCE_FILE "CSV_HELPER"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "Common.h"
+#include "CSVHelper.h"
+
 
 void setCSVData(csvData_t *csvData, char **rows, size_t numberOfRows, size_t *entriesInRow) {
     csvData->rows = rows;
@@ -25,8 +29,8 @@ void csvReadRowsByBufferSize(char *filePath, csvData_t *csvData) {
     FILE *fp;
     fp = fopen(filePath, "r");
     if (fp == NULL) {
-        printf("Error: Could not open file %s\n", filePath);
-        return;
+        PRINT_ERROR("Could not open file %s", filePath);
+        exit(1);
     }
 
     for (size_t i = 0; i < csvData->numberOfRows; i++) {
@@ -53,8 +57,8 @@ void csvParseBufferAsFloat(csvData_t *csvData, float **output) {
 void csvWriteRowsByBufferSize(char *filePath, csvData_t *csvData) {
     FILE *fp = fopen(filePath, "w");
     if (fp == NULL) {
-        printf("Error: Could not open file %s\n", filePath);
-        return;
+        PRINT_ERROR("Could not open file %s", filePath);
+        exit(1);
     }
 
     for (size_t i = 0; i < csvData->numberOfRows; i++) {

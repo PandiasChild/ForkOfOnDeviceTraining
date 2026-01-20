@@ -1,3 +1,5 @@
+#define SOURCE_FILE "TENSOR"
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -7,6 +9,7 @@
 #include "Quantization.h"
 #include "MinMax.h"
 #include "DTypes.h"
+#include "Common.h"
 
 size_t calcNumberOfElementsByShape(shape_t *shape) {
     size_t numElem = 1;
@@ -38,6 +41,9 @@ size_t calcBytesPerElement(quantization_t *quantization) {
         asymQConfig_t *asymQConfig = quantization->qConfig;
         uint32_t qBits = asymQConfig->qBits;
         return ceil((float)qBits / (float)8);
+    default:
+        PRINT_ERROR("Unknown QType!");
+        exit(1);
     }
 }
 
@@ -53,7 +59,8 @@ size_t calcBitsPerElement(quantization_t *quantization) {
         asymQConfig_t *asymQConfig = quantization->qConfig;
         return asymQConfig->qBits;
     default:
-        return 0;
+        PRINT_ERROR("Unknown QType!");
+        exit(1);
     }
 }
 
@@ -78,7 +85,8 @@ size_t calcNumberOfBytesForData(quantization_t *q, size_t numberOfElements) {
         size_t bitsPerElement = calcBitsPerElement(q);
         return ceilf((float)(bitsPerElement * numberOfElements / 8));
     default:
-        return 0;
+        PRINT_ERROR("Unknown QType!");
+        exit(1);
     }
 }
 
@@ -244,7 +252,7 @@ void setTensorValuesForConversion(uint8_t *data, quantization_t *q, tensor_t *or
 }
 
 void setTensorValues(tensor_t *tensor, uint8_t *data, shape_t *shape,
-                     quantization_t *quantization, sparsity_t* sparsity) {
+                     quantization_t *quantization, sparsity_t *sparsity) {
     tensor->data = data;
     tensor->shape = shape;
     tensor->quantization = quantization;
@@ -305,7 +313,7 @@ void printTensor(tensor_t *t) {
         }
         break;
     default:
-        printf("WTF");
+        printf("WTF\n");
     }
 
     printf("TENSOR END \n");
@@ -363,8 +371,10 @@ void copyQuantization(quantization_t *dest, quantization_t *src) {
         symInt32QConfig_t *destQC = dest->qConfig;
         symInt32QConfig_t *srcQC = src->qConfig;
         memcpy(destQC, srcQC, sizeof(symInt32QConfig_t));
-    default:
         break;
+    default:
+        PRINT_ERROR("Unknown QType!");
+        exit(1);
     }
 }
 

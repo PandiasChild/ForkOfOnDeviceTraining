@@ -1,10 +1,13 @@
+#define SOURCE_FILE "ARITHMETIC"
+
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "Common.h"
+#include "DTypes.h"
+#include "Matmul.h"
 #include "Arithmetic.h"
 
-#include "../common/include/Common.h"
-
-#include <DTypes.h>
-#include <Matmul.h>
-#include <stdio.h>
 
 size_t getDimensionsByIndex(tensor_t *tensor, size_t index) {
     size_t numberOfDims = tensor->shape->numberOfDimensions;
@@ -13,6 +16,8 @@ size_t getDimensionsByIndex(tensor_t *tensor, size_t index) {
             return tensor->shape->dimensions[i];
         }
     }
+    PRINT_ERROR("Tensor doesn't have %lu dimensions!", index);
+    exit(1);
 }
 
 void orderDims(tensor_t *tensor, size_t *orderedDims) {
@@ -65,7 +70,8 @@ void calcIndicesByRawIndex(size_t numberOfDims, size_t *dims, size_t rawIndex, s
     }
 }
 
-size_t calcElementIndexByIndices(size_t numberOfDims, size_t *dims, size_t *indices, size_t *orderOfDimensions) {
+size_t calcElementIndexByIndices(size_t numberOfDims, size_t *dims, size_t *indices,
+                                 size_t *orderOfDimensions) {
     size_t offset = 1;
     // equal to numberOfElements
     for (size_t i = 0; i < numberOfDims; i++) {
@@ -88,10 +94,9 @@ size_t calcElementIndexByIndices(size_t numberOfDims, size_t *dims, size_t *indi
 
 void int32PointWiseArithmetic(tensor_t *aTensor, tensor_t *bTensor,
                               int32ElementArithmeticFunc_t arithmeticFunc, tensor_t *outputTensor) {
-    PRINT_INFO("TEST");
     if (!doDimensionsMatch(aTensor, bTensor)) {
-        printf("Error: Dimensions dont match\n");
-        return;
+        PRINT_ERROR("Dimensions don't match!");
+        exit(1);
     }
 
     size_t numberOfElements = calcNumberOfElementsByTensor(aTensor);
@@ -111,11 +116,13 @@ void int32PointWiseArithmetic(tensor_t *aTensor, tensor_t *bTensor,
 
         calcIndicesByRawIndex(numberOfDims, aDims, i, aIndices);
 
-        size_t aElementIndex = calcElementIndexByIndices(numberOfDims, aDims, aIndices, aTensor->shape->orderOfDimensions);
+        size_t aElementIndex = calcElementIndexByIndices(numberOfDims, aDims, aIndices,
+                                                         aTensor->shape->orderOfDimensions);
 
         size_t bIndices[numberOfDims];
         calcIndicesByRawIndex(numberOfDims, bDims, i, bIndices);
-        size_t bElementIndex = calcElementIndexByIndices(numberOfDims, bDims, bIndices, bTensor->shape->orderOfDimensions);
+        size_t bElementIndex = calcElementIndexByIndices(numberOfDims, bDims, bIndices,
+                                                         bTensor->shape->orderOfDimensions);
 
         size_t aByteIndex = aElementIndex * bytesPerElement;
         size_t bByteIndex = bElementIndex * bytesPerElement;
@@ -135,8 +142,8 @@ void int32PointWiseArithmetic(tensor_t *aTensor, tensor_t *bTensor,
 void int32PointWiseArithmeticInplace(tensor_t *aTensor, tensor_t *bTensor,
                                      int32ElementArithmeticFunc_t arithmeticFunc) {
     if (!doDimensionsMatch(aTensor, bTensor)) {
-        printf("Error: Dimensions dont match\n");
-        return;
+        PRINT_ERROR("Dimensions don't match");
+        exit(1);
     }
 
     size_t numberOfElements = calcNumberOfElementsByTensor(aTensor);
@@ -154,11 +161,13 @@ void int32PointWiseArithmeticInplace(tensor_t *aTensor, tensor_t *bTensor,
     for (size_t i = 0; i < numberOfElements; i++) {
         size_t aIndices[numberOfDims];
         calcIndicesByRawIndex(numberOfDims, aDims, i, aIndices);
-        size_t aElementIndex = calcElementIndexByIndices(numberOfDims, aDims, aIndices, aTensor->shape->orderOfDimensions);
+        size_t aElementIndex = calcElementIndexByIndices(numberOfDims, aDims, aIndices,
+                                                         aTensor->shape->orderOfDimensions);
 
         size_t bIndices[numberOfDims];
         calcIndicesByRawIndex(numberOfDims, bDims, i, bIndices);
-        size_t bElementIndex = calcElementIndexByIndices(numberOfDims, bDims, bIndices, bTensor->shape->orderOfDimensions);
+        size_t bElementIndex = calcElementIndexByIndices(numberOfDims, bDims, bIndices,
+                                                         bTensor->shape->orderOfDimensions);
 
         size_t aByteIndex = aElementIndex * bytesPerElement;
         size_t bByteIndex = bElementIndex * bytesPerElement;
@@ -210,8 +219,8 @@ void floatPointWiseArithmetic(tensor_t *aTensor, tensor_t *bTensor,
                               floatElementArithmeticFunc_t arithmeticFunc,
                               tensor_t *outputTensor) {
     if (!doDimensionsMatch(aTensor, bTensor)) {
-        printf("Error: Dimensions dont match\n");
-        return;
+        PRINT_ERROR("Dimensions don't match");
+        exit(1);
     }
 
     size_t numberOfElements = calcNumberOfElementsByTensor(aTensor);
@@ -229,11 +238,13 @@ void floatPointWiseArithmetic(tensor_t *aTensor, tensor_t *bTensor,
     for (size_t i = 0; i < numberOfElements; i++) {
         size_t aIndices[numberOfDims];
         calcIndicesByRawIndex(numberOfDims, aDims, i, aIndices);
-        size_t aElementIndex = calcElementIndexByIndices(numberOfDims, aDims, aIndices, aTensor->shape->orderOfDimensions);
+        size_t aElementIndex = calcElementIndexByIndices(numberOfDims, aDims, aIndices,
+                                                         aTensor->shape->orderOfDimensions);
 
         size_t bIndices[numberOfDims];
         calcIndicesByRawIndex(numberOfDims, bDims, i, bIndices);
-        size_t bElementIndex = calcElementIndexByIndices(numberOfDims, bDims, bIndices, bTensor->shape->orderOfDimensions);
+        size_t bElementIndex = calcElementIndexByIndices(numberOfDims, bDims, bIndices,
+                                                         bTensor->shape->orderOfDimensions);
 
         size_t aByteIndex = aElementIndex * bytesPerElement;
         size_t bByteIndex = bElementIndex * bytesPerElement;
@@ -252,8 +263,8 @@ void floatPointWiseArithmetic(tensor_t *aTensor, tensor_t *bTensor,
 void floatPointWiseArithmeticInplace(tensor_t *aTensor, tensor_t *bTensor,
                                      floatElementArithmeticFunc_t arithmeticFunc) {
     if (!doDimensionsMatch(aTensor, bTensor)) {
-        printf("Error: Dimensions dont match\n");
-        return;
+        PRINT_ERROR("Dimensions don't match");
+        exit(1);
     }
 
     size_t numberOfElements = calcNumberOfElementsByTensor(aTensor);
@@ -272,12 +283,14 @@ void floatPointWiseArithmeticInplace(tensor_t *aTensor, tensor_t *bTensor,
 
         size_t aIndices[numberOfDims];
         calcIndicesByRawIndex(numberOfDims, aDims, i, aIndices);
-        size_t aElementIndex = calcElementIndexByIndices(numberOfDims, aDims, aIndices, aTensor->shape->orderOfDimensions);
+        size_t aElementIndex = calcElementIndexByIndices(numberOfDims, aDims, aIndices,
+                                                         aTensor->shape->orderOfDimensions);
 
         size_t bIndices[numberOfDims];
         calcIndicesByRawIndex(numberOfDims, bDims, i, bIndices);
 
-        size_t bElementIndex = calcElementIndexByIndices(numberOfDims, bDims, bIndices, bTensor->shape->orderOfDimensions);
+        size_t bElementIndex = calcElementIndexByIndices(numberOfDims, bDims, bIndices,
+                                                         bTensor->shape->orderOfDimensions);
 
         size_t aByteIndex = aElementIndex * bytesPerElement;
         size_t bByteIndex = bElementIndex * bytesPerElement;
@@ -316,7 +329,6 @@ void floatElementWithTensorArithmeticInplace(tensor_t *tensor, float x,
     size_t numberOfElements = calcNumberOfElementsByTensor(tensor);
     size_t bytesPerElement = sizeof(float);
 
-
     for (size_t i = 0; i < numberOfElements; i++) {
         size_t byteIndex = i * bytesPerElement;
         float currentValue = readBytesAsFloat(&tensor->data[byteIndex]);
@@ -326,7 +338,3 @@ void floatElementWithTensorArithmeticInplace(tensor_t *tensor, float x,
         writeFloatToByteArray(result, &tensor->data[byteIndex]);
     }
 }
-
-
-
-

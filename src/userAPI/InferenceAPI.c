@@ -1,15 +1,19 @@
+#define SOURCE_FILE "INFERENCE_API"
+
 #include <stdio.h>
 #include <stdbool.h>
+#include <stdlib.h>
 
 #include "Tensor.h"
 #include "Layer.h"
 #include "InferenceAPI.h"
 #include "TensorAPI.h"
-
 #include "StorageAPI.h"
 #include "Linear.h"
 #include "Relu.h"
 #include "TensorConversion.h"
+#include "Common.h"
+
 
 // Initializes ping pong buffer to match output
 static void initPingPongBufferOutput(tensor_t *buffer, layer_t *currentLayer, shape_t *inputShape,
@@ -25,7 +29,8 @@ static void initPingPongBufferOutput(tensor_t *buffer, layer_t *currentLayer, sh
         currentQ = currentLayer->config->relu->forwardQ;
         break;
     default:
-        break;
+        PRINT_ERROR("Unknown Layer Type!");
+        exit(1);
     }
 
     size_t outputNumberOfDims = inputShape->numberOfDimensions;
@@ -60,7 +65,8 @@ static void initPingPongBufferOutput(tensor_t *buffer, layer_t *currentLayer, sh
         initSymInt32Quantization(symInt32QC, q);
         break;
     default:
-        break;
+        PRINT_ERROR("Unknown QType!");
+        exit(1);
     }
 
     setTensorValues(buffer, data, outShape, q, inputSparsity);
@@ -91,7 +97,6 @@ static void initPingPongBufferInput(tensor_t *input, tensor_t *buffer) {
         q->qConfig = NULL;
         break;
     case SYM_INT32:
-
         q->type = SYM_INT32;
         symInt32QConfig_t *currentQC = currentQ->qConfig;
         symInt32QConfig_t *symInt32QC = *reserveMemory(sizeof(symInt32QConfig_t));
@@ -99,7 +104,8 @@ static void initPingPongBufferInput(tensor_t *input, tensor_t *buffer) {
         q->qConfig = symInt32QC;
         break;
     default:
-        break;
+        PRINT_ERROR("Unknown QType!");
+        exit(1);
     }
 
     setTensorValues(buffer, data, outShape, q, input->sparsity);
@@ -185,7 +191,8 @@ inferenceStats_t *inferenceWithLoss(layer_t **model, size_t numberOfLayers, tens
             currentQ = currentLayer->config->relu->forwardQ;
             break;
         default:
-            break;
+            PRINT_ERROR("Unknown Layer Type!");
+            exit(1);
         }
 
         size_t outputNumberOfDims = input->shape->numberOfDimensions;
@@ -214,14 +221,15 @@ inferenceStats_t *inferenceWithLoss(layer_t **model, size_t numberOfLayers, tens
             q.type = FLOAT32;
             q.qConfig = NULL;
             break;
-        case ASYM:
+        case SYM_INT32:
             q.type = SYM_INT32;
             symInt32QConfig_t *currentQC = currentQ->qConfig;
             symInt32QConfig.roundingMode = currentQC->roundingMode;
             q.qConfig = &symInt32QConfig;
             break;
         default:
-            break;
+            PRINT_ERROR("Unknown Layer Type");
+            exit(1);
         }
 
         tensor_t intermediateOutput;

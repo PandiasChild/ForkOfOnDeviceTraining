@@ -1,7 +1,12 @@
-#include "Comparison.h"
-#include "DTypes.h"
+#define SOURCE_FILE "COMPARISON"
 
 #include <stdio.h>
+#include <stdlib.h>
+
+#include "DTypes.h"
+#include "Common.h"
+#include "Comparison.h"
+
 
 void gteInt32Value(tensor_t *a, int32_t b, int32_t altNumber, tensor_t *result) {
     size_t numberOfValues = calcNumberOfElementsByTensor(a);
@@ -21,7 +26,8 @@ void gteInt32Tensor(tensor_t *a, tensor_t *b, int32_t altNumber, tensor_t *resul
     size_t aNumberOfValues = calcNumberOfElementsByTensor(a);
     size_t bNumberOfValues = calcNumberOfElementsByTensor(b);
     if (aNumberOfValues != bNumberOfValues) {
-        printf("Error in Comparison of int32 tensors: mismatched number of values\n");
+        PRINT_ERROR("Mismatched number of values!");
+        exit(1);
     }
 
     int32_t aValues[aNumberOfValues];
@@ -56,7 +62,8 @@ void gteFloatTensor(tensor_t *a, tensor_t *b, float altNumber, tensor_t *result)
     size_t aNumberOfValues = calcNumberOfElementsByTensor(a);
     size_t bNumberOfValues = calcNumberOfElementsByTensor(b);
     if (aNumberOfValues != bNumberOfValues) {
-        printf("Error in Comparison of float tensors: mismatched number of values\n");
+        PRINT_ERROR("Mismatched number of values!");
+        exit(1);
     }
 
     float aValues[aNumberOfValues];
@@ -87,8 +94,6 @@ void gteSymInt32Zero(tensor_t *a, int32_t altNumber, tensor_t *result) {
     }
 }
 
-// QUESTION
-// TODO
 void gteSymInt32Value(tensor_t *a, int32_t b, int32_t altNumber, tensor_t *result) {
     size_t numberOfValues = calcNumberOfElementsByTensor(a);
     int32_t values[numberOfValues];
@@ -111,8 +116,8 @@ void gteSymInt32Tensor(tensor_t *a, tensor_t *b, int32_t altNumber, tensor_t *re
     size_t aNumberOfValues = calcNumberOfElementsByTensor(a);
     size_t bNumberOfValues = calcNumberOfElementsByTensor(b);
     if (aNumberOfValues != bNumberOfValues) {
-        printf("Error in Comparison of float tensors: mismatched number of values\n");
-    }
+        PRINT_ERROR("Mismatched number of values!");
+        exit(1);    }
 
     float aValues[aNumberOfValues];
     float bValues[bNumberOfValues];

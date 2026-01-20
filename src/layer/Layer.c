@@ -1,7 +1,10 @@
-#include "Layer.h"
+#define SOURCE_FILE "LAYER"
+
 #include "Linear.h"
 #include "Relu.h"
 #include "Softmax.h"
+#include "Layer.h"
+
 
 layerFunctions_t layerFunctions[] = {
     [LINEAR] = {linearForward, linearBackward, linearCalcOutputShape},

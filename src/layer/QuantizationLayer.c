@@ -1,3 +1,5 @@
+#define SOURCE_FILE "QUANTIZATION_LAYER"
+
 #include "TensorConversion.h"
 #include "QuantizationLayer.h"
 

@@ -1,8 +1,4 @@
-#include "Div.h"
-#include "Arithmetic.h"
-#include "DTypes.h"
-
-#include <stdio.h>
+#define SOURCE_FILE "DIV"
 
 #ifdef TRACK_INSTRUCTIONS
 #define DIV_FUNC_INT divIntsWithInstructionCounter
@@ -11,6 +7,15 @@
 #define DIV_FUNC_INT divInts
 #define DIV_FUNC_FLOAT divFloats
 #endif
+
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "Arithmetic.h"
+#include "DTypes.h"
+#include "Div.h"
+#include "Common.h"
+
 
 size_t divInstructionCounter = 0;
 
@@ -23,7 +28,7 @@ int32_t divIntsWithInstructionCounter(int32_t a, int32_t b) {
     return a / b;
 }
 
-int32_t divInt32s(int32_t a, int32_t b){
+int32_t divInt32s(int32_t a, int32_t b) {
     return DIV_FUNC_INT(a, b);
 }
 
@@ -77,8 +82,8 @@ void divSymInt32Tensors(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTe
     size_t bNumberOfValues = calcNumberOfElementsByTensor(bTensor);
 
     if (aNumberOfValues != bNumberOfValues) {
-        printf("Error in DivSymInt32Tensors: mismatched number of values\n");
-    }
+        PRINT_ERROR("Mismatched number of values!");
+        exit(1);    }
 
     int32_t aValues[aNumberOfValues];
     int32_t bValues[aNumberOfValues];
@@ -103,8 +108,8 @@ void divSymInt32TensorsInplace(tensor_t *aTensor, tensor_t *bTensor) {
     size_t bNumberOfValues = calcNumberOfElementsByTensor(bTensor);
 
     if (aNumberOfValues != bNumberOfValues) {
-        printf("Error in DivSymInt32TensorsInplace: mismatched number of values\n");
-    }
+        PRINT_ERROR("Mismatched number of values!");
+        exit(1);    }
 
     int32_t aValues[aNumberOfValues];
     int32_t bValues[aNumberOfValues];

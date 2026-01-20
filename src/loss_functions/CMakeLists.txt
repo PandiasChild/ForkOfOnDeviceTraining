@@ -4,6 +4,7 @@ target_include_directories(CrossEntropy PUBLIC include)
 target_link_libraries(CrossEntropy PRIVATE
         Tensor
         Log
+        Common
         CommonLayerLibs
 )
 
@@ -27,4 +28,5 @@ target_link_libraries(MSE PRIVATE
         TensorConversion
         Square
         Sub
+        Common
 )

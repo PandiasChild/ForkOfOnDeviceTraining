@@ -1,7 +1,10 @@
-#include "MinMax.h"
-#include "DTypes.h"
+#define SOURCE_FILE "MINMAX"
 
 #include <math.h>
+
+#include "DTypes.h"
+#include "MinMax.h"
+
 
 float findAbsMaxFloat(uint8_t *bytes, size_t numberOfElements) {
     float *values = (float *) bytes;

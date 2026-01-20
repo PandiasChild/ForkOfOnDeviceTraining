@@ -1,5 +1,11 @@
-#include "Optimizer.h"
+#define SOURCE_FILE "OPTIMIZER"
+
+#include <stdlib.h>
+
 #include "Sgd.h"
+#include "Common.h"
+#include "Optimizer.h"
+
 
 optimizerFunctions_t optimizerFunctions[] = {
     [SGD] = {sgdStep, sgdZeroGrad},
@@ -15,7 +21,8 @@ static size_t calcNumberOfStatesByLayerType(const layerType_t type) {
     case CONV1D:
         return 2;
     default:
-        return 0;
+        PRINT_ERROR("Unknown Layer Type!");
+        exit(1);
     }
 }
 

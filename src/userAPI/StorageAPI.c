@@ -1,6 +1,9 @@
-#include "StorageAPI.h"
+#define SOURCE_FILE "STORAGE_API"
 
 #include <stdlib.h>
+
+#include "StorageAPI.h"
+
 
 void **reserveMemory(size_t numberOfBytes) {
     void *ptr = calloc(1, numberOfBytes);

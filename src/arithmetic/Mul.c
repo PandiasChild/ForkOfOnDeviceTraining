@@ -1,8 +1,4 @@
-#include "Mul.h"
-#include "Arithmetic.h"
-#include "DTypes.h"
-
-#include <stdio.h>
+#define SOURCE_FILE "MUL"
 
 #ifdef TRACK_INSTRUCTIONS
 #define MUL_FUNC_INT mulIntsWithInstructionCounter
@@ -11,6 +7,16 @@
 #define MUL_FUNC_INT mulInts
 #define MUL_FUNC_FLOAT mulFloats
 #endif
+
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "Arithmetic.h"
+#include "DTypes.h"
+#include "Mul.h"
+
+#include <Common.h>
+
 
 size_t mulInstructionCounter = 0;
 
@@ -85,7 +91,8 @@ void mulSymInt32Tensors(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTe
     size_t bNumberOfValues = calcNumberOfElementsByTensor(bTensor);
 
     if (aNumberOfValues != bNumberOfValues) {
-        printf("Error in MulSymInt32Tensors: mismatched number of values\n");
+        PRINT_ERROR("Mismatched number of values!");
+        exit(1);
     }
 
     int32_t aValues[aNumberOfValues];
@@ -111,8 +118,8 @@ void mulSymInt32TensorsInplace(tensor_t *aTensor, tensor_t *bTensor) {
     size_t bNumberOfValues = calcNumberOfElementsByTensor(bTensor);
 
     if (aNumberOfValues != bNumberOfValues) {
-        printf("Error in MulSymInt32TensorsInplace: mismatched number of values\n_");
-    }
+        PRINT_ERROR("Mismatched number of values!");
+        exit(1);    }
 
     int32_t aValues[aNumberOfValues];
     int32_t bValues[aNumberOfValues];

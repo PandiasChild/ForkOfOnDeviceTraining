@@ -1,7 +1,10 @@
+#define SOURCE_FILE "TENSOR_API"
+
 #include <math.h>
 #include <stdlib.h>
-#include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <string.h>
 
 #include "Rounding.h"
 #include "TensorConversion.h"
@@ -9,8 +12,8 @@
 #include "StorageAPI.h"
 #include "QuantizationAPI.h"
 
-#include <stdio.h>
-#include <string.h>
+#include <Common.h>
+
 
 // tensor inits
 
@@ -172,7 +175,8 @@ tensor_t *tensorInit(float *data, size_t *dims, size_t numberOfDims, quantizatio
     case ASYM:
         return initTensorWithQAsym(data, dims, numberOfDims, quantization, sparsity);
     default:
-        return NULL;
+        PRINT_ERROR("Unknown QType");
+        exit(1);
     }
 }
 
@@ -297,7 +301,8 @@ quantization_t *getQLike(quantization_t *quantization) {
         initAsymQuantization(likeAsymQC, likeQ);
         break;
     default:
-        return NULL;
+        PRINT_ERROR("Unknown QType");
+        exit(1);
     }
     return likeQ;
 }
@@ -316,7 +321,8 @@ static uint8_t *getDataLike(quantization_t *quantization, size_t numberOfValues)
         size_t totalBytes = ceilf(totalBits / 8);
         return *reserveMemory(totalBytes);
     default:
-        return NULL;
+        PRINT_ERROR("Unknown QType");
+        exit(1);
     }
 }
 

@@ -3,12 +3,13 @@
 #include <stdio.h>
 #include <string.h>
 #include <tgmath.h>
+#include <stdlib.h>
 
 #include "Tensor.h"
-#include "Layer.h"
-#include "Linear.h"
 #include "TensorConversion.h"
+#include "Common.h"
 #include "Sgd.h"
+
 
 void sgdInit(sgd_t *sgd, float learningRate, float momentumFactor, float weightDecay) {
     sgd->learningRate = learningRate;
@@ -77,7 +78,8 @@ void sgdStep(optimizer_t *optimizer) {
         sgdStepSymInt32(optimizer);
         break;
     default:
-        break;
+        PRINT_ERROR("Unknown Layer Type!");
+        exit(1);
     }
 }
 
@@ -159,8 +161,8 @@ void sgdStepM(optimizer_t *optimizer) {
         sgdStepMSymInt32(optimizer);
         break;
     default:
-        break;
-    }
+        PRINT_ERROR("Unknown Layer Type!");
+        exit(1);    }
 }
 
 void sgdZeroGrad(optimizer_t *optimizer) {
@@ -172,7 +174,7 @@ void sgdZeroGrad(optimizer_t *optimizer) {
 
         memset(param->grad->data, 0, totalNumberOfBytes);
 
-        if(param->grad->quantization->type == SYM_INT32) {
+        if (param->grad->quantization->type == SYM_INT32) {
             symInt32QConfig_t *symIntQ = param->grad->quantization->qConfig;
             symIntQ->scale = 1.f;
         }

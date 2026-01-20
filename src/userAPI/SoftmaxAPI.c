@@ -1,3 +1,5 @@
+#define SOURCE_FILE "SOFTMAX_API"
+
 #include "StorageAPI.h"
 #include "Softmax.h"
 #include "SoftmaxAPI.h"

@@ -1,6 +1,9 @@
+#define SOURCE_FILE "TRAINING_API"
+
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 #include "Layer.h"
 #include "LossFunction.h"
@@ -10,6 +13,8 @@
 #include "TrainingAPI.h"
 #include "Linear.h"
 #include "Relu.h"
+#include "Common.h"
+
 
 void deInitGradTensor(tensor_t *tensor) {
     freeData(tensor);
@@ -38,9 +43,9 @@ static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t si
             currentQ = reluConfig->forwardQ;
             break;
         default:
-            break;
+            PRINT_ERROR("Unknown Layer Type!");
+            exit(1);
         }
-
 
         calcOutputShapeFn_t calcOutputShape = layerFunctions[currentLayer->type].calcOutputShape;
         size_t numberOfDims = layerOutputs[i]->shape->numberOfDimensions;
@@ -72,7 +77,8 @@ static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t si
             initSymInt32Quantization(qC, q);
             break;
         default:
-            break;
+            PRINT_ERROR("Unknown QType!");
+            exit(1);
         }
 
         tensor_t *tensor = *reserveMemory(sizeof(tensor_t));
@@ -125,7 +131,8 @@ static void initGradTensor(tensor_t *grad, tensor_t *layerOutput, layer_t *layer
         initSymInt32Quantization(qC, q);
         break;
     default:
-        break;
+        PRINT_ERROR("Unknown QType!");
+        exit(1);
     }
 
     grad->data = data;
@@ -187,17 +194,16 @@ trainingStats_t *calculateGrads(layer_t **model, size_t sizeNetwork,
 
     // LOSS
 
-    // TODO this is hardcoded and needs to be changed!!!
-    lossFunctions_t mseFns = lossFunctions[MSE];
+    lossFunctions_t lossFns = lossFunctions[lossType];
 
-    float loss = mseFns.forward(layerOutputs[sizeNetwork], label);
+    float loss = lossFns.forward(layerOutputs[sizeNetwork], label);
     trainingStats->loss = loss;
 
     tensor_t ping;
     initGradTensor(&ping, layerOutputs[sizeNetwork], model[sizeNetwork - 1]);
     tensor_t pong;
     bool toggle = 0;
-    mseFns.backward(layerOutputs[sizeNetwork], label, &ping);
+    lossFns.backward(layerOutputs[sizeNetwork], label, &ping);
 
     // Backward pass
     size_t backwardIndex = sizeNetwork - 1;

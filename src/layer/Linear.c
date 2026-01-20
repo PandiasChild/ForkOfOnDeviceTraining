@@ -1,10 +1,14 @@
+#define SOURCE_FILE "LINEAR"
+
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "Add.h"
 #include "Layer.h"
 #include "Matmul.h"
 #include "Rounding.h"
 #include "TensorConversion.h"
+#include "Common.h"
 #include "Linear.h"
 
 
@@ -48,7 +52,8 @@ void linearForward(layer_t *linearLayer, tensor_t *input, tensor_t *output) {
         linearForwardSymInt32(weights, bias, input, output);
         break;
     default:
-        break;
+        PRINT_ERROR("Unknown QType!");
+        exit(1);
     }
 }
 
@@ -433,7 +438,8 @@ void linearBackward(layer_t *linearLayer, tensor_t *forwardInput, tensor_t *loss
         linearCalcWeightGradsSymInt32WithConversion(linearConfig, loss, forwardInput);
         break;
     default:
-        break;
+        PRINT_ERROR("Unknown QType!");
+        exit(1);
     }
 
     switch (linearConfig->biasGradQ->type) {
@@ -444,7 +450,8 @@ void linearBackward(layer_t *linearLayer, tensor_t *forwardInput, tensor_t *loss
         linearCalcBiasGradsSymInt32WithConversion(linearConfig, loss);
         break;
     default:
-        break;
+        PRINT_ERROR("Unknown QType!");
+        exit(1);
     }
 
     switch (linearConfig->propLossQ->type) {
@@ -455,7 +462,8 @@ void linearBackward(layer_t *linearLayer, tensor_t *forwardInput, tensor_t *loss
         linearCalcPropLossSymInt32WithConversion(linearConfig, loss, propLoss);
         break;
     default:
-        break;
+        PRINT_ERROR("Unknown QType!");
+        exit(1);
     }
 }
 

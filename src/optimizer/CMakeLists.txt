@@ -5,6 +5,7 @@ target_link_libraries(Optimizer PRIVATE
         Rounding
         Layer
         Tensor
+        Common
 )
 
 add_library(Sgd Sgd.c)
@@ -14,4 +15,5 @@ target_link_libraries(Sgd PRIVATE
         Tensor
         Arithmetic
         Layer
+        Common
 )

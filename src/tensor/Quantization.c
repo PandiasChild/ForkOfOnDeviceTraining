@@ -1,3 +1,5 @@
+#define SOURCE_FILE "QUANTIZATION"
+
 #include <stddef.h>
 #include <stdint.h>
 

@@ -5,6 +5,7 @@ target_link_libraries(InferenceAPI PRIVATE
         Rounding
         Layer
         LossFunction
+        Common
 )
 
 add_library(LinearAPI LinearAPI.c)
@@ -14,6 +15,7 @@ target_link_libraries(LinearAPI PRIVATE
         Rounding
         Layer
         Linear
+        Common
 )
 
 add_library(OptimizerAPI OptimizerAPI.c)
@@ -24,6 +26,7 @@ target_link_libraries(OptimizerAPI PRIVATE
         Tensor
         Rounding
         Layer
+        Common
 )
 
 add_library(QuantizationAPI QuantizationAPI.c)
@@ -31,6 +34,7 @@ target_include_directories(QuantizationAPI PUBLIC include)
 target_link_libraries(QuantizationAPI PRIVATE
         Quantization
         Rounding
+        Common
 )
 
 add_library(ReluAPI ReluAPI.c)
@@ -40,6 +44,7 @@ target_link_libraries(ReluAPI PRIVATE
         Rounding
         Layer
         Relu
+        Common
 )
 
 add_library(SgdAPI SgdAPI.c)
@@ -50,6 +55,7 @@ target_link_libraries(SgdAPI PRIVATE
         Layer
         Sgd
         Optimizer
+        Common
 )
 
 add_library(SoftmaxAPI SoftmaxAPI.c)
@@ -59,6 +65,7 @@ target_link_libraries(SoftmaxAPI PRIVATE
         Tensor
         Rounding
         StorageAPI
+        Common
 )
 
 add_library(StorageAPI StorageAPI.c)
@@ -66,6 +73,7 @@ target_include_directories(StorageAPI PUBLIC include)
 target_link_libraries(StorageAPI PRIVATE
         Tensor
         Rounding
+        Common
 )
 
 add_library(TensorAPI TensorAPI.c)
@@ -74,6 +82,7 @@ target_link_libraries(TensorAPI PRIVATE
         Tensor
         Rounding
         StorageAPI
+        Common
 )
 
 add_library(TrainingAPI TrainingAPI.c)
@@ -84,6 +93,7 @@ target_link_libraries(TrainingAPI PRIVATE
         Rounding
         MSE
         Optimizer
+        Common
 )
 
 

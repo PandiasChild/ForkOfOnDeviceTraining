@@ -1,10 +1,15 @@
+#define SOURCE_FILE "MSE"
+
 #include <Mul.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "MSE.h"
 #include "Tensor.h"
 #include "TensorConversion.h"
 #include "Sub.h"
+#include "Common.h"
+
 
 float mseLossForwardFloat(tensor_t *output, tensor_t *label) {
     size_t size = calcNumberOfElementsByTensor(output);
@@ -58,6 +63,9 @@ float mseLossForward(tensor_t *output, tensor_t *label) {
         return mseLossForwardFloat(output, label);
     case SYM_INT32:
         return mseLossForwardSymInt32(output, label);
+    default:
+        PRINT_ERROR("Unknown QType!");
+        exit(1);
     }
 }
 
@@ -124,7 +132,7 @@ void mseLossBackward(tensor_t *modelOutput, tensor_t *label, tensor_t *result) {
         mseLossBackwardSymInt32(modelOutput, label, result);
         break;
     default:
-        printf("Error in MSE Backward: qtype not supported\n");
-        break;
+        PRINT_ERROR("Unknown QType!");
+        exit(1);
     }
 }

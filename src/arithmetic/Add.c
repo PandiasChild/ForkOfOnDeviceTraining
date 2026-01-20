@@ -1,11 +1,4 @@
-#include "Add.h"
-#include "Tensor.h"
-#include "DTypes.h"
-#include "Arithmetic.h"
-#include "TensorConversion.h"
-
-#include <stdio.h>
-#include <stdlib.h>
+#define SOURCE_FILE "ADD"
 
 #ifdef TRACK_INSTRUCTIONS
 #define ADD_FUNC_INT addIntsWithInstructionCounter
@@ -14,6 +7,17 @@
 #define ADD_FUNC_INT addInts
 #define ADD_FUNC_FLOAT addFloats
 #endif
+
+#include "Add.h"
+#include "Tensor.h"
+#include "DTypes.h"
+#include "Arithmetic.h"
+#include "TensorConversion.h"
+#include "Common.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+
 
 size_t addInstructionCounter = 0;
 
@@ -81,7 +85,8 @@ void addInt32TensorToSymInt32TensorInplace(tensor_t *symInt32Tensor, tensor_t *i
     size_t int32NumberOfValues = calcNumberOfElementsByTensor(int32Tensor);
 
     if (symInt32NumberOfValues != int32NumberOfValues) {
-        printf("Error in add int to symInt: mismatched number of elements\n");
+        PRINT_ERROR("Mismatched number of values!");
+        exit(1);
     }
 
     int32_t intValues[symInt32NumberOfValues];
@@ -105,7 +110,8 @@ void addFloat32TensorToSymInt32TensorInplace(tensor_t *symInt32Tensor, tensor_t 
     size_t int32NumberOfValues = calcNumberOfElementsByTensor(float32Tensor);
 
     if (symInt32NumberOfValues != int32NumberOfValues) {
-        printf("Error in add int to symInt: mismatched number of elements\n");
+        PRINT_ERROR("Mismatched number of values!");
+        exit(1);
     }
 
     float floatValues[symInt32NumberOfValues];
@@ -128,7 +134,8 @@ void addSymInt32Tensors(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTe
     size_t bNumberOfValues = calcNumberOfElementsByTensor(bTensor);
 
     if (aNumberOfValues != bNumberOfValues) {
-        printf("Error in addSymInt32Tensors: mismatched number of values\n");
+        PRINT_ERROR("Mismatched number of values!");
+        exit(1);
     }
 
     symInt32QConfig_t *aSymInt32QConfig = aTensor->quantization->qConfig;
@@ -176,7 +183,7 @@ void addSymInt32TensorsInplace(tensor_t *aTensor, tensor_t *bTensor) {
     size_t bNumberOfValues = calcNumberOfElementsByTensor(bTensor);
 
     if (aNumberOfValues != bNumberOfValues) {
-        printf("Error in addSymInt32Tensors: mismatched number of values\n");
+        printf("Mismatched number of values!");
     }
 
     quantization_t floatQ;

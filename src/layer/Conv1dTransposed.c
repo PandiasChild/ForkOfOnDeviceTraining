@@ -1,5 +1,3 @@
-//
-// Created by Leo Buron on 21.10.25.
-//
+#define SOURCE_FILE "CONV1D_TRANSPOSED"
 
 #include "Conv1dTransposed.h"

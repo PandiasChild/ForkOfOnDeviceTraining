@@ -1,11 +1,16 @@
+#define SOURCE_FILE "SGD_API"
+
+#include <stdio.h>
+#include <stdlib.h>
+
 #include "Tensor.h"
 #include "Layer.h"
-#include "StorageAPI.h"
 #include "SgdAPI.h"
 #include "TensorAPI.h"
 #include "Linear.h"
+#include "Common.h"
+#include "StorageAPI.h"
 
-#include <stdio.h>
 
 // IMPORTANT: Currently, the quantization for states are the same as the corresponding parameter
 optimizer_t *sgdMCreateOptim(float learningRate, float momentumFactor, float weightDecay,
@@ -59,22 +64,26 @@ optimizer_t *sgdMCreateOptim(float learningRate, float momentumFactor, float wei
             states[i + 1] = biasStates;
 
             break;
-        default:
+        case RELU:
+        case SOFTMAX:
             break;
+        default:
+            PRINT_ERROR("Unknown Layer Type");
+            exit(1);
         }
     }
     return optim;
 }
 
 void freeState(states_t *state) {
-    for(size_t i = 0; i < state->statesPerParameter; i++) {
+    for (size_t i = 0; i < state->statesPerParameter; i++) {
         freeTensor(state->stateBuffers[i]);
     }
     freeReservedMemory(state);
 }
 
 void freeOptimSgdM(optimizer_t *sgdM) {
-    for(size_t i = 0; i < sgdM->sizeStates; i++) {
+    for (size_t i = 0; i < sgdM->sizeStates; i++) {
         freeParameter(sgdM->parameter[i]);
         freeState(sgdM->states[i]);
     }
