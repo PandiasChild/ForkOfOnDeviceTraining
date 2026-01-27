@@ -1,12 +1,13 @@
+#include <string.h>
+
 #include "Add.h"
 #include "Tensor.h"
 #include "unity.h"
-#include "TensorAPI.h"
+#include "TensorApi.h"
+#include "DTypes.h"
+#include "QuantizationApi.h"
+#include "TensorConversion.h"
 
-#include <DTypes.h>
-#include <QuantizationAPI.h>
-#include <TensorConversion.h>
-#include <string.h>
 
 void setUp() {}
 void tearDown() {}

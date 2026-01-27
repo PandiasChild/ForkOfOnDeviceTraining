@@ -121,3 +121,5 @@ devenv.local.nix
 
 ### data loader folder with MNIST
 /test/unit/data_loader/data/
+
+*.csv

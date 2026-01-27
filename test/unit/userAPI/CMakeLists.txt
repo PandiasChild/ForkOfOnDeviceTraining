@@ -1,26 +1,28 @@
 add_elastic_ai_unit_test(
         LIB_UNDER_TEST
-        InferenceAPI
+        InferenceApi
         MORE_LIBS
         CommonLayerLibs
-        TensorAPI
-        LinearAPI
-        ReluAPI
-        QuantizationAPI
+        TensorApi
+        LinearApi
+        ReluApi
+        QuantizationApi
         LossFunction
+        DataLoader
 )
 
 add_elastic_ai_unit_test(
         LIB_UNDER_TEST
-        TrainingAPI
+        TrainingApi
         MORE_LIBS
         CommonLayerLibs
-        TensorAPI
-        LinearAPI
-        ReluAPI
-        SgdAPI
-        QuantizationAPI
+        TensorApi
+        LinearApi
+        ReluApi
+        SgdApi
+        QuantizationApi
         LossFunction
-        InferenceAPI
-        ReluAPI
+        InferenceApi
+        ReluApi
+        DataLoader
 )

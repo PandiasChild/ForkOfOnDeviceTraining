@@ -3,7 +3,7 @@
 #include "MSE.h"
 #include "unity.h"
 #include "TensorConversion.h"
-#include "TensorAPI.h"
+#include "TensorApi.h"
 
 void testMSEForward() {
     float outputData[] = {1.f, 2.f, 3.f};

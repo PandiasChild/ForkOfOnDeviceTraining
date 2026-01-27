@@ -11,6 +11,11 @@ odt_is_top_level_project(ODT_TOP_LEVEL_PROJECT)
 add_subdirectory(src)
 
 set(DEBUG_LEVEL "0" CACHE STRING "Debug verbosity: 0=off, 1=error, 2=warn, 3=info")
+option(HOST "Build for host machine" ON)
+if(NOT HOST)
+    add_compile_definitions(BUILDING_FOR_REMOTE)
+endif()
+
 
 if(ODT_TOP_LEVEL_PROJECT)
     if(NOT ODT_PATH)
@@ -21,4 +26,5 @@ if(ODT_TOP_LEVEL_PROJECT)
     add_ctest()
 
     add_subdirectory(test/unit)
+    add_subdirectory(experiments)
 endif()

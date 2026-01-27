@@ -3,8 +3,8 @@ add_elastic_ai_unit_test(
         Sgd
         MORE_LIBS
         CommonLayerLibs
-        SgdAPI
-        TensorAPI
-        LinearAPI
-        ReluAPI
+        SgdApi
+        TensorApi
+        LinearApi
+        ReluApi
 )

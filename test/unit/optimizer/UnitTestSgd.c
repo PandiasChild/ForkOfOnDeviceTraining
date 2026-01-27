@@ -6,12 +6,12 @@
 #include "Layer.h"
 #include "Tensor.h"
 #include "Sgd.h"
-#include "SgdAPI.h"
-#include "LinearAPI.h"
-#include "TensorAPI.h"
-#include "OptimizerAPI.h"
+#include "SgdApi.h"
+#include "LinearApi.h"
+#include "TensorApi.h"
+#include "OptimizerApi.h"
 
-#include <ReluAPI.h>
+#include <ReluApi.h>
 
 void setUp() {}
 void tearDown() {}

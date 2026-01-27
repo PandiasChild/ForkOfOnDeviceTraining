@@ -54,8 +54,8 @@ void csvParseBufferAsFloat(csvData_t *csvData, float **output) {
     }
 }
 
-void csvWriteRowsByBufferSize(char *filePath, csvData_t *csvData) {
-    FILE *fp = fopen(filePath, "w");
+void csvWriteRowsByBufferSize(char *filePath, csvData_t *csvData, char *mode) {
+    FILE *fp = fopen(filePath, mode);
     if (fp == NULL) {
         PRINT_ERROR("Could not open file %s", filePath);
         exit(1);

@@ -3,9 +3,9 @@
 #include "Softmax.h"
 #include "unity.h"
 #include "TensorConversion.h"
-#include "SoftmaxAPI.h"
-#include "TensorAPI.h"
-#include "QuantizationAPI.h"
+#include "SoftmaxApi.h"
+#include "TensorApi.h"
+#include "QuantizationApi.h"
 
 void unitTestSoftmaxForwardFloat() {
     size_t inputSize = 6;

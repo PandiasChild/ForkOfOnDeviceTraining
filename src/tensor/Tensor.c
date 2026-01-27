@@ -318,7 +318,7 @@ void printTensor(tensor_t *t) {
     }
 
     printf("TENSOR END \n");
-    printf("\n");
+    printf("_____________________\n");
 }
 
 void printShape(shape_t *shape) {
@@ -335,6 +335,7 @@ void printShape(shape_t *shape) {
     for (size_t i = 0; i < numberOfDims; i++) {
         printf("%lu\n", shape->orderOfDimensions[i]);
     }
+    printf("__________\n");
 }
 
 void initOrderOfDimensions(size_t *orderOfDims, size_t numberOfDims) {

@@ -7,20 +7,52 @@
 #include "Log.h"
 #include "Common.h"
 
+#include <math.h>
+
 
 float crossEntropyForwardFloat(tensor_t *softmaxOutput, tensor_t *distribution) {
+    size_t n = calcNumberOfElementsByTensor(softmaxOutput);
+    float *p = (float *)softmaxOutput->data;
+    float *y = (float *)distribution->data;
+
+    float loss = 0.f;
+    for (size_t i = 0; i < n; i++) {
+        float pi = p[i];
+
+        if (!isfinite(pi)) {
+            printf("NaN/Inf softmax at %zu\n", i);
+            printf("%f\n", pi);
+            abort();
+        }
+
+        pi = fmaxf(pi, 1e-7f);
+        loss += y[i] * -logf(pi);
+    }
+    return loss;
+}
+
+
+/*float crossEntropyForwardFloat(tensor_t *softmaxOutput, tensor_t *distribution) {
     size_t numberOfValues = calcNumberOfElementsByTensor(softmaxOutput);
 
     float *softmaxOutputFloat = (float *)softmaxOutput->data;
     float *distributionFloat = (float *)distribution->data;
 
+
     float loss = 0.f;
     for (size_t i = 0; i < numberOfValues; i++) {
+        if(softmaxOutputFloat[i] == 0) {
+            // Question aks Leo if == 1 or small value
+            softmaxOutputFloat[i] = 0.00000000001f;
+        }
+
+        printf("%f\n", softmaxOutputFloat[i]);
+
         loss += distributionFloat[i] * -logFloat(softmaxOutputFloat[i]);
     }
 
     return loss;
-}
+}*/
 
 static void crossEntropySoftmaxBackwardFloat(tensor_t *softmaxOutput, tensor_t *distribution, tensor_t *loss) {
     size_t totalInputSize = calcNumberOfElementsByTensor(softmaxOutput);

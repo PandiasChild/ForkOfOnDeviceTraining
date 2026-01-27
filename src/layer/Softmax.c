@@ -24,6 +24,33 @@ void softmaxInitLayer(layerConfig_t *softmaxConfig, layer_t *softmaxLayer) {
 }
 
 static void softmaxForwardFloat(tensor_t *input, tensor_t *output) {
+    size_t n = calcNumberOfElementsByTensor(input);
+
+    float *x = (float *)input->data;
+    float *y = (float *)output->data;
+
+    // 1. find max
+    float max = x[0];
+    for (size_t i = 1; i < n; i++) {
+        if (x[i] > max) max = x[i];
+    }
+
+    // 2. exp and sum
+    float sum = 0.f;
+    for (size_t i = 0; i < n; i++) {
+        float e = expf(x[i] - max);
+        y[i] = e;
+        sum += e;
+    }
+
+    // 3. normalize
+    for (size_t i = 0; i < n; i++) {
+        y[i] /= sum;
+    }
+}
+
+
+/*static void softmaxForwardFloat(tensor_t *input, tensor_t *output) {
     size_t inputSize = calcNumberOfElementsByTensor(input);
 
     float *inputFloat = (float *)input->data;
@@ -37,7 +64,7 @@ static void softmaxForwardFloat(tensor_t *input, tensor_t *output) {
     for (size_t i = 0; i < inputSize; i++) {
         outputFloat[i] = expf(inputFloat[i]) / sum;
     }
-}
+}*/
 
 static void softmaxForwardSymInt32(tensor_t *input, tensor_t *output) {
     size_t inputSize = calcNumberOfElementsByTensor(input);

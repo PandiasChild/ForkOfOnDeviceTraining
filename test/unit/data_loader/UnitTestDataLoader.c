@@ -8,11 +8,11 @@
 #include <stdlib.h>
 
 #include "Tensor.h"
-#include "DataLoaderAPI.h"
+#include "DataLoaderApi.h"
 #include "unity.h"
-#include "MnistNPYLoaderAPI.h"
-#include "DatasetAPI.h"
+#include "NPYLoaderApi.h"
 #include "RNG.h"
+#include "DataLoader.h"
 
 static dataset_t trainDataset;
 static dataset_t testDataset;

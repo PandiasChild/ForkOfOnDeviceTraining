@@ -38,6 +38,7 @@ bool doDimensionsMatch(tensor_t *a, tensor_t *b) {
 
     for (size_t i = 0; i < aNumberOfDims; i++) {
         if (aOrderedDims[i] != bOrderedDims[i]) {
+            PRINT_DEBUG("Dim 1: %lu, Dims 2: %lu\n", aOrderedDims[i], bOrderedDims[i]);
             return false;
         }
     }

@@ -3,8 +3,8 @@ add_elastic_ai_unit_test(
         Add
         MORE_LIBS
         Tensor
-        TensorAPI
-        QuantizationAPI
+        TensorApi
+        QuantizationApi
         Arithmetic
 )
 

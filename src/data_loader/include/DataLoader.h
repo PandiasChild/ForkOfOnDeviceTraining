@@ -2,30 +2,12 @@
 #define DATALOADER_H
 
 #include <stdbool.h>
-#include <stdio.h>
 
 #include "Tensor.h"
 #include "Dataset.h"
 
 
-typedef enum
-{
-    FLOAT_32,
-    INT_32
-} dtype_t;
-
 typedef struct dataLoader dataLoader_t;
-
-typedef struct sample
-{
-    tensor_t* item;
-    tensor_t* label;
-} sample_t;
-
-typedef struct batch {
-    sample_t **samples;
-    size_t size;
-} batch_t;
 
 typedef tensor_t* (*transformFn_t)(tensor_t* tensor);
 typedef sample_t* (*getSampleFn_t)(size_t id);

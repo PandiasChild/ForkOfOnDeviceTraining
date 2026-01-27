@@ -68,9 +68,11 @@ void linearCalcWeightGradsFloat32(tensor_t *forwardInput, tensor_t *loss, tensor
     setTensorValues(&intermediateWGrad, (uint8_t *)intermediateWGradData, weightGrads->shape,
                     &intermediateWGradQ, weightGrads->sparsity);
 
+    transposeTensor(loss, 0, 1);
     matmulFloat32Tensors(loss, forwardInput, &intermediateWGrad);
-    addFloat32TensorsInplace(weightGrads, &intermediateWGrad);
+    transposeTensor(loss, 0, 1);
 
+    addFloat32TensorsInplace(weightGrads, &intermediateWGrad);
 }
 
 void linearCalcWeightGradsFloatWithConversion(linearConfig_t *linearConfig, tensor_t *forwardInput,
@@ -163,9 +165,7 @@ void linearCalcBiasGradsFloatWithConversion(linearConfig_t *linearConfig, tensor
 
 
 void linearCalcPropLossFloat32(tensor_t *loss, tensor_t *weights, tensor_t *propLoss) {
-    transposeTensor(loss, 0, 1);
     matmulFloat32Tensors(loss, weights, propLoss);
-    transposeTensor(loss, 0, 1);
 }
 
 void linearCalcPropLossFloatWithConversion(linearConfig_t *linearConfig, tensor_t *loss,
@@ -199,7 +199,7 @@ void linearCalcPropLossFloatWithConversion(linearConfig_t *linearConfig, tensor_
         l = &lossFloat;
     }
 
-    linearCalcPropLossFloat32(w, l, pL);
+    linearCalcPropLossFloat32(l, w, pL);
 }
 
 
@@ -242,7 +242,9 @@ void linearCalcWeightGradsSymInt32(tensor_t *loss, tensor_t *forwardInput, tenso
     setTensorValues(&intermediateWGrad, (uint8_t *)intermediateWGradData, weightGrads->shape,
                     &intermediateWGradQ, weightGrads->sparsity);
 
+    transposeTensor(loss, 1, 0);
     matmulSymInt32Tensors(loss, forwardInput, &intermediateWGrad);
+    transposeTensor(loss, 1, 0);
 
     addSymInt32TensorsInplace(weightGrads, &intermediateWGrad);
 }
@@ -352,9 +354,7 @@ void linearCalcBiasGradsSymInt32WithConversion(linearConfig_t *linearConfig, ten
 
 
 void linearCalcPropLossSymInt32(tensor_t *weights, tensor_t *loss, tensor_t *propLoss) {
-    transposeTensor(loss, 0, 1);
     matmulSymInt32Tensors(loss, weights, propLoss);
-    transposeTensor(loss, 0, 1);
 }
 
 void linearCalcPropLossSymInt32WithConversion(linearConfig_t *linearConfig, tensor_t *loss,
@@ -468,14 +468,18 @@ void linearBackward(layer_t *linearLayer, tensor_t *forwardInput, tensor_t *loss
 }
 
 void linearCalcOutputShape(layer_t *linearLayer, shape_t *inputShape, shape_t *outputShape) {
+    if(inputShape->numberOfDimensions != 2) {
+        PRINT_ERROR("Linear layer expects 2D input, got %luD\n", inputShape->numberOfDimensions);
+    }
+
     size_t batchSize = inputShape->dimensions[0];
 
     linearConfig_t *cfg = linearLayer->config->linear;
     shape_t *weightShape = cfg->weights->param->shape;
     size_t outFeatures = weightShape->dimensions[0];
 
-    outputShape->dimensions[0] = outFeatures;
-    outputShape->dimensions[1] = batchSize;
+    outputShape->dimensions[0] = batchSize;
+    outputShape->dimensions[1] = outFeatures;
 
     outputShape->numberOfDimensions = inputShape->numberOfDimensions;
 

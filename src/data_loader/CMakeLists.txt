@@ -7,9 +7,9 @@ target_link_libraries(DataLoader PRIVATE
         RNG
 )
 
-add_library(MnistNPYLoader MnistNPYLoader.c)
-target_include_directories(MnistNPYLoader PUBLIC include)
-target_link_libraries(MnistNPYLoader PRIVATE
+add_library(NPYLoader NPYLoader.c)
+target_include_directories(NPYLoader PUBLIC include)
+target_link_libraries(NPYLoader PRIVATE
         Tensor
         Rounding
         Common

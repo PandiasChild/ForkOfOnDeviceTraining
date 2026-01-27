@@ -17,6 +17,7 @@ static size_t calcNumberOfStatesByLayerType(const layerType_t type) {
     case LINEAR:
         return 2;
     case RELU:
+    case SOFTMAX:
         return 0;
     case CONV1D:
         return 2;

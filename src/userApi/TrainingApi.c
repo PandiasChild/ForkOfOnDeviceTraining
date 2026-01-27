@@ -1,0 +1,294 @@
+#define SOURCE_FILE "TRAINING_API"
+
+#include <stdbool.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+#include "LossFunction.h"
+#include "Layer.h"
+#include "Optimizer.h"
+#include "TensorApi.h"
+#include "StorageApi.h"
+#include "TrainingApi.h"
+#include "TrainingApiInternal.h"
+#include "Linear.h"
+#include "Relu.h"
+#include "Common.h"
+#include "Softmax.h"
+
+
+trainingStats_t *calculateGrads(layer_t **model, size_t modelSize,
+                                lossType_t lossType, tensor_t *input,
+                                tensor_t *label) {
+
+    tensor_t *layerOutputs[modelSize + 1];
+    layerOutputs[0] = input;
+    initLayerOutputs(layerOutputs, model, modelSize);
+
+    // Forward pass
+    for (size_t i = 0; i < modelSize; i++) {
+        layer_t *currentLayer = model[i];
+        layerType_t currentLayerType = currentLayer->type;
+        forwardFn_t forward = layerFunctions[currentLayerType].forward;
+        forward(currentLayer, layerOutputs[i], layerOutputs[i + 1]);
+    }
+
+    trainingStats_t *trainingStats = initTrainingStats(layerOutputs[modelSize]);
+    copyTensor(trainingStats->output, layerOutputs[modelSize]);
+
+    // LOSS
+
+    lossFunctions_t lossFns = lossFunctions[lossType];
+    float loss = lossFns.forward(layerOutputs[modelSize], label);
+    trainingStats->loss = loss;
+
+    // Backward pass
+    size_t backwardIndex = modelSize - 1;
+    if (lossType == CROSS_ENTROPY) {
+        backwardIndex -= 1;
+    }
+
+    tensor_t gradNext;
+    initGradTensor(&gradNext, layerOutputs[modelSize]);
+    lossFns.backward(layerOutputs[modelSize], label, &gradNext);
+
+    for (int i = (int)backwardIndex; i >= 0; i--) {
+        tensor_t gradCurr;
+        initGradTensor(&gradCurr, layerOutputs[i]);
+
+        layerType_t layerType = model[i]->type;
+        backwardFn_t backward = layerFunctions[layerType].backward;
+
+        backward(model[i], layerOutputs[i], &gradNext, &gradCurr);
+
+        deInitGradTensor(&gradNext);
+        gradNext = gradCurr;
+    }
+
+    deInitLayerOutputs(layerOutputs, modelSize);
+
+    return trainingStats;
+}
+
+trainingStats_t **calculateGradsBatched(layer_t **model, size_t modelSize,
+                                        lossType_t lossType, batch_t *batch) {
+    trainingStats_t **trainingStatsArr = *reserveMemory(batch->size * sizeof(trainingStats_t));
+
+    for (size_t i = 0; i < batch->size; i++) {
+        trainingStatsArr[i] = calculateGrads(model, modelSize, lossType, batch->samples[i]->item,
+                                             batch->samples[i]->label);
+    }
+
+    return trainingStatsArr;
+}
+
+trainingStats_t *trainingEpoch(layer_t **model, size_t modelSize,
+                               lossType_t lossType, tensor_t *input,
+                               tensor_t *label, optimizer_t *optimizer) {
+
+    tensor_t *layerOutputs[modelSize + 1];
+    layerOutputs[0] = input;
+    initLayerOutputs(layerOutputs, model, modelSize);
+
+    // Forward pass
+    for (size_t i = 0; i < modelSize; i++) {
+        layer_t *currentLayer = model[i];
+        layerType_t currentLayerType = currentLayer->type;
+        forwardFn_t forward = layerFunctions[currentLayerType].forward;
+        forward(currentLayer, layerOutputs[i], layerOutputs[i + 1]);
+    }
+
+    trainingStats_t *trainingStats = initTrainingStats(label);
+    copyTensor(trainingStats->output, layerOutputs[modelSize]);
+
+    // Loss
+    lossFunctions_t lossFns = lossFunctions[lossType];
+    float loss = lossFns.forward(layerOutputs[modelSize], label);
+    trainingStats->loss = loss;
+
+    tensor_t gradNext;
+    initGradTensor(&gradNext, layerOutputs[modelSize]);
+    lossFns.backward(layerOutputs[modelSize], label, &gradNext);
+
+    // Backward pass
+    size_t backwardIndex = modelSize - 1;
+    if (lossType == CROSS_ENTROPY) {
+        backwardIndex -= 1;
+    }
+
+    for (int i = (int)backwardIndex; i >= 0; i--) {
+        tensor_t gradCurr;
+        initGradTensor(&gradCurr, layerOutputs[i]);
+
+        layerType_t layerType = model[i]->type;
+        backwardFn_t backward = layerFunctions[layerType].backward;
+
+        backward(model[i], layerOutputs[i], &gradNext, &gradCurr);
+
+        deInitGradTensor(&gradNext);
+        gradNext = gradCurr;
+    }
+
+    optimizerFunctions_t optimFns = optimizerFunctions[optimizer->type];
+    optimFns.step(optimizer);
+
+    deInitLayerOutputs(layerOutputs, modelSize);
+
+    return trainingStats;
+}
+
+void freeTrainingStats(trainingStats_t *trainingStats) {
+    freeTensor(trainingStats->output);
+    freeReservedMemory(trainingStats);
+}
+
+void freeTrainingStatsBatched(trainingStats_t **trainingStatsArr, size_t batchSize) {
+    for (size_t i = 0; i < batchSize; i++) {
+        freeTrainingStats(trainingStatsArr[i]);
+    }
+}
+
+
+static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t sizeNetwork) {
+    for (size_t i = 0; i < sizeNetwork; i++) {
+        layer_t *currentLayer = model[i];
+        quantization_t *currentQ = NULL;
+
+        switch (currentLayer->type) {
+        case LINEAR:
+            linearConfig_t *linearConfig = currentLayer->config->linear;
+            currentQ = linearConfig->forwardQ;
+            break;
+        case RELU:
+            reluConfig_t *reluConfig = currentLayer->config->relu;
+            currentQ = reluConfig->forwardQ;
+            break;
+        case SOFTMAX:
+            softmaxConfig_t *softmaxConfig = currentLayer->config->softmax;
+            currentQ = softmaxConfig->forwardQ;
+            break;
+        default:
+            PRINT_ERROR("Unknown Layer Type!");
+            exit(1);
+        }
+
+        calcOutputShapeFn_t calcOutputShape = layerFunctions[currentLayer->type].calcOutputShape;
+        size_t numberOfDims = layerOutputs[i]->shape->numberOfDimensions;
+
+        size_t *dims = *reserveMemory(numberOfDims * sizeof(size_t));
+        size_t *order = *reserveMemory(numberOfDims * sizeof(size_t));
+        shape_t *outShape = *reserveMemory(sizeof(shape_t));
+
+        outShape->dimensions = dims;
+        outShape->numberOfDimensions = numberOfDims;
+        outShape->orderOfDimensions = order;
+
+        calcOutputShape(currentLayer, layerOutputs[i]->shape, outShape);
+
+        size_t numberOfValues = calcNumberOfElementsByShape(outShape);
+        size_t sizeData = calcNumberOfBytesForData(currentQ, numberOfValues);
+        uint8_t *data = *reserveMemory(sizeData);
+
+        quantization_t *q = *reserveMemory(sizeof(quantization_t));
+        switch (currentQ->type) {
+        case FLOAT32:
+            initFloat32Quantization(q);
+            break;
+        case SYM_INT32:
+            q->type = SYM_INT32;
+            symInt32QConfig_t *currentQC = currentQ->qConfig;
+            symInt32QConfig_t *qC = *reserveMemory(sizeof(symInt32QConfig_t));
+            initSymInt32QConfig(currentQC->roundingMode, qC);
+            initSymInt32Quantization(qC, q);
+            break;
+        default:
+            PRINT_ERROR("Unknown QType!");
+            exit(1);
+        }
+
+        tensor_t *tensor = *reserveMemory(sizeof(tensor_t));
+        tensor->data = data;
+        tensor->quantization = q;
+        tensor->shape = outShape;
+
+        tensor->sparsity = NULL;
+        if (layerOutputs[i]->sparsity != NULL) {
+            sparsity_t *sparsity = *reserveMemory(sizeof(sparsity_t));
+            tensor->sparsity = sparsity;
+        }
+
+        layerOutputs[i + 1] = tensor;
+    }
+}
+
+static void deInitLayerOutputs(tensor_t **layerOutputs, size_t modelSize) {
+    for (size_t i = 1; i <= modelSize; i++) {
+        freeTensor(layerOutputs[i]);
+    }
+}
+
+static void initGradTensor(tensor_t *grad, tensor_t *layerOutput) {
+    shape_t *currentShape = layerOutput->shape;
+    quantization_t *currentQ = layerOutput->quantization;
+
+    size_t *dims = *reserveMemory(currentShape->numberOfDimensions * sizeof(size_t));
+    size_t *order = *reserveMemory(currentShape->numberOfDimensions * sizeof(size_t));
+    shape_t *inShape = *reserveMemory(sizeof(shape_t));
+
+    inShape->dimensions = dims;
+    inShape->numberOfDimensions = currentShape->numberOfDimensions;
+    inShape->orderOfDimensions = order;
+
+    memcpy(inShape->dimensions, currentShape->dimensions,
+           currentShape->numberOfDimensions * sizeof(size_t));
+    memcpy(inShape->orderOfDimensions, currentShape->orderOfDimensions,
+           currentShape->numberOfDimensions * sizeof(size_t));
+
+    setOrderOfDimsForNewTensor(inShape->numberOfDimensions, inShape->orderOfDimensions);
+
+    size_t numberOfValues = calcNumberOfElementsByShape(currentShape);
+    size_t sizeData = calcNumberOfBytesForData(currentQ, numberOfValues);
+    uint8_t *data = *reserveMemory(sizeData);
+
+    quantization_t *q = *reserveMemory(sizeof(quantization_t));
+    switch (currentQ->type) {
+    case FLOAT32:
+        initFloat32Quantization(q);
+        break;
+    case SYM_INT32:
+        symInt32QConfig_t *currentQC = currentQ->qConfig;
+        symInt32QConfig_t *qC = *reserveMemory(sizeof(symInt32QConfig_t));
+        initSymInt32QConfig(currentQC->roundingMode, qC);
+        initSymInt32Quantization(qC, q);
+        break;
+    default:
+        PRINT_ERROR("Unknown QType!");
+        exit(1);
+    }
+
+    grad->data = data;
+    grad->quantization = q;
+    grad->shape = inShape;
+
+    grad->sparsity = NULL;
+    if (layerOutput->sparsity != NULL) {
+        sparsity_t *sparsity = *reserveMemory(sizeof(sparsity_t));
+        grad->sparsity = sparsity;
+    }
+}
+
+static void deInitGradTensor(tensor_t *tensor) {
+    freeData(tensor);
+    freeShape(tensor->shape);
+    freeQuantization(tensor->quantization);
+}
+
+static trainingStats_t *initTrainingStats(tensor_t *output) {
+    trainingStats_t *trainingStats = *reserveMemory(sizeof(trainingStats_t));
+
+    tensor_t *o = getTensorLike(output);
+    trainingStats->output = o;
+
+    return trainingStats;
+}

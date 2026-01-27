@@ -56,7 +56,7 @@ void matmulIntTensors(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTens
 
     if (aColumns != bRows) {
         PRINT_ERROR("Rows dont match Columns");
-        PRINT_DEBUG("bRows: %lu, bCols: %lu\n", bRows, bColumns);
+        PRINT_DEBUG("aColumns: %lu, bRows: %lu\n", aColumns, bRows);
         exit(1);
     }
 
@@ -135,7 +135,7 @@ void matmulIntTensorsWithInstructionCounter(tensor_t *aTensor, tensor_t *bTensor
 
     if (aColumns != bRows) {
         PRINT_ERROR("Rows dont match Columns");
-        PRINT_DEBUG("bRows: %lu, bCols: %lu\n", bRows, bColumns);
+        PRINT_DEBUG("aColumns: %lu, bRows: %lu\n", aColumns, bRows);
         exit(1);
     }
 
@@ -186,10 +186,13 @@ void matmulInt32Tensors(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTe
 }
 
 void matmulFloatTensors(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTensor) {
+
     if (aTensor->shape->numberOfDimensions > 2 || bTensor->shape->numberOfDimensions > 2) {
         PRINT_ERROR("Matmul only supports up to 2D Tensors");
         exit(1);
     }
+
+
 
     size_t aNumberOfDims = aTensor->shape->numberOfDimensions;
     size_t *aDims = aTensor->shape->dimensions;
@@ -220,7 +223,7 @@ void matmulFloatTensors(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTe
 
     if (aColumns != bRows) {
         PRINT_ERROR("Rows dont match Columns");
-        PRINT_DEBUG("bRows: %lu, bCols: %lu\n", bRows, bColumns);
+        PRINT_DEBUG("aColumns: %lu, bRows: %lu\n", aColumns, bRows);
         exit(1);
     }
 
@@ -304,7 +307,7 @@ void matmulFloatTensorsWithInstructionCounter(tensor_t *aTensor, tensor_t *bTens
 
     if (aColumns != bRows) {
         PRINT_ERROR("Rows dont match Columns");
-        PRINT_DEBUG("bRows: %lu, bCols: %lu\n", bRows, bColumns);
+        PRINT_DEBUG("aColumns: %lu, bRows: %lu\n", aColumns, bRows);
         exit(1);
     }
 

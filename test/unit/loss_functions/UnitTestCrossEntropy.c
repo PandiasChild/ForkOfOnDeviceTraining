@@ -1,8 +1,8 @@
 #include "unity.h"
 #include "Softmax.h"
 #include "CrossEntropy.h"
-#include "QuantizationAPI.h"
-#include "SoftmaxAPI.h"
+#include "QuantizationApi.h"
+#include "SoftmaxApi.h"
 
 
 void unitTestCrossEntropyForward() {

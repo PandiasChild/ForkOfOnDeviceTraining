@@ -67,7 +67,7 @@ void testCSVWriteRowsByBufferSize() {
 
     setCSVData(&csvData, rows, numberOfRows, entriesInRow);
 
-    csvWriteRowsByBufferSize(filePath, &csvData);
+    csvWriteRowsByBufferSize(filePath, &csvData, "w");
 
     char actual[MAX_ROW_SIZE];
 

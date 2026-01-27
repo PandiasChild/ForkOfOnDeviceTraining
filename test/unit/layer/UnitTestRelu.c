@@ -4,9 +4,9 @@
 #include "DTypes.h"
 #include "Tensor.h"
 #include "TensorConversion.h"
-#include "ReluAPI.h"
-#include "TensorAPI.h"
-#include "QuantizationAPI.h"
+#include "ReluApi.h"
+#include "TensorApi.h"
+#include "QuantizationApi.h"
 
 void testReluForwardFloat() {
     size_t numberOfElements = 6;

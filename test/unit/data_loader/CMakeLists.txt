@@ -3,23 +3,21 @@ add_elastic_ai_unit_test(
         DataLoader
         MORE_LIBS
 
-        TensorAPI
+        TensorApi
         Tensor
         Quantization
         Rounding
 
-        QuantizationAPI
+        QuantizationApi
         Quantization
 
-        StorageAPI
+        StorageApi
 
-        DataLoaderAPI
+        DataLoaderApi
         DataLoader
 
-        MnistNPYLoaderAPI
-        MnistNPYLoader
-
-        DatasetAPI
+        NPYLoaderApi
+        NPYLoader
 
         RNG
 )
