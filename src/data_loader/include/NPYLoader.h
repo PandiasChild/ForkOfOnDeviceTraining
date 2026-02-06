@@ -1,7 +1,7 @@
 #ifndef NPYLOADER_H
 #define NPYLOADER_H
 
-FILE* openFile(char* path);
+FILE* openNPYFile(char* path);
 
 void checkMagic(FILE* f);
 

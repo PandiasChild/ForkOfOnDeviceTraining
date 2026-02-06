@@ -1,0 +1,19 @@
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
+        Deserialize
+        MORE_LIBS
+        TensorApi
+        Tensor
+        Rounding
+        Quantization
+        Serialize
+
+        QuantizationApi
+        Layer
+        Linear
+        LinearApi
+        Relu
+        ReluApi
+        Softmax
+        SoftmaxApi
+)

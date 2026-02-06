@@ -9,7 +9,7 @@
 #include "NPYLoader.h"
 
 
-FILE *openFile(char *path) {
+FILE *openNPYFile(char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) {
         PRINT_ERROR("File doesn't exist!");

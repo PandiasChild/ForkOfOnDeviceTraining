@@ -15,7 +15,7 @@
 
 
 tensorArray_t *npyLoad(char *path) {
-    FILE *f = openFile(path);
+    FILE *f = openNPYFile(path);
 
     checkMagic(f);
 

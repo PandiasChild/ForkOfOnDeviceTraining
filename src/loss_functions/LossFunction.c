@@ -1,3 +1,5 @@
+#define SOURCE_FILE "LOSS_FUNCTION"
+
 #include "LossFunction.h"
 #include "CrossEntropy.h"
 #include "MSE.h"

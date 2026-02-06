@@ -196,10 +196,6 @@ void testAddSymInt32TensorsInplace() {
 
     addSymInt32TensorsInplace(&aTensor, &bTensor);
 
-    symInt32QConfig_t *symInt32QC = aTensor.quantization->qConfig;
-    printf("scale: %e\n", symInt32QC->scale);
-    printTensor(&aTensor);
-
     float actual[numberOfValues];
     quantization_t *floatQ = quantizationInitFloat();
     tensor_t *floatTensor = tensorInit(actual, dims, numberOfDims, floatQ, NULL);
