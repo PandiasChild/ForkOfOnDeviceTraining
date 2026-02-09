@@ -15,4 +15,5 @@ target_link_libraries(TensorApi PRIVATE
         StorageApi
         Common
         TensorConversion
+        Distributions
 )

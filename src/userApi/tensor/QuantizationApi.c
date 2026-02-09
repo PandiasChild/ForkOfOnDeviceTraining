@@ -1,6 +1,7 @@
 #define SOURCE_FILE "QUANTIZATION_API"
 
 #include "StorageApi.h"
+#include "QuantizationApiInternal.h"
 #include "QuantizationApi.h"
 
 

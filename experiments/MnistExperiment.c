@@ -219,26 +219,17 @@ int main(void) {
 
     quantization_t *q = quantizationInitFloat();
 
-    float weight0Data[20 * 28 * 28];
-    float scale0 = sqrtf(6.0f / (28.0f * 28.0f + 20));
-    for (size_t i = 0; i < 28 * 28 * 20; i++) {
-        float r = (float)rand() / RAND_MAX; // [0, 1]
-        weight0Data[i] = (r * 2.0f - 1.0f) * scale0; // [-1, 1]
-    }
-
+    float weight0Data[20 * 28 * 28] = {0};
     size_t weight0Dims[] = {20, 28 * 28};
     size_t weight0NumberOfDims = 2;
-    tensor_t *weight0Param = tensorInitFloat(weight0Data, weight0Dims, weight0NumberOfDims, NULL);
+    tensor_t *weight0Param = tensorInitWithDistribution(XAVIER_UNIFORM, weight0Data, weight0Dims, weight0NumberOfDims, q, NULL, 28*28, 20);
     tensor_t *weight0Grad = gradInitFloat(weight0Param, NULL);
     parameter_t *weight0 = parameterInit(weight0Param, weight0Grad);
 
-    float bias0Data[20];
-    for (size_t i = 0; i < 20; i++) {
-        bias0Data[i] = 0.f;
-    }
+    float bias0Data[20] = {0};
     size_t bias0Dims[] = {1, 20};
     size_t bias0NumberOfDims = 2;
-    tensor_t *bias0Param = tensorInitFloat(bias0Data, bias0Dims, bias0NumberOfDims, NULL);
+    tensor_t *bias0Param = tensorInitWithDistribution(ZEROS, bias0Data, bias0Dims, bias0NumberOfDims, q, NULL, 1, 20);
     tensor_t *bias0Grad = gradInitFloat(bias0Param, NULL);
     parameter_t *bias0 = parameterInit(bias0Param, bias0Grad);
 
@@ -246,25 +237,17 @@ int main(void) {
 
     layer_t *relu = reluLayerInit(q, q);
 
-    float weight1Data[10 * 20];
-    float scale1 = sqrtf(6.0f / (20 + 10));
-    for (size_t i = 0; i < 10 * 20; i++) {
-        float r = (float)rand() / RAND_MAX; // [0, 1]
-        weight1Data[i] = (r * 2.0f - 1.0f) * scale1; // [-1, 1]
-    }
+    float weight1Data[10 * 20] = {0};
     size_t weight1Dims[] = {10, 20};
     size_t weight1NumberOfDims = 2;
-    tensor_t *weight1Param = tensorInitFloat(weight1Data, weight1Dims, weight1NumberOfDims, NULL);
+    tensor_t *weight1Param = tensorInitWithDistribution(XAVIER_UNIFORM, weight1Data, weight1Dims, weight1NumberOfDims, q, NULL, 20, 10);
     tensor_t *weight1Grad = gradInitFloat(weight1Param, NULL);
     parameter_t *weight1 = parameterInit(weight1Param, weight1Grad);
 
-    float bias1Data[10];
-    for (size_t i = 0; i < 10; i++) {
-        bias1Data[i] = 0.f;
-    }
+    float bias1Data[10] = {0};
     size_t bias1Dims[] = {1, 10};
     size_t bias1NumberOfDims = 2;
-    tensor_t *bias1Param = tensorInitFloat(bias1Data, bias1Dims, bias1NumberOfDims, NULL);
+    tensor_t *bias1Param = tensorInitWithDistribution(ZEROS, bias1Data, bias1Dims, bias1NumberOfDims, q, NULL, 1, 10);
     tensor_t *bias1Grad = gradInitFloat(bias1Param, NULL);
     parameter_t *bias1 = parameterInit(bias1Param, bias1Grad);
 
@@ -300,7 +283,7 @@ int main(void) {
             }
             loss += batchLoss;
 
-            printf("Loss: %f\n", loss);
+            PRINT_DEBUG("Loss: %f\n", loss);
 
             freeTrainingStatsBatched(trainingStats, batchSize);
             freeBatch(batch);

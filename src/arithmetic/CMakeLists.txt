@@ -30,6 +30,13 @@ target_link_libraries(Comparison PRIVATE
         Common
 )
 
+add_library(Distributions Distributions.c)
+target_include_directories(Distributions PUBLIC include)
+target_link_libraries(Distributions PRIVATE
+        Common
+        m
+)
+
 add_library(Div Div.c)
 target_include_directories(Div PUBLIC include)
 target_link_libraries(Div PRIVATE

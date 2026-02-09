@@ -27,6 +27,14 @@ add_elastic_ai_unit_test(
 
 add_elastic_ai_unit_test(
         LIB_UNDER_TEST
+        Distributions
+        MORE_LIBS
+        MinMax
+        Common
+)
+
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
         Div
         MORE_LIBS
         Arithmetic

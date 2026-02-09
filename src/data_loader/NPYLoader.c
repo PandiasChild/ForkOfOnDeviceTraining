@@ -44,14 +44,12 @@ uint32_t readHeaderSize(FILE *f) {
     return header_len;
 }
 
-char *readHeader(char *header, uint32_t headerSize, FILE *f) {
+void readHeader(char *header, uint32_t headerSize, FILE *f) {
     fread(header, 1, headerSize, f);
     header[headerSize] = 0;
-
-    return header;
 }
 
-dtype_t parseHeaderDescription(char *s) {
+static dtype_t parseHeaderDescription(char *s) {
     if (strcmp(s, "<f4") == 0)
         return FLOAT_32;
     if (strcmp(s, "<i4") == 0)
@@ -68,7 +66,7 @@ dtype_t getDTypeFromHeader(char *header) {
     return dtype;
 }
 
-size_t getNumberOfDimsFromHeader(const char *header) {
+size_t getNumberOfDimsFromHeader(char *header) {
     char *p = strstr(header, "shape");
     p = strchr(p, '(') + 1;
 
