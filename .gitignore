@@ -119,7 +119,15 @@ build/
 .direnv/
 devenv.local.nix
 
+### JJ
+.jj/
+
 ### data loader folder with MNIST
 /test/unit/data_loader/data/
-
+data/
 *.csv
+
+### Claude
+CLAUDE.md
+claude*
+.dual-graph/
