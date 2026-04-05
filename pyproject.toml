@@ -1,0 +1,26 @@
+[project]
+name = "odt"
+version = "0.1.0"
+description = "ODT Python pipeline: providers, ir2c, resource estimation for on-device training"
+requires-python = ">=3.12"
+dependencies = [
+    "elasticai-creator @ git+https://github.com/es-ude/elastic-ai.creator.git@training-implementation-provider",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["python/odt"]
+
+[tool.pytest.ini_options]
+testpaths = ["python/tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]

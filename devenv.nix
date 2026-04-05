@@ -27,7 +27,7 @@ in
       enable = true;
       package = unstablePkgs.uv;
       sync.enable = true;
-      sync.allExtras = true;
+      sync.arguments = [ "--all-groups" ];
     };
   };
 
@@ -66,9 +66,10 @@ in
 				cmake --preset unit_test
 				cmake --build --preset unit_test
 				ctest --preset unit_test
+				uv run pytest
 			'';
 			package = pkgs.bash;
-			description = "Run the full CI pipeline locally (configure, build, test)";
+			description = "Run the full CI pipeline locally (C + Python tests)";
 		};
 
 };
@@ -78,6 +79,9 @@ in
   };
 
   enterShell = ''
+    if [ ! -L "$DEVENV_ROOT/.venv" ]; then
+      ln -sf "$DEVENV_STATE/venv" "$DEVENV_ROOT/.venv"
+    fi
     echo
     echo "Welcome back"
     echo
