@@ -28,7 +28,6 @@
 
 #include <stdlib.h>
 #include <time.h>
-#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -42,14 +41,14 @@
 #include "ReluApi.h"
 #include "TensorApi.h"
 #include "Tensor.h"
-#include "DataLoaderApi.h"
-#include "TrainingApi.h"
 #include "SgdApi.h"
 #include "StorageApi.h"
 #include "SoftmaxApi.h"
 #include "InferenceApi.h"
 #include "CSVHelper.h"
 #include "Common.h"
+#include "TrainingLoopApi.h"
+#include "CalculateGradsSequential.h"
 
 
 static dataset_t trainDataset;
@@ -139,21 +138,6 @@ static void flattenItemDims() {
     }
 }
 
-// returns index of max value
-static size_t argmax(const float *data, size_t n) {
-    size_t maxIdx = 0;
-    float maxVal = data[0];
-
-    for (size_t i = 1; i < n; i++) {
-        if (data[i] > maxVal) {
-            maxVal = data[i];
-            maxIdx = i;
-        }
-    }
-    return maxIdx;
-}
-
-
 static void writeCsvRow(char *filePath, size_t epochIndex, size_t batchIndex, float loss,
                  float validationLoss) {
     char epochChars[32] = {0};
@@ -186,6 +170,10 @@ static void writeCsvRow(char *filePath, size_t epochIndex, size_t batchIndex, fl
     setCSVData(&csvData, row, 1, entriesInRow);
 
     csvWriteRowsByBufferSize(filePath, &csvData, "a");
+}
+
+static void epochCallback(size_t epoch, float trainLoss, float evalLoss) {
+    writeCsvRow(LOG, epoch, 0, trainLoss, evalLoss);
 }
 
 
@@ -259,80 +247,21 @@ int main(void) {
     size_t sizeModel = 4;
 
     optimizer_t *sgd = sgdMCreateOptim(0.001f, 0.f, 0.f, model, sizeModel, FLOAT32);
-    optimizerFunctions_t sgdFns = optimizerFunctions[SGD_M];
-
-    size_t numberOfBatches = getTrainDatasetSize() / batchSize;
 
     clock_t start = clock();
 
-    for (size_t i = 0; i < numberOfEpochs; i++) {
-        PRINT_INFO("Epoch: %lu\n", i);
-        float loss = 0;
-
-        for (size_t j = 0; j < numberOfBatches; j++) {
-            float batchLoss = 0;
-
-            batch_t *batch = trainDataloader->getBatch(trainDataloader, j);
-            trainingStats_t **trainingStats = calculateGradsBatched(
-                model, sizeModel, CROSS_ENTROPY, batch);
-            sgdFns.step(sgd);
-            sgdFns.zero(sgd);
-
-            for (size_t k = 0; k < batchSize; k++) {
-                batchLoss += trainingStats[k]->loss;
-            }
-            loss += batchLoss;
-
-            PRINT_DEBUG("Loss: %f\n", loss);
-
-            freeTrainingStatsBatched(trainingStats, batchSize);
-            freeBatch(batch);
-        }
-
-        float validationLoss = 0;
-        size_t testDatasetSize = getTestDatasetSize();
-        for (size_t trainIndex = 0; trainIndex < testDatasetSize; trainIndex++) {
-            batch_t *batch = testDataloader->getBatch(testDataloader, trainIndex);
-            inferenceStats_t *validationResult = inferenceWithLoss(
-                model, sizeModel, batch->samples[0]->item, batch->samples[0]->label, CROSS_ENTROPY);
-            validationLoss += validationResult->loss;
-            freeInferenceStats(validationResult);
-            freeBatch(batch);
-        }
-
-        validationLoss /= (float)testDatasetSize;
-        loss /= (float)getTrainDatasetSize();
-
-        writeCsvRow(LOG, i, 0, loss, validationLoss);
-    }
+    trainingRunResult_t result = trainingRun(model, sizeModel, CROSS_ENTROPY,
+                                             trainDataloader, testDataloader, sgd,
+                                             numberOfEpochs, calculateGradsSequential,
+                                             inferenceWithLoss, epochCallback);
 
     clock_t end = clock();
 
     double duration_sec = (double)(end - start) / CLOCKS_PER_SEC;
     PRINT_INFO("Training finished in %f seconds\n", duration_sec);
+    PRINT_INFO("Final train loss: %f, eval loss: %f\n", result.finalTrainLoss, result.finalEvalLoss);
 
-    size_t correct = 0;
-    size_t total = getTestDatasetSize();
-    for (size_t i = 0; i < total; i++) {
-        batch_t *batch = testDataloader->getBatch(testDataloader, i);
-        tensor_t *result = inference(model, sizeModel, batch->samples[0]->item);
+    float accuracy = evaluationEpochAccuracy(model, sizeModel, testDataloader, 10, inference);
 
-        float *resultData = (float *)result->data;
-        float *labelData = (float *)batch->samples[0]->label->data;
-
-        size_t predicted = argmax(resultData, 10);
-        size_t target = argmax(labelData, 10);
-
-        if (predicted == target) {
-            correct++;
-        }
-
-        freeTensor(result);
-        freeBatch(batch);
-    }
-
-    float accuracy = (float)correct / (float)total;
-
-    PRINT_INFO("Integration test accuracy: %.2f%% (%zu/%zu)\n",
-               accuracy * 100.0f, correct, total);
+    PRINT_INFO("Integration test accuracy: %.2f%%\n", accuracy * 100.0f);
 }

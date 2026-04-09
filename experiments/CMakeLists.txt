@@ -16,14 +16,14 @@ target_link_libraries(MnistExperiment PRIVATE
         QuantizationApi
         Quantization
 
-        ReluApi
-        Relu
-
         TensorApi
         Tensor
         Rounding
 
-        TrainingApi
+        TrainingLoopApi
+        CalculateGradsSequential
+        TrainingBatchDefault
+        TrainingEpochDefault
         Optimizer
 
         LossFunction
@@ -39,5 +39,6 @@ target_link_libraries(MnistExperiment PRIVATE
         CSVHelper
 
         Common
+        StorageApi
 
 )

@@ -11,10 +11,14 @@ add_elastic_ai_unit_test(
         DataLoader
 )
 
+
 add_elastic_ai_unit_test(
         LIB_UNDER_TEST
-        TrainingApi
+        TrainingLoopApi
         MORE_LIBS
+        CalculateGradsSequential
+        TrainingBatchDefault
+        TrainingEpochDefault
         CommonLayerLibs
         TensorApi
         LinearApi
@@ -23,6 +27,7 @@ add_elastic_ai_unit_test(
         QuantizationApi
         LossFunction
         InferenceApi
-        ReluApi
         DataLoader
+        DataLoaderApi
+        StorageApi
 )

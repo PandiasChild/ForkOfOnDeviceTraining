@@ -1,4 +1,4 @@
-#define SOURCE_FILE "TRAINING_API"
+#define SOURCE_FILE "CALCULATE_GRADS_SEQUENTIAL"
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -7,20 +7,19 @@
 
 #include "LossFunction.h"
 #include "Layer.h"
-#include "Optimizer.h"
 #include "TensorApi.h"
 #include "StorageApi.h"
-#include "TrainingApi.h"
-#include "TrainingApiInternal.h"
+#include "CalculateGradsSequential.h"
+#include "TrainingLoopApiInternal.h"
 #include "Linear.h"
 #include "Relu.h"
 #include "Common.h"
 #include "Softmax.h"
 
 
-trainingStats_t *calculateGrads(layer_t **model, size_t modelSize,
-                                lossType_t lossType, tensor_t *input,
-                                tensor_t *label) {
+trainingStats_t *calculateGradsSequential(layer_t **model, size_t modelSize,
+                                          lossType_t lossType, tensor_t *input,
+                                          tensor_t *label) {
 
     tensor_t *layerOutputs[modelSize + 1];
     layerOutputs[0] = input;
@@ -66,87 +65,10 @@ trainingStats_t *calculateGrads(layer_t **model, size_t modelSize,
         gradNext = gradCurr;
     }
 
+    deInitGradTensor(&gradNext);
     deInitLayerOutputs(layerOutputs, modelSize);
 
     return trainingStats;
-}
-
-trainingStats_t **calculateGradsBatched(layer_t **model, size_t modelSize,
-                                        lossType_t lossType, batch_t *batch) {
-    trainingStats_t **trainingStatsArr = *reserveMemory(batch->size * sizeof(trainingStats_t));
-
-    for (size_t i = 0; i < batch->size; i++) {
-        trainingStatsArr[i] = calculateGrads(model, modelSize, lossType, batch->samples[i]->item,
-                                             batch->samples[i]->label);
-    }
-
-    return trainingStatsArr;
-}
-
-trainingStats_t *trainingEpoch(layer_t **model, size_t modelSize,
-                               lossType_t lossType, tensor_t *input,
-                               tensor_t *label, optimizer_t *optimizer) {
-
-    tensor_t *layerOutputs[modelSize + 1];
-    layerOutputs[0] = input;
-    initLayerOutputs(layerOutputs, model, modelSize);
-
-    // Forward pass
-    for (size_t i = 0; i < modelSize; i++) {
-        layer_t *currentLayer = model[i];
-        layerType_t currentLayerType = currentLayer->type;
-        forwardFn_t forward = layerFunctions[currentLayerType].forward;
-        forward(currentLayer, layerOutputs[i], layerOutputs[i + 1]);
-    }
-
-    trainingStats_t *trainingStats = initTrainingStats(label);
-    copyTensor(trainingStats->output, layerOutputs[modelSize]);
-
-    // Loss
-    lossFunctions_t lossFns = lossFunctions[lossType];
-    float loss = lossFns.forward(layerOutputs[modelSize], label);
-    trainingStats->loss = loss;
-
-    tensor_t gradNext;
-    initGradTensor(&gradNext, layerOutputs[modelSize]);
-    lossFns.backward(layerOutputs[modelSize], label, &gradNext);
-
-    // Backward pass
-    size_t backwardIndex = modelSize - 1;
-    if (lossType == CROSS_ENTROPY) {
-        backwardIndex -= 1;
-    }
-
-    for (int i = (int)backwardIndex; i >= 0; i--) {
-        tensor_t gradCurr;
-        initGradTensor(&gradCurr, layerOutputs[i]);
-
-        layerType_t layerType = model[i]->type;
-        backwardFn_t backward = layerFunctions[layerType].backward;
-
-        backward(model[i], layerOutputs[i], &gradNext, &gradCurr);
-
-        deInitGradTensor(&gradNext);
-        gradNext = gradCurr;
-    }
-
-    optimizerFunctions_t optimFns = optimizerFunctions[optimizer->type];
-    optimFns.step(optimizer);
-
-    deInitLayerOutputs(layerOutputs, modelSize);
-
-    return trainingStats;
-}
-
-void freeTrainingStats(trainingStats_t *trainingStats) {
-    freeTensor(trainingStats->output);
-    freeReservedMemory(trainingStats);
-}
-
-void freeTrainingStatsBatched(trainingStats_t **trainingStatsArr, size_t batchSize) {
-    for (size_t i = 0; i < batchSize; i++) {
-        freeTrainingStats(trainingStatsArr[i]);
-    }
 }
 
 

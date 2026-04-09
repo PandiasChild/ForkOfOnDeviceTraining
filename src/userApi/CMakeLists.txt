@@ -2,6 +2,7 @@ add_subdirectory(data_loader)
 add_subdirectory(layer)
 add_subdirectory(optimizer)
 add_subdirectory(tensor)
+add_subdirectory(training_loop)
 
 
 add_library(InferenceApi InferenceApi.c)
@@ -24,16 +25,3 @@ target_link_libraries(StorageApi PRIVATE
         Common
 )
 
-add_library(TrainingApi TrainingApi.c)
-target_include_directories(TrainingApi PUBLIC include)
-target_link_libraries(TrainingApi PRIVATE
-        TensorApi
-        Tensor
-        Rounding
-        Layer
-        MSE
-        Optimizer
-        Common
-        LossFunction
-        DataLoader
-)
