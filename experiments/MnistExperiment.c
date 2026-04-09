@@ -296,6 +296,8 @@ int main(void) {
             inferenceStats_t *validationResult = inferenceWithLoss(
                 model, sizeModel, batch->samples[0]->item, batch->samples[0]->label, CROSS_ENTROPY);
             validationLoss += validationResult->loss;
+            freeInferenceStats(validationResult);
+            freeBatch(batch);
         }
 
         validationLoss /= (float)testDatasetSize;

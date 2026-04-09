@@ -61,7 +61,7 @@ static batch_t *getBatch(dataLoader_t *dataLoader, size_t index) {
 
     size_t batchSize = dataLoader->batchSize;
     batch->size = batchSize;
-    batch->samples = *reserveMemory(batchSize * sizeof(sample_t));
+    batch->samples = *reserveMemory(batchSize * sizeof(sample_t *));
 
     size_t sampleIndex = index * batchSize;
 
