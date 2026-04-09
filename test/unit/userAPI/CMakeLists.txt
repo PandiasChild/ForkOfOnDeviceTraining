@@ -16,9 +16,9 @@ add_elastic_ai_unit_test(
         LIB_UNDER_TEST
         TrainingLoopApi
         MORE_LIBS
-        CalculateGradsSequential
-        TrainingBatchDefault
         TrainingEpochDefault
+        TrainingBatchDefault
+        CalculateGradsSequential
         CommonLayerLibs
         TensorApi
         LinearApi
@@ -31,3 +31,25 @@ add_elastic_ai_unit_test(
         DataLoaderApi
         StorageApi
 )
+
+add_executable(UnitTestMultiLayerTraining UnitTestMultiLayerTraining.c)
+target_link_libraries(UnitTestMultiLayerTraining PRIVATE
+        unity
+        TrainingLoopApi
+        TrainingEpochDefault
+        TrainingBatchDefault
+        CalculateGradsSequential
+        CommonLayerLibs
+        TensorApi
+        LinearApi
+        ReluApi
+        SoftmaxApi
+        SgdApi
+        QuantizationApi
+        LossFunction
+        InferenceApi
+        DataLoader
+        DataLoaderApi
+        StorageApi
+)
+__register_target_as_unit_test(UnitTestMultiLayerTraining)
