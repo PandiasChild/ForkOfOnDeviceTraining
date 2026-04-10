@@ -138,48 +138,24 @@ static void flattenItemDims() {
     }
 }
 
-static void writeCsvRow(char *filePath, size_t epochIndex, size_t batchIndex, float loss,
-                 float validationLoss) {
-    char epochChars[32] = {0};
-    sprintf(epochChars, "%lu", epochIndex);
+static void epochCallback(size_t epoch, float trainLoss, epochStats_t evalStats) {
+    char row[256] = {0};
+    sprintf(row, "%lu, %f, %f, %f, %f, %f, %f\n",
+            epoch, trainLoss, evalStats.loss, evalStats.accuracy,
+            evalStats.precision, evalStats.recall, evalStats.f1);
+    PRINT_DEBUG("%s\n", row);
 
-    char batchChars[32] = {0};
-    sprintf(batchChars, "%lu", batchIndex);
-
-    char lossChars[32] = {0};
-    sprintf(lossChars, "%f", loss);
-
-    char validationLossChars[32] = {0};
-    sprintf(validationLossChars, "%f", validationLoss);
-
-    char string[4 * 32] = {0};
-    strcat(string, epochChars);
-    strcat(string, ", ");
-    strcat(string, batchChars);
-    strcat(string, ", ");
-    strcat(string, lossChars);
-    strcat(string, ", ");
-    strcat(string, validationLossChars);
-    strcat(string, "\n");
-    PRINT_DEBUG("%s\n", string);
-
-    char *row[] = {string};
-    size_t entriesInRow[] = {4};
-
+    char *rows[] = {row};
+    size_t entriesInRow[] = {7};
     csvData_t csvData;
-    setCSVData(&csvData, row, 1, entriesInRow);
-
-    csvWriteRowsByBufferSize(filePath, &csvData, "a");
-}
-
-static void epochCallback(size_t epoch, float trainLoss, float evalLoss) {
-    writeCsvRow(LOG, epoch, 0, trainLoss, evalLoss);
+    setCSVData(&csvData, rows, 1, entriesInRow);
+    csvWriteRowsByBufferSize(LOG, &csvData, "a");
 }
 
 static void writeCsvHeader(char *filePath) {
-    char *header = "epoch, batch, train_loss, eval_loss\n";
+    char *header = "epoch, train_loss, eval_loss, eval_accuracy, eval_precision, eval_recall, eval_f1\n";
     char *row[] = {header};
-    size_t entriesInRow[] = {4};
+    size_t entriesInRow[] = {7};
     csvData_t csvData;
     setCSVData(&csvData, row, 1, entriesInRow);
     csvWriteRowsByBufferSize(filePath, &csvData, "w");
@@ -192,13 +168,13 @@ static void buildModel(layer_t **model) {
 
     // Linear 784→20
     static float weight0Data[20 * 28 * 28] = {0};
-    size_t weight0Dims[] = {20, 28 * 28};
+    static size_t weight0Dims[] = {20, 28 * 28};
     tensor_t *weight0Param = tensorInitWithDistribution(XAVIER_UNIFORM, weight0Data, weight0Dims, 2, q, NULL, 28*28, 20);
     tensor_t *weight0Grad = gradInitFloat(weight0Param, NULL);
     parameter_t *weight0 = parameterInit(weight0Param, weight0Grad);
 
     static float bias0Data[20] = {0};
-    size_t bias0Dims[] = {1, 20};
+    static size_t bias0Dims[] = {1, 20};
     tensor_t *bias0Param = tensorInitWithDistribution(ZEROS, bias0Data, bias0Dims, 2, q, NULL, 1, 20);
     tensor_t *bias0Grad = gradInitFloat(bias0Param, NULL);
     parameter_t *bias0 = parameterInit(bias0Param, bias0Grad);
@@ -210,13 +186,13 @@ static void buildModel(layer_t **model) {
 
     // Linear 20→10
     static float weight1Data[10 * 20] = {0};
-    size_t weight1Dims[] = {10, 20};
+    static size_t weight1Dims[] = {10, 20};
     tensor_t *weight1Param = tensorInitWithDistribution(XAVIER_UNIFORM, weight1Data, weight1Dims, 2, q, NULL, 20, 10);
     tensor_t *weight1Grad = gradInitFloat(weight1Param, NULL);
     parameter_t *weight1 = parameterInit(weight1Param, weight1Grad);
 
     static float bias1Data[10] = {0};
-    size_t bias1Dims[] = {1, 10};
+    static size_t bias1Dims[] = {1, 10};
     tensor_t *bias1Param = tensorInitWithDistribution(ZEROS, bias1Data, bias1Dims, 2, q, NULL, 1, 10);
     tensor_t *bias1Grad = gradInitFloat(bias1Param, NULL);
     parameter_t *bias1 = parameterInit(bias1Param, bias1Grad);
@@ -269,9 +245,7 @@ int main(void) {
 
     double duration_sec = (double)(end - start) / CLOCKS_PER_SEC;
     PRINT_INFO("Training finished in %f seconds\n", duration_sec);
-    PRINT_INFO("Final train loss: %f, eval loss: %f\n", result.finalTrainLoss, result.finalEvalLoss);
-
-    float accuracy = evaluationEpochAccuracy(model, MODEL_SIZE, testDataloader, 10, inference);
-
-    PRINT_INFO("Integration test accuracy: %.2f%%\n", accuracy * 100.0f);
+    PRINT_INFO("Final train loss: %f, eval loss: %f\n", result.finalTrainLoss,
+                result.finalEvalStats.loss);
+    PRINT_INFO("Final accuracy: %.2f%%\n", result.finalEvalStats.accuracy * 100.0f);
 }

@@ -23,7 +23,7 @@ jobs:
         run: cmake --build --preset unit_test
 
       - name: Test
-        run: ctest --preset unit_test --exclude-regex UnitTestDataLoader
+        run: ctest --preset unit_test
 
   python-test:
     runs-on: ubuntu-latest

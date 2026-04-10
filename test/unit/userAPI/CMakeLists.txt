@@ -53,3 +53,25 @@ target_link_libraries(UnitTestMultiLayerTraining PRIVATE
         StorageApi
 )
 __register_target_as_unit_test(UnitTestMultiLayerTraining)
+
+add_executable(UnitTestMnistSmoke UnitTestMnistSmoke.c)
+target_link_libraries(UnitTestMnistSmoke PRIVATE
+        unity
+        TrainingLoopApi
+        TrainingEpochDefault
+        TrainingBatchDefault
+        CalculateGradsSequential
+        CommonLayerLibs
+        TensorApi
+        LinearApi
+        ReluApi
+        SoftmaxApi
+        SgdApi
+        QuantizationApi
+        LossFunction
+        InferenceApi
+        DataLoader
+        DataLoaderApi
+        StorageApi
+)
+__register_target_as_unit_test(UnitTestMnistSmoke)

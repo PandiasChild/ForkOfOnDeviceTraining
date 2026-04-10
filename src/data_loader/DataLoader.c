@@ -34,14 +34,13 @@ void initDataLoader(dataLoader_t *dataLoader, getSampleFn_t getSample,
     dataLoader->dropLast = dropLast;
 
     size_t sizeDataset = getDatasetSize();
-    size_t numberOfIndices = sizeDataset / dataLoader->batchSize;
 
-    for (size_t i = 0; i < numberOfIndices; ++i)
+    for (size_t i = 0; i < sizeDataset; ++i)
         indices[i] = i;
 
     if (shuffle) {
         rngSetSeed(shuffleSeed);
-        rngShuffleIndices(indices, numberOfIndices);
+        rngShuffleIndices(indices, sizeDataset);
     }
 }
 

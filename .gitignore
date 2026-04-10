@@ -12,6 +12,7 @@
 **/__pycache__/
 config.bin
 *.npy
+!test/unit/data_loader/proxy_*.npy
 
 # Compiled Object files
 *.slo
