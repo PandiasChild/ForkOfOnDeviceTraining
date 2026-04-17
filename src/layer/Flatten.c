@@ -28,6 +28,12 @@ void flattenBackward(layer_t *flattenLayer, tensor_t *forwardInput, tensor_t *lo
   size_t numberOfElements = calcNumberOfElementsByTensor(loss);
   size_t numberOfBytes = calcNumberOfBytesForData(loss->quantization, numberOfElements);
   memcpy(propLoss->data, loss->data, numberOfBytes);
+
+  if (loss->quantization->type == SYM_INT32) {
+    symInt32QConfig_t *lossQC = loss->quantization->qConfig;
+    symInt32QConfig_t *propLossQC = propLoss->quantization->qConfig;
+    propLossQC->scale = lossQC->scale;
+  }
 }
 
 void flattenCalcOutputShape(layer_t *flattenLayer, shape_t *inputShape, shape_t *outputShape) {

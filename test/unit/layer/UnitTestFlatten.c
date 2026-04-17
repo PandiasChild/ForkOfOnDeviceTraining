@@ -121,6 +121,40 @@ void testFlattenBackwardFloat_CopiesGradsUnchanged(void) {
   freeFlattenLayer(flatten);
 }
 
+void testFlattenBackwardSymInt32_PropagatesScale(void) {
+  size_t n = 6;
+
+  size_t forwardDims[] = {1, 2, 3};
+  float forwardData[] = {-1.f, 0.f, 1.f, 2.f, 5.f, -6.f};
+  tensor_t *forwardInput = tensorInitSymInt32(forwardData, forwardDims, 3, HTE, NULL);
+
+  size_t lossDims[] = {1, 6};
+  float lossFloatData[] = {0.1f, 0.2f, -0.3f, 0.4f, 0.5f, 0.6f};
+  tensor_t *loss = tensorInitSymInt32(lossFloatData, lossDims, 2, HTE, NULL);
+
+  float propLossFloatData[6] = {0};
+  tensor_t *propLoss = tensorInitSymInt32(propLossFloatData, forwardDims, 3, HTE, NULL);
+
+  symInt32QConfig_t *propLossQC = propLoss->quantization->qConfig;
+  propLossQC->scale = 0.0f;
+
+  layer_t *flatten = flattenLayerInit();
+  flattenBackward(flatten, forwardInput, loss, propLoss);
+
+  symInt32QConfig_t *lossQC = loss->quantization->qConfig;
+  TEST_ASSERT_EQUAL_FLOAT(lossQC->scale, propLossQC->scale);
+
+  float roundTripData[6];
+  tensor_t *roundTrip = tensorInitFloat(roundTripData, forwardDims, 3, NULL);
+  convertTensor(propLoss, roundTrip);
+  float *actual = (float *)roundTrip->data;
+  for (size_t i = 0; i < n; i++) {
+    TEST_ASSERT_FLOAT_WITHIN(0.1f, lossFloatData[i], actual[i]);
+  }
+
+  freeFlattenLayer(flatten);
+}
+
 void setUp(void) {}
 void tearDown(void) {}
 
@@ -131,5 +165,6 @@ int main(void) {
   RUN_TEST(testFlattenForwardFloat_PreservesBytesAndReshapes);
   RUN_TEST(testFlattenForwardSymInt32_PropagatesScaleAndValues);
   RUN_TEST(testFlattenBackwardFloat_CopiesGradsUnchanged);
+  RUN_TEST(testFlattenBackwardSymInt32_PropagatesScale);
   return UNITY_END();
 }
