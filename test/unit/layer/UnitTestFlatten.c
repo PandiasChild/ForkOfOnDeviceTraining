@@ -98,6 +98,29 @@ void testFlattenForwardSymInt32_PropagatesScaleAndValues(void) {
   freeFlattenLayer(flatten);
 }
 
+void testFlattenBackwardFloat_CopiesGradsUnchanged(void) {
+  size_t n = 6;
+
+  size_t forwardDims[] = {1, 2, 3};
+  float forwardData[] = {-1.f, 0.f, 1.f, 2.f, 5.f, -6.f};
+  tensor_t *forwardInput = tensorInitFloat(forwardData, forwardDims, 3, NULL);
+
+  size_t lossDims[] = {1, 6};
+  float lossData[] = {0.1f, 0.2f, -0.3f, 0.4f, 0.5f, 0.6f};
+  tensor_t *loss = tensorInitFloat(lossData, lossDims, 2, NULL);
+
+  float propLossData[6] = {0};
+  tensor_t *propLoss = tensorInitFloat(propLossData, forwardDims, 3, NULL);
+
+  layer_t *flatten = flattenLayerInit();
+  flattenBackward(flatten, forwardInput, loss, propLoss);
+
+  float *actual = (float *)propLoss->data;
+  TEST_ASSERT_EQUAL_FLOAT_ARRAY(lossData, actual, n);
+
+  freeFlattenLayer(flatten);
+}
+
 void setUp(void) {}
 void tearDown(void) {}
 
@@ -107,5 +130,6 @@ int main(void) {
   RUN_TEST(testFlattenCalcOutputShape_NonSquareInput);
   RUN_TEST(testFlattenForwardFloat_PreservesBytesAndReshapes);
   RUN_TEST(testFlattenForwardSymInt32_PropagatesScaleAndValues);
+  RUN_TEST(testFlattenBackwardFloat_CopiesGradsUnchanged);
   return UNITY_END();
 }

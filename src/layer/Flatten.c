@@ -24,10 +24,10 @@ void flattenBackward(layer_t *flattenLayer, tensor_t *forwardInput, tensor_t *lo
                      tensor_t *propLoss) {
   (void)flattenLayer;
   (void)forwardInput;
-  (void)loss;
-  (void)propLoss;
-  PRINT_ERROR("flattenBackward not implemented yet");
-  exit(1);
+
+  size_t numberOfElements = calcNumberOfElementsByTensor(loss);
+  size_t numberOfBytes = calcNumberOfBytesForData(loss->quantization, numberOfElements);
+  memcpy(propLoss->data, loss->data, numberOfBytes);
 }
 
 void flattenCalcOutputShape(layer_t *flattenLayer, shape_t *inputShape, shape_t *outputShape) {
