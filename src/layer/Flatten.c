@@ -1,16 +1,17 @@
 #define SOURCE_FILE "FLATTEN"
 
 #include <stdlib.h>
+#include <string.h>
 
 #include "Common.h"
 #include "Flatten.h"
 
 void flattenForward(layer_t *flattenLayer, tensor_t *input, tensor_t *output) {
   (void)flattenLayer;
-  (void)input;
-  (void)output;
-  PRINT_ERROR("flattenForward not implemented yet");
-  exit(1);
+
+  size_t numberOfElements = calcNumberOfElementsByTensor(input);
+  size_t numberOfBytes = calcNumberOfBytesForData(input->quantization, numberOfElements);
+  memcpy(output->data, input->data, numberOfBytes);
 }
 
 void flattenBackward(layer_t *flattenLayer, tensor_t *forwardInput, tensor_t *loss,

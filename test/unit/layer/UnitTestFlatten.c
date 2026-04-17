@@ -47,6 +47,25 @@ void testFlattenCalcOutputShape_NonSquareInput(void) {
   freeFlattenLayer(flatten);
 }
 
+void testFlattenForwardFloat_PreservesBytesAndReshapes(void) {
+  size_t n = 12; // 1 * 2 * 2 * 3
+  float inputData[] = {1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f, 9.f, 10.f, 11.f, 12.f};
+  size_t inputDims[] = {1, 2, 2, 3};
+  tensor_t *input = tensorInitFloat(inputData, inputDims, 4, NULL);
+
+  float outputData[12] = {0};
+  size_t outputDims[] = {1, 12};
+  tensor_t *output = tensorInitFloat(outputData, outputDims, 2, NULL);
+
+  layer_t *flatten = flattenLayerInit();
+  flattenForward(flatten, input, output);
+
+  float *actual = (float *)output->data;
+  TEST_ASSERT_EQUAL_FLOAT_ARRAY(inputData, actual, n);
+
+  freeFlattenLayer(flatten);
+}
+
 void setUp(void) {}
 void tearDown(void) {}
 
@@ -54,5 +73,6 @@ int main(void) {
   UNITY_BEGIN();
   RUN_TEST(testFlattenLayerInit_ReturnsFlattenTypedLayer);
   RUN_TEST(testFlattenCalcOutputShape_NonSquareInput);
+  RUN_TEST(testFlattenForwardFloat_PreservesBytesAndReshapes);
   return UNITY_END();
 }
