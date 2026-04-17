@@ -66,6 +66,38 @@ void testFlattenForwardFloat_PreservesBytesAndReshapes(void) {
   freeFlattenLayer(flatten);
 }
 
+void testFlattenForwardSymInt32_PropagatesScaleAndValues(void) {
+  size_t n = 6;
+  float inputFloatData[] = {1.f, 2.f, 3.f, 4.f, 5.f, 6.f};
+  size_t inputDims[] = {1, 2, 3};
+  tensor_t *input = tensorInitSymInt32(inputFloatData, inputDims, 3, HTE, NULL);
+
+  float outputFloatData[6] = {0};
+  size_t outputDims[] = {1, 6};
+  tensor_t *output = tensorInitSymInt32(outputFloatData, outputDims, 2, HTE, NULL);
+
+  // Clobber the output's scale so we can verify flattenForward writes it.
+  symInt32QConfig_t *outputQC = output->quantization->qConfig;
+  outputQC->scale = 0.0f;
+
+  layer_t *flatten = flattenLayerInit();
+  flattenForward(flatten, input, output);
+
+  symInt32QConfig_t *inputQC = input->quantization->qConfig;
+  TEST_ASSERT_EQUAL_FLOAT(inputQC->scale, outputQC->scale);
+
+  // Values round-trip through the same scale.
+  float roundTripData[6];
+  tensor_t *roundTrip = tensorInitFloat(roundTripData, outputDims, 2, NULL);
+  convertTensor(output, roundTrip);
+  float *actual = (float *)roundTrip->data;
+  for (size_t i = 0; i < n; i++) {
+    TEST_ASSERT_FLOAT_WITHIN(0.1f, inputFloatData[i], actual[i]);
+  }
+
+  freeFlattenLayer(flatten);
+}
+
 void setUp(void) {}
 void tearDown(void) {}
 
@@ -74,5 +106,6 @@ int main(void) {
   RUN_TEST(testFlattenLayerInit_ReturnsFlattenTypedLayer);
   RUN_TEST(testFlattenCalcOutputShape_NonSquareInput);
   RUN_TEST(testFlattenForwardFloat_PreservesBytesAndReshapes);
+  RUN_TEST(testFlattenForwardSymInt32_PropagatesScaleAndValues);
   return UNITY_END();
 }

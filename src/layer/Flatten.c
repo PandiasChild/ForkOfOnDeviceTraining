@@ -12,6 +12,12 @@ void flattenForward(layer_t *flattenLayer, tensor_t *input, tensor_t *output) {
   size_t numberOfElements = calcNumberOfElementsByTensor(input);
   size_t numberOfBytes = calcNumberOfBytesForData(input->quantization, numberOfElements);
   memcpy(output->data, input->data, numberOfBytes);
+
+  if (input->quantization->type == SYM_INT32) {
+    symInt32QConfig_t *inputQC = input->quantization->qConfig;
+    symInt32QConfig_t *outputQC = output->quantization->qConfig;
+    outputQC->scale = inputQC->scale;
+  }
 }
 
 void flattenBackward(layer_t *flattenLayer, tensor_t *forwardInput, tensor_t *loss,
