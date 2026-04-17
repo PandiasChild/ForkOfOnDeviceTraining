@@ -30,3 +30,13 @@ target_link_libraries(SoftmaxApi PRIVATE
         Common
         StorageApi
 )
+
+add_library(FlattenApi FlattenApi.c)
+target_include_directories(FlattenApi PUBLIC include)
+target_link_libraries(FlattenApi PRIVATE
+        Tensor
+        Rounding
+        Layer
+        Common
+        StorageApi
+)

@@ -23,6 +23,7 @@ target_link_libraries(Layer PRIVATE
         Linear
         Relu
         Softmax
+        Flatten
 )
 
 add_library(Linear Linear.c)
@@ -66,6 +67,16 @@ target_link_libraries(Softmax PRIVATE
         Common
 )
 
+add_library(Flatten Flatten.c)
+target_include_directories(Flatten PUBLIC include)
+target_link_libraries(Flatten PRIVATE
+        DTypes
+        Tensor
+        Arithmetic
+        Layer
+        Common
+)
+
 add_library(CommonLayerLibs INTERFACE)
 target_link_libraries(CommonLayerLibs INTERFACE
         Layer
@@ -73,6 +84,7 @@ target_link_libraries(CommonLayerLibs INTERFACE
         Relu
         Conv1d
         Softmax
+        Flatten
         Rounding
         Tensor
         Sgd
