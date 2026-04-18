@@ -2,215 +2,216 @@
 
 #include <stdbool.h>
 #include <stdio.h>
-#include <string.h>
 #include <stdlib.h>
+#include <string.h>
 
-#include "LossFunction.h"
-#include "Layer.h"
-#include "TensorApi.h"
-#include "StorageApi.h"
 #include "CalculateGradsSequential.h"
-#include "TrainingLoopApiInternal.h"
-#include "Linear.h"
-#include "Relu.h"
 #include "Common.h"
+#include "Layer.h"
+#include "Linear.h"
+#include "LossFunction.h"
+#include "Relu.h"
 #include "Softmax.h"
+#include "StorageApi.h"
+#include "TensorApi.h"
+#include "TrainingLoopApiInternal.h"
 
+trainingStats_t *calculateGradsSequential(layer_t **model, size_t modelSize, lossType_t lossType,
+                                          tensor_t *input, tensor_t *label) {
 
-trainingStats_t *calculateGradsSequential(layer_t **model, size_t modelSize,
-                                          lossType_t lossType, tensor_t *input,
-                                          tensor_t *label) {
+  tensor_t *layerOutputs[modelSize + 1];
+  layerOutputs[0] = input;
+  initLayerOutputs(layerOutputs, model, modelSize);
 
-    tensor_t *layerOutputs[modelSize + 1];
-    layerOutputs[0] = input;
-    initLayerOutputs(layerOutputs, model, modelSize);
+  // Forward pass
+  for (size_t i = 0; i < modelSize; i++) {
+    layer_t *currentLayer = model[i];
+    layerType_t currentLayerType = currentLayer->type;
+    forwardFn_t forward = layerFunctions[currentLayerType].forward;
+    forward(currentLayer, layerOutputs[i], layerOutputs[i + 1]);
+  }
 
-    // Forward pass
-    for (size_t i = 0; i < modelSize; i++) {
-        layer_t *currentLayer = model[i];
-        layerType_t currentLayerType = currentLayer->type;
-        forwardFn_t forward = layerFunctions[currentLayerType].forward;
-        forward(currentLayer, layerOutputs[i], layerOutputs[i + 1]);
-    }
+  trainingStats_t *trainingStats = initTrainingStats(layerOutputs[modelSize]);
+  copyTensor(trainingStats->output, layerOutputs[modelSize]);
 
-    trainingStats_t *trainingStats = initTrainingStats(layerOutputs[modelSize]);
-    copyTensor(trainingStats->output, layerOutputs[modelSize]);
+  // LOSS
 
-    // LOSS
+  lossFunctions_t lossFns = lossFunctions[lossType];
+  float loss = lossFns.forward(layerOutputs[modelSize], label);
+  trainingStats->loss = loss;
 
-    lossFunctions_t lossFns = lossFunctions[lossType];
-    float loss = lossFns.forward(layerOutputs[modelSize], label);
-    trainingStats->loss = loss;
+  // Backward pass
+  size_t backwardIndex = modelSize - 1;
+  if (lossType == CROSS_ENTROPY) {
+    backwardIndex -= 1;
+  }
 
-    // Backward pass
-    size_t backwardIndex = modelSize - 1;
-    if (lossType == CROSS_ENTROPY) {
-        backwardIndex -= 1;
-    }
+  tensor_t gradNext;
+  initGradTensor(&gradNext, layerOutputs[modelSize]);
+  lossFns.backward(layerOutputs[modelSize], label, &gradNext);
 
-    tensor_t gradNext;
-    initGradTensor(&gradNext, layerOutputs[modelSize]);
-    lossFns.backward(layerOutputs[modelSize], label, &gradNext);
+  for (int i = (int)backwardIndex; i >= 0; i--) {
+    tensor_t gradCurr;
+    initGradTensor(&gradCurr, layerOutputs[i]);
 
-    for (int i = (int)backwardIndex; i >= 0; i--) {
-        tensor_t gradCurr;
-        initGradTensor(&gradCurr, layerOutputs[i]);
+    layerType_t layerType = model[i]->type;
+    backwardFn_t backward = layerFunctions[layerType].backward;
 
-        layerType_t layerType = model[i]->type;
-        backwardFn_t backward = layerFunctions[layerType].backward;
-
-        backward(model[i], layerOutputs[i], &gradNext, &gradCurr);
-
-        deInitGradTensor(&gradNext);
-        gradNext = gradCurr;
-    }
+    backward(model[i], layerOutputs[i], &gradNext, &gradCurr);
 
     deInitGradTensor(&gradNext);
-    deInitLayerOutputs(layerOutputs, modelSize);
+    gradNext = gradCurr;
+  }
 
-    return trainingStats;
+  deInitGradTensor(&gradNext);
+  deInitLayerOutputs(layerOutputs, modelSize);
+
+  return trainingStats;
 }
-
 
 static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t sizeNetwork) {
-    for (size_t i = 0; i < sizeNetwork; i++) {
-        layer_t *currentLayer = model[i];
-        quantization_t *currentQ = NULL;
+  for (size_t i = 0; i < sizeNetwork; i++) {
+    layer_t *currentLayer = model[i];
+    quantization_t *currentQ = NULL;
 
-        switch (currentLayer->type) {
-        case LINEAR:
-            linearConfig_t *linearConfig = currentLayer->config->linear;
-            currentQ = linearConfig->forwardQ;
-            break;
-        case RELU:
-            reluConfig_t *reluConfig = currentLayer->config->relu;
-            currentQ = reluConfig->forwardQ;
-            break;
-        case SOFTMAX:
-            softmaxConfig_t *softmaxConfig = currentLayer->config->softmax;
-            currentQ = softmaxConfig->forwardQ;
-            break;
-        default:
-            PRINT_ERROR("Unknown Layer Type!");
-            exit(1);
-        }
-
-        calcOutputShapeFn_t calcOutputShape = layerFunctions[currentLayer->type].calcOutputShape;
-        size_t numberOfDims = layerOutputs[i]->shape->numberOfDimensions;
-
-        size_t *dims = *reserveMemory(numberOfDims * sizeof(size_t));
-        size_t *order = *reserveMemory(numberOfDims * sizeof(size_t));
-        shape_t *outShape = *reserveMemory(sizeof(shape_t));
-
-        outShape->dimensions = dims;
-        outShape->numberOfDimensions = numberOfDims;
-        outShape->orderOfDimensions = order;
-
-        calcOutputShape(currentLayer, layerOutputs[i]->shape, outShape);
-
-        size_t numberOfValues = calcNumberOfElementsByShape(outShape);
-        size_t sizeData = calcNumberOfBytesForData(currentQ, numberOfValues);
-        uint8_t *data = *reserveMemory(sizeData);
-
-        quantization_t *q = *reserveMemory(sizeof(quantization_t));
-        switch (currentQ->type) {
-        case FLOAT32:
-            initFloat32Quantization(q);
-            break;
-        case SYM_INT32:
-            q->type = SYM_INT32;
-            symInt32QConfig_t *currentQC = currentQ->qConfig;
-            symInt32QConfig_t *qC = *reserveMemory(sizeof(symInt32QConfig_t));
-            initSymInt32QConfig(currentQC->roundingMode, qC);
-            initSymInt32Quantization(qC, q);
-            break;
-        default:
-            PRINT_ERROR("Unknown QType!");
-            exit(1);
-        }
-
-        tensor_t *tensor = *reserveMemory(sizeof(tensor_t));
-        tensor->data = data;
-        tensor->quantization = q;
-        tensor->shape = outShape;
-
-        tensor->sparsity = NULL;
-        if (layerOutputs[i]->sparsity != NULL) {
-            sparsity_t *sparsity = *reserveMemory(sizeof(sparsity_t));
-            tensor->sparsity = sparsity;
-        }
-
-        layerOutputs[i + 1] = tensor;
+    switch (currentLayer->type) {
+    case LINEAR:
+      linearConfig_t *linearConfig = currentLayer->config->linear;
+      currentQ = linearConfig->forwardQ;
+      break;
+    case RELU:
+      reluConfig_t *reluConfig = currentLayer->config->relu;
+      currentQ = reluConfig->forwardQ;
+      break;
+    case SOFTMAX:
+      softmaxConfig_t *softmaxConfig = currentLayer->config->softmax;
+      currentQ = softmaxConfig->forwardQ;
+      break;
+    case FLATTEN:
+      // Flatten has no per-layer quantization; output dtype equals input dtype.
+      currentQ = layerOutputs[i]->quantization;
+      break;
+    default:
+      PRINT_ERROR("Unknown Layer Type!");
+      exit(1);
     }
-}
 
-static void deInitLayerOutputs(tensor_t **layerOutputs, size_t modelSize) {
-    for (size_t i = 1; i <= modelSize; i++) {
-        freeTensor(layerOutputs[i]);
-    }
-}
+    calcOutputShapeFn_t calcOutputShape = layerFunctions[currentLayer->type].calcOutputShape;
+    size_t numberOfDims = layerOutputs[i]->shape->numberOfDimensions;
 
-static void initGradTensor(tensor_t *grad, tensor_t *layerOutput) {
-    shape_t *currentShape = layerOutput->shape;
-    quantization_t *currentQ = layerOutput->quantization;
+    size_t *dims = *reserveMemory(numberOfDims * sizeof(size_t));
+    size_t *order = *reserveMemory(numberOfDims * sizeof(size_t));
+    shape_t *outShape = *reserveMemory(sizeof(shape_t));
 
-    size_t *dims = *reserveMemory(currentShape->numberOfDimensions * sizeof(size_t));
-    size_t *order = *reserveMemory(currentShape->numberOfDimensions * sizeof(size_t));
-    shape_t *inShape = *reserveMemory(sizeof(shape_t));
+    outShape->dimensions = dims;
+    outShape->numberOfDimensions = numberOfDims;
+    outShape->orderOfDimensions = order;
 
-    inShape->dimensions = dims;
-    inShape->numberOfDimensions = currentShape->numberOfDimensions;
-    inShape->orderOfDimensions = order;
+    calcOutputShape(currentLayer, layerOutputs[i]->shape, outShape);
 
-    memcpy(inShape->dimensions, currentShape->dimensions,
-           currentShape->numberOfDimensions * sizeof(size_t));
-    memcpy(inShape->orderOfDimensions, currentShape->orderOfDimensions,
-           currentShape->numberOfDimensions * sizeof(size_t));
-
-    setOrderOfDimsForNewTensor(inShape->numberOfDimensions, inShape->orderOfDimensions);
-
-    size_t numberOfValues = calcNumberOfElementsByShape(currentShape);
+    size_t numberOfValues = calcNumberOfElementsByShape(outShape);
     size_t sizeData = calcNumberOfBytesForData(currentQ, numberOfValues);
     uint8_t *data = *reserveMemory(sizeData);
 
     quantization_t *q = *reserveMemory(sizeof(quantization_t));
     switch (currentQ->type) {
     case FLOAT32:
-        initFloat32Quantization(q);
-        break;
+      initFloat32Quantization(q);
+      break;
     case SYM_INT32:
-        symInt32QConfig_t *currentQC = currentQ->qConfig;
-        symInt32QConfig_t *qC = *reserveMemory(sizeof(symInt32QConfig_t));
-        initSymInt32QConfig(currentQC->roundingMode, qC);
-        initSymInt32Quantization(qC, q);
-        break;
+      q->type = SYM_INT32;
+      symInt32QConfig_t *currentQC = currentQ->qConfig;
+      symInt32QConfig_t *qC = *reserveMemory(sizeof(symInt32QConfig_t));
+      initSymInt32QConfig(currentQC->roundingMode, qC);
+      initSymInt32Quantization(qC, q);
+      break;
     default:
-        PRINT_ERROR("Unknown QType!");
-        exit(1);
+      PRINT_ERROR("Unknown QType!");
+      exit(1);
     }
 
-    grad->data = data;
-    grad->quantization = q;
-    grad->shape = inShape;
+    tensor_t *tensor = *reserveMemory(sizeof(tensor_t));
+    tensor->data = data;
+    tensor->quantization = q;
+    tensor->shape = outShape;
 
-    grad->sparsity = NULL;
-    if (layerOutput->sparsity != NULL) {
-        sparsity_t *sparsity = *reserveMemory(sizeof(sparsity_t));
-        grad->sparsity = sparsity;
+    tensor->sparsity = NULL;
+    if (layerOutputs[i]->sparsity != NULL) {
+      sparsity_t *sparsity = *reserveMemory(sizeof(sparsity_t));
+      tensor->sparsity = sparsity;
     }
+
+    layerOutputs[i + 1] = tensor;
+  }
+}
+
+static void deInitLayerOutputs(tensor_t **layerOutputs, size_t modelSize) {
+  for (size_t i = 1; i <= modelSize; i++) {
+    freeTensor(layerOutputs[i]);
+  }
+}
+
+static void initGradTensor(tensor_t *grad, tensor_t *layerOutput) {
+  shape_t *currentShape = layerOutput->shape;
+  quantization_t *currentQ = layerOutput->quantization;
+
+  size_t *dims = *reserveMemory(currentShape->numberOfDimensions * sizeof(size_t));
+  size_t *order = *reserveMemory(currentShape->numberOfDimensions * sizeof(size_t));
+  shape_t *inShape = *reserveMemory(sizeof(shape_t));
+
+  inShape->dimensions = dims;
+  inShape->numberOfDimensions = currentShape->numberOfDimensions;
+  inShape->orderOfDimensions = order;
+
+  memcpy(inShape->dimensions, currentShape->dimensions,
+         currentShape->numberOfDimensions * sizeof(size_t));
+  memcpy(inShape->orderOfDimensions, currentShape->orderOfDimensions,
+         currentShape->numberOfDimensions * sizeof(size_t));
+
+  setOrderOfDimsForNewTensor(inShape->numberOfDimensions, inShape->orderOfDimensions);
+
+  size_t numberOfValues = calcNumberOfElementsByShape(currentShape);
+  size_t sizeData = calcNumberOfBytesForData(currentQ, numberOfValues);
+  uint8_t *data = *reserveMemory(sizeData);
+
+  quantization_t *q = *reserveMemory(sizeof(quantization_t));
+  switch (currentQ->type) {
+  case FLOAT32:
+    initFloat32Quantization(q);
+    break;
+  case SYM_INT32:
+    symInt32QConfig_t *currentQC = currentQ->qConfig;
+    symInt32QConfig_t *qC = *reserveMemory(sizeof(symInt32QConfig_t));
+    initSymInt32QConfig(currentQC->roundingMode, qC);
+    initSymInt32Quantization(qC, q);
+    break;
+  default:
+    PRINT_ERROR("Unknown QType!");
+    exit(1);
+  }
+
+  grad->data = data;
+  grad->quantization = q;
+  grad->shape = inShape;
+
+  grad->sparsity = NULL;
+  if (layerOutput->sparsity != NULL) {
+    sparsity_t *sparsity = *reserveMemory(sizeof(sparsity_t));
+    grad->sparsity = sparsity;
+  }
 }
 
 static void deInitGradTensor(tensor_t *tensor) {
-    freeData(tensor);
-    freeShape(tensor->shape);
-    freeQuantization(tensor->quantization);
+  freeData(tensor);
+  freeShape(tensor->shape);
+  freeQuantization(tensor->quantization);
 }
 
 static trainingStats_t *initTrainingStats(tensor_t *output) {
-    trainingStats_t *trainingStats = *reserveMemory(sizeof(trainingStats_t));
+  trainingStats_t *trainingStats = *reserveMemory(sizeof(trainingStats_t));
 
-    tensor_t *o = getTensorLike(output);
-    trainingStats->output = o;
+  tensor_t *o = getTensorLike(output);
+  trainingStats->output = o;
 
-    return trainingStats;
+  return trainingStats;
 }

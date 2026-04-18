@@ -75,3 +75,21 @@ target_link_libraries(UnitTestMnistSmoke PRIVATE
         StorageApi
 )
 __register_target_as_unit_test(UnitTestMnistSmoke)
+
+add_executable(UnitTestFlattenIntegration UnitTestFlattenIntegration.c)
+target_link_libraries(UnitTestFlattenIntegration PRIVATE
+        unity
+        TrainingLoopApi
+        CalculateGradsSequential
+        CommonLayerLibs
+        FlattenApi
+        LinearApi
+        SoftmaxApi
+        TensorApi
+        QuantizationApi
+        LossFunction
+        InferenceApi
+        DataLoader
+        StorageApi
+)
+__register_target_as_unit_test(UnitTestFlattenIntegration)
