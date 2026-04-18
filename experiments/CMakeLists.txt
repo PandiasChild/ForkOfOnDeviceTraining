@@ -13,6 +13,9 @@ target_link_libraries(MnistExperiment PRIVATE
         ReluApi
         Relu
 
+        FlattenApi
+        Flatten
+
         QuantizationApi
         Quantization
 

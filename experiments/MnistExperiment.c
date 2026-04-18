@@ -25,31 +25,30 @@
 #define LOG "MnistExperimentLog.csv"
 #endif
 
-
-#include <stdlib.h>
-#include <time.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
+#include "CSVHelper.h"
+#include "CalculateGradsSequential.h"
+#include "Common.h"
 #include "DataLoader.h"
 #include "DataLoaderApi.h"
-#include "NPYLoaderApi.h"
+#include "FlattenApi.h"
+#include "InferenceApi.h"
 #include "Layer.h"
+#include "LinearApi.h"
+#include "NPYLoaderApi.h"
 #include "Quantization.h"
 #include "QuantizationApi.h"
-#include "LinearApi.h"
 #include "ReluApi.h"
-#include "TensorApi.h"
-#include "Tensor.h"
 #include "SgdApi.h"
-#include "StorageApi.h"
 #include "SoftmaxApi.h"
-#include "InferenceApi.h"
-#include "CSVHelper.h"
-#include "Common.h"
+#include "StorageApi.h"
+#include "Tensor.h"
+#include "TensorApi.h"
 #include "TrainingLoopApi.h"
-#include "CalculateGradsSequential.h"
-
 
 static dataset_t trainDataset;
 static dataset_t testDataset;
@@ -57,195 +56,129 @@ static dataset_t testDataset;
 static size_t batchSize = 32;
 
 static void initDataSets() {
-    tensorArray_t *trainItems = npyLoad(MNIST_TRAIN_X);
-    tensorArray_t *trainLabels = npyLoad(MNIST_TRAIN_Y);
-    trainDataset.items = trainItems;
-    trainDataset.labels = trainLabels;
+  tensorArray_t *trainItems = npyLoad(MNIST_TRAIN_X);
+  tensorArray_t *trainLabels = npyLoad(MNIST_TRAIN_Y);
+  trainDataset.items = trainItems;
+  trainDataset.labels = trainLabels;
 
-    tensorArray_t *testItems = npyLoad(MNIST_TEST_X);
-    tensorArray_t *testLabels = npyLoad(MNIST_TEST_Y);
-    testDataset.items = testItems;
-    testDataset.labels = testLabels;
+  tensorArray_t *testItems = npyLoad(MNIST_TEST_X);
+  tensorArray_t *testLabels = npyLoad(MNIST_TEST_Y);
+  testDataset.items = testItems;
+  testDataset.labels = testLabels;
 }
 
 static sample_t *getTrainSample(size_t id) {
-    sample_t *sample = npyGetSample(&trainDataset, id);
-    return sample;
+  sample_t *sample = npyGetSample(&trainDataset, id);
+  return sample;
 }
 
 static sample_t *getTestSample(size_t id) {
-    sample_t *sample = npyGetSample(&testDataset, id);
-    return sample;
+  sample_t *sample = npyGetSample(&testDataset, id);
+  return sample;
 }
 
-static size_t getTrainDatasetSize() {
-    return trainDataset.items->size;
-}
+static size_t getTrainDatasetSize() { return trainDataset.items->size; }
 
-static size_t getTestDatasetSize() {
-    return testDataset.items->size;
-}
-
-// raw tensor dims look like this: [1, 28, 28]
-// we want dims to look like this: [1, 28*28] (linear layer only accepts 2D tensors)
-static void flattenItemDims() {
-
-    size_t trainNumberOfTensors = getTrainDatasetSize();
-    size_t testNumberOfTensors = getTestDatasetSize();
-
-    size_t numberOfDims = 2;
-
-    shape_t *shape;
-
-    for (size_t i = 0; i < trainNumberOfTensors; i++) {
-        shape = trainDataset.items->array[i]->shape;
-        size_t *newDims = *reserveMemory(numberOfDims * sizeof(size_t));
-        size_t newDimsData[] = {shape->dimensions[0],
-                                shape->dimensions[2] * shape->dimensions[2]};
-        size_t *newOrder = *reserveMemory(numberOfDims * sizeof(size_t));
-
-        for (size_t j = 0; j < numberOfDims; j++) {
-            newDims[j] = newDimsData[j];
-            newOrder[j] = j;
-        }
-
-        freeReservedMemory(shape->dimensions);
-        freeReservedMemory(shape->orderOfDimensions);
-
-        shape->numberOfDimensions = numberOfDims;
-        shape->dimensions = newDims;
-        shape->orderOfDimensions = newOrder;
-    }
-
-    for (size_t i = 0; i < testNumberOfTensors; i++) {
-        shape = testDataset.items->array[i]->shape;
-        size_t *newDims = *reserveMemory(numberOfDims * sizeof(size_t));
-        size_t newDimsData[] = {shape->dimensions[0],
-                                shape->dimensions[2] * shape->dimensions[2]};
-        size_t *newOrder = *reserveMemory(numberOfDims * sizeof(size_t));
-        for (size_t j = 0; j < numberOfDims; j++) {
-            newDims[j] = newDimsData[j];
-            newOrder[j] = j;
-        }
-
-        freeReservedMemory(shape->dimensions);
-        freeReservedMemory(shape->orderOfDimensions);
-
-        shape->numberOfDimensions = numberOfDims;
-        shape->dimensions = newDims;
-        shape->orderOfDimensions = newOrder;
-
-    }
-}
+static size_t getTestDatasetSize() { return testDataset.items->size; }
 
 static void epochCallback(size_t epoch, float trainLoss, epochStats_t evalStats) {
-    char row[256] = {0};
-    sprintf(row, "%lu, %f, %f, %f, %f, %f, %f\n",
-            epoch, trainLoss, evalStats.loss, evalStats.accuracy,
-            evalStats.precision, evalStats.recall, evalStats.f1);
-    PRINT_DEBUG("%s\n", row);
+  char row[256] = {0};
+  sprintf(row, "%lu, %f, %f, %f, %f, %f, %f\n", epoch, trainLoss, evalStats.loss,
+          evalStats.accuracy, evalStats.precision, evalStats.recall, evalStats.f1);
+  PRINT_DEBUG("%s\n", row);
 
-    char *rows[] = {row};
-    size_t entriesInRow[] = {7};
-    csvData_t csvData;
-    setCSVData(&csvData, rows, 1, entriesInRow);
-    csvWriteRowsByBufferSize(LOG, &csvData, "a");
+  char *rows[] = {row};
+  size_t entriesInRow[] = {7};
+  csvData_t csvData;
+  setCSVData(&csvData, rows, 1, entriesInRow);
+  csvWriteRowsByBufferSize(LOG, &csvData, "a");
 }
 
 static void writeCsvHeader(char *filePath) {
-    char *header = "epoch, train_loss, eval_loss, eval_accuracy, eval_precision, eval_recall, eval_f1\n";
-    char *row[] = {header};
-    size_t entriesInRow[] = {7};
-    csvData_t csvData;
-    setCSVData(&csvData, row, 1, entriesInRow);
-    csvWriteRowsByBufferSize(filePath, &csvData, "w");
+  char *header =
+      "epoch, train_loss, eval_loss, eval_accuracy, eval_precision, eval_recall, eval_f1\n";
+  char *row[] = {header};
+  size_t entriesInRow[] = {7};
+  csvData_t csvData;
+  setCSVData(&csvData, row, 1, entriesInRow);
+  csvWriteRowsByBufferSize(filePath, &csvData, "w");
 }
 
-#define MODEL_SIZE 4
+#define MODEL_SIZE 5
 
 static void buildModel(layer_t **model) {
-    quantization_t *q = quantizationInitFloat();
+  quantization_t *q = quantizationInitFloat();
 
-    // Linear 784→20
-    static float weight0Data[20 * 28 * 28] = {0};
-    static size_t weight0Dims[] = {20, 28 * 28};
-    tensor_t *weight0Param = tensorInitWithDistribution(XAVIER_UNIFORM, weight0Data, weight0Dims, 2, q, NULL, 28*28, 20);
-    tensor_t *weight0Grad = gradInitFloat(weight0Param, NULL);
-    parameter_t *weight0 = parameterInit(weight0Param, weight0Grad);
+  // Flatten [1, 28, 28] -> [1, 784]
+  model[0] = flattenLayerInit();
 
-    static float bias0Data[20] = {0};
-    static size_t bias0Dims[] = {1, 20};
-    tensor_t *bias0Param = tensorInitWithDistribution(ZEROS, bias0Data, bias0Dims, 2, q, NULL, 1, 20);
-    tensor_t *bias0Grad = gradInitFloat(bias0Param, NULL);
-    parameter_t *bias0 = parameterInit(bias0Param, bias0Grad);
+  // Linear 784→20
+  static float weight0Data[20 * 28 * 28] = {0};
+  static size_t weight0Dims[] = {20, 28 * 28};
+  tensor_t *weight0Param =
+      tensorInitWithDistribution(XAVIER_UNIFORM, weight0Data, weight0Dims, 2, q, NULL, 28 * 28, 20);
+  tensor_t *weight0Grad = gradInitFloat(weight0Param, NULL);
+  parameter_t *weight0 = parameterInit(weight0Param, weight0Grad);
 
-    model[0] = linearLayerInit(weight0, bias0, q, q, q, q);
+  static float bias0Data[20] = {0};
+  static size_t bias0Dims[] = {1, 20};
+  tensor_t *bias0Param = tensorInitWithDistribution(ZEROS, bias0Data, bias0Dims, 2, q, NULL, 1, 20);
+  tensor_t *bias0Grad = gradInitFloat(bias0Param, NULL);
+  parameter_t *bias0 = parameterInit(bias0Param, bias0Grad);
 
-    // ReLU
-    model[1] = reluLayerInit(q, q);
+  model[1] = linearLayerInit(weight0, bias0, q, q, q, q);
 
-    // Linear 20→10
-    static float weight1Data[10 * 20] = {0};
-    static size_t weight1Dims[] = {10, 20};
-    tensor_t *weight1Param = tensorInitWithDistribution(XAVIER_UNIFORM, weight1Data, weight1Dims, 2, q, NULL, 20, 10);
-    tensor_t *weight1Grad = gradInitFloat(weight1Param, NULL);
-    parameter_t *weight1 = parameterInit(weight1Param, weight1Grad);
+  // ReLU
+  model[2] = reluLayerInit(q, q);
 
-    static float bias1Data[10] = {0};
-    static size_t bias1Dims[] = {1, 10};
-    tensor_t *bias1Param = tensorInitWithDistribution(ZEROS, bias1Data, bias1Dims, 2, q, NULL, 1, 10);
-    tensor_t *bias1Grad = gradInitFloat(bias1Param, NULL);
-    parameter_t *bias1 = parameterInit(bias1Param, bias1Grad);
+  // Linear 20→10
+  static float weight1Data[10 * 20] = {0};
+  static size_t weight1Dims[] = {10, 20};
+  tensor_t *weight1Param =
+      tensorInitWithDistribution(XAVIER_UNIFORM, weight1Data, weight1Dims, 2, q, NULL, 20, 10);
+  tensor_t *weight1Grad = gradInitFloat(weight1Param, NULL);
+  parameter_t *weight1 = parameterInit(weight1Param, weight1Grad);
 
-    model[2] = linearLayerInit(weight1, bias1, q, q, q, q);
+  static float bias1Data[10] = {0};
+  static size_t bias1Dims[] = {1, 10};
+  tensor_t *bias1Param = tensorInitWithDistribution(ZEROS, bias1Data, bias1Dims, 2, q, NULL, 1, 10);
+  tensor_t *bias1Grad = gradInitFloat(bias1Param, NULL);
+  parameter_t *bias1 = parameterInit(bias1Param, bias1Grad);
 
-    // Softmax
-    model[3] = softmaxLayerInit(q, q);
+  model[3] = linearLayerInit(weight1, bias1, q, q, q, q);
+
+  // Softmax
+  model[4] = softmaxLayerInit(q, q);
 }
 
-
 int main(void) {
-    writeCsvHeader(LOG);
+  writeCsvHeader(LOG);
 
-    size_t numberOfEpochs = 10;
-    initDataSets();
-    flattenItemDims();
+  size_t numberOfEpochs = 10;
+  initDataSets();
 
-    dataLoader_t *trainDataloader = dataLoaderInit(getTrainSample,
-                                                   getTrainDatasetSize,
-                                                   batchSize,
-                                                   NULL,
-                                                   NULL,
-                                                   false,
-                                                   0,
-                                                   true);
+  dataLoader_t *trainDataloader =
+      dataLoaderInit(getTrainSample, getTrainDatasetSize, batchSize, NULL, NULL, false, 0, true);
 
-    dataLoader_t *testDataloader = dataLoaderInit(getTestSample,
-                                                  getTestDatasetSize,
-                                                  1,
-                                                  NULL,
-                                                  NULL,
-                                                  false,
-                                                  0,
-                                                  true);
+  dataLoader_t *testDataloader =
+      dataLoaderInit(getTestSample, getTestDatasetSize, 1, NULL, NULL, false, 0, true);
 
-    layer_t *model[MODEL_SIZE];
-    buildModel(model);
+  layer_t *model[MODEL_SIZE];
+  buildModel(model);
 
-    optimizer_t *sgd = sgdMCreateOptim(0.001f, 0.f, 0.f, model, MODEL_SIZE, FLOAT32);
+  optimizer_t *sgd = sgdMCreateOptim(0.001f, 0.f, 0.f, model, MODEL_SIZE, FLOAT32);
 
-    clock_t start = clock();
+  clock_t start = clock();
 
-    trainingRunResult_t result = trainingRun(model, MODEL_SIZE, CROSS_ENTROPY,
-                                             trainDataloader, testDataloader, sgd,
-                                             numberOfEpochs, calculateGradsSequential,
-                                             inferenceWithLoss, epochCallback);
+  trainingRunResult_t result =
+      trainingRun(model, MODEL_SIZE, CROSS_ENTROPY, trainDataloader, testDataloader, sgd,
+                  numberOfEpochs, calculateGradsSequential, inferenceWithLoss, epochCallback);
 
-    clock_t end = clock();
+  clock_t end = clock();
 
-    double duration_sec = (double)(end - start) / CLOCKS_PER_SEC;
-    PRINT_INFO("Training finished in %f seconds\n", duration_sec);
-    PRINT_INFO("Final train loss: %f, eval loss: %f\n", result.finalTrainLoss,
-                result.finalEvalStats.loss);
-    PRINT_INFO("Final accuracy: %.2f%%\n", result.finalEvalStats.accuracy * 100.0f);
+  double duration_sec = (double)(end - start) / CLOCKS_PER_SEC;
+  PRINT_INFO("Training finished in %f seconds\n", duration_sec);
+  PRINT_INFO("Final train loss: %f, eval loss: %f\n", result.finalTrainLoss,
+             result.finalEvalStats.loss);
+  PRINT_INFO("Final accuracy: %.2f%%\n", result.finalEvalStats.accuracy * 100.0f);
 }
