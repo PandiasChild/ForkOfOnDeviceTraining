@@ -9,7 +9,7 @@ the dataset. This:
 
 - keeps dataset code independent of downstream model topology
 - allows one dataset to feed models with different input ranks
-- matches the PyTorch / Keras / elastic-ai.creator IR convention, so ir2c
-  can compile each shape transform to a corresponding C layer
+- matches the PyTorch / Keras / elastic-ai.creator IR convention, so a future
+  ir2c can compile each shape transform to a corresponding C layer
 
 For flatten-to-2D, use `flattenLayerInit()` from `FlattenApi.h`.
