@@ -14,6 +14,6 @@ layerFunctions_t layerFunctions[] = {
     [FLATTEN] = {flattenForward, flattenBackward, flattenCalcOutputShape}};
 
 void initLayer(layer_t *layer, layerType_t type, layerConfig_t *config) {
-  layer->type = type;
-  layer->config = config;
+    layer->type = type;
+    layer->config = config;
 }
