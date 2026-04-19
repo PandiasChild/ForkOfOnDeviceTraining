@@ -98,6 +98,9 @@ static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t si
 
         calcOutputShapeFn_t calcOutputShape = layerFunctions[currentLayer->type].calcOutputShape;
         size_t numberOfDims = layerOutputs[i]->shape->numberOfDimensions;
+        if (currentLayer->type == FLATTEN) {
+            numberOfDims = 2;
+        }
 
         size_t *dims = *reserveMemory(numberOfDims * sizeof(size_t));
         size_t *order = *reserveMemory(numberOfDims * sizeof(size_t));
