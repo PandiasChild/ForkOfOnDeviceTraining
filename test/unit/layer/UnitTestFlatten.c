@@ -23,7 +23,7 @@ void testFlattenLayerInit_ReturnsFlattenTypedLayer(void) {
 }
 
 void testFlattenCalcOutputShape_NonSquareInput(void) {
-    // Regression test for the old flattenItemDims bug (dim[2]*dim[2])
+    // Regression: product of all trailing dims, not the squared last dim.
     // Input [1, 3, 4, 5] must flatten to [1, 60], NOT [1, 25] or similar.
     size_t inputDims[] = {1, 3, 4, 5};
     size_t inputOrder[] = {0, 1, 2, 3};

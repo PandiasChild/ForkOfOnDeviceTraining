@@ -45,6 +45,8 @@ void flattenCalcOutputShape(layer_t *flattenLayer, shape_t *inputShape, shape_t 
         features *= inputShape->dimensions[i];
     }
 
+    // Precondition: caller allocates outputShape->dimensions and
+    // ->orderOfDimensions with >= 2 slots, regardless of input rank.
     outputShape->dimensions[0] = batch;
     outputShape->dimensions[1] = features;
     outputShape->numberOfDimensions = 2;

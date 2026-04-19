@@ -6,6 +6,7 @@
 layer_t *flattenLayerInit(void) {
     layer_t *flattenLayer = *reserveMemory(sizeof(layer_t));
     flattenLayer->type = FLATTEN;
+    // Load-bearing: initLayerOutputs' FLATTEN case never reads config.
     flattenLayer->config = NULL;
     return flattenLayer;
 }
