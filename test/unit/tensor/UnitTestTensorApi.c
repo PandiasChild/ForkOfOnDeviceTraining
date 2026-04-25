@@ -3,10 +3,19 @@
 #include <stddef.h>
 #include <string.h>
 
-#include "TensorApi.h"
-#include "Tensor.h"
 #include "Quantization.h"
+#include "QuantizationApi.h"
+#include "StorageApi.h"
+#include "Tensor.h"
+#include "TensorApi.h"
 #include "unity.h"
+
+/* Compile-time contract: initTensor takes shape_t *, quantization_t *,
+ * sparsity_t * and returns tensor_t *. No data buffer parameter. */
+_Static_assert(_Generic((&initTensor),
+                   tensor_t *(*)(shape_t *, quantization_t *, sparsity_t *): 1,
+                   default: 0),
+               "initTensor must take (shape_t *, quantization_t *, sparsity_t *)");
 
 void setUp() {}
 void tearDown() {}
@@ -89,11 +98,44 @@ void testTensorInitWithDistribution_ShapeIsCorrect() {
     TEST_ASSERT_EQUAL_UINT(6, numElements);
 }
 
+void testInitTensor_AllocatesOwnZeroDataBuffer_FreeTensorIsSafe(void) {
+    /* Build shape via reserveMemory so caller doesn't bypass the locality rule. */
+    size_t *dims = reserveMemory(2 * sizeof(size_t));
+    dims[0] = 3;
+    dims[1] = 4;
+    size_t *order = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, 2, order);
+
+    quantization_t *q = quantizationInitFloat();
+
+    tensor_t *t = initTensor(shape, q, NULL);
+
+    TEST_ASSERT_NOT_NULL(t);
+    TEST_ASSERT_NOT_NULL(t->data);
+    TEST_ASSERT_EQUAL_PTR(shape, t->shape);
+    TEST_ASSERT_EQUAL_PTR(q, t->quantization);
+    TEST_ASSERT_NULL(t->sparsity);
+
+    /* All bytes of the data buffer must be zero (calloc semantics). */
+    size_t bytes = calcBytesPerTensor(t);
+    for (size_t i = 0; i < bytes; ++i) {
+        TEST_ASSERT_EQUAL_UINT8(0, t->data[i]);
+    }
+
+    /* freeTensor must release everything cleanly without external buffers. */
+    freeTensor(t);
+    /* If we reach here without an abort/segfault, freeTensor is unconditional-safe
+     * for an initTensor-allocated tensor. */
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testTensorInitWithDistribution_Zeros_InitializesProductOfDimsValues);
     RUN_TEST(testTensorInitWithDistribution_Ones_InitializesAllValues);
     RUN_TEST(testTensorInitWithDistribution_Normal_InitializesAllValues);
     RUN_TEST(testTensorInitWithDistribution_ShapeIsCorrect);
+    RUN_TEST(testInitTensor_AllocatesOwnZeroDataBuffer_FreeTensorIsSafe);
     return UNITY_END();
 }

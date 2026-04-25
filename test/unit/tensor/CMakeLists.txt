@@ -28,5 +28,6 @@ add_elastic_ai_unit_test(
         Tensor
         Rounding
         Quantization
+        QuantizationApi
         StorageApi
 )

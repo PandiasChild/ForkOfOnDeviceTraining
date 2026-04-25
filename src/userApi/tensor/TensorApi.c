@@ -1,20 +1,19 @@
 #define SOURCE_FILE "TENSOR_API"
 
 #include <math.h>
-#include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
-#include "Rounding.h"
-#include "TensorConversion.h"
-#include "TensorApiInternal.h"
-#include "TensorApi.h"
-#include "StorageApi.h"
-#include "QuantizationApi.h"
 #include "Common.h"
 #include "Distributions.h"
-
+#include "QuantizationApi.h"
+#include "Rounding.h"
+#include "StorageApi.h"
+#include "TensorApi.h"
+#include "TensorApiInternal.h"
+#include "TensorConversion.h"
 
 // tensor inits
 
@@ -77,6 +76,19 @@ tensor_t *tensorInit(float *data, size_t *dims, size_t numberOfDims, quantizatio
         PRINT_ERROR("Unknown QType");
         exit(1);
     }
+}
+
+tensor_t *initTensor(shape_t *shape, quantization_t *quantization, sparsity_t *sparsity) {
+    tensor_t *tensor = reserveMemory(sizeof(tensor_t));
+    tensor->shape = shape;
+    tensor->quantization = quantization;
+    tensor->sparsity = sparsity;
+
+    size_t numberOfElements = calcNumberOfElementsByShape(shape);
+    size_t bytes = calcNumberOfBytesForData(quantization, numberOfElements);
+    tensor->data = reserveMemory(bytes);
+
+    return tensor;
 }
 
 tensor_t *tensorInitWithDistribution(distributionType_t distributionType, float *data, size_t *dims,
@@ -343,7 +355,6 @@ void freeParameter(parameter_t *parameter) {
     freeTensor(parameter->grad);
     freeReservedMemory(parameter);
 }
-
 
 static tensor_t *initTensorWithQInt32(int32_t *data, size_t *dims, size_t numberOfDims,
                                       quantization_t *quantization, sparsity_t *sparsity) {
