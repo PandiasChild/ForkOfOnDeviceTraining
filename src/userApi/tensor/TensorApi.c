@@ -105,8 +105,11 @@ void tensorFillFromFloatBuffer(tensor_t *tensor, const float *source, size_t cou
 
     /* Non-FLOAT32: route through convertTensor, mirroring the pattern in
      * initTensorWithQSymInt32. Build a temporary FLOAT32 view over `source`
-     * and convert into `tensor`. The const-cast is safe: convertTensor only
-     * reads from inputTensor->data. */
+     * and convert into `tensor`. The const-cast is safe because the only
+     * write convertTensor's helpers do back into `inputTensor` is through
+     * `copyDimsAndSparsityToTensor`, which assigns `outputTensor->shape =
+     * inputTensor->shape` — given that we set `srcView.shape = tensor->shape`,
+     * that write is a self-assignment of the same pointer back into tensor. */
     quantization_t floatQ;
     initFloat32Quantization(&floatQ);
     tensor_t srcView;
