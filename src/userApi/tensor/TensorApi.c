@@ -91,6 +91,33 @@ tensor_t *initTensor(shape_t *shape, quantization_t *quantization, sparsity_t *s
     return tensor;
 }
 
+void tensorFillFromFloatBuffer(tensor_t *tensor, const float *source, size_t count) {
+    size_t expected = calcNumberOfElementsByTensor(tensor);
+    if (count != expected) {
+        PRINT_ERROR("tensorFillFromFloatBuffer count mismatch (expected vs given)");
+        exit(1);
+    }
+
+    if (tensor->quantization->type == FLOAT32) {
+        memcpy(tensor->data, source, count * sizeof(float));
+        return;
+    }
+
+    /* Non-FLOAT32: route through convertTensor, mirroring the pattern in
+     * initTensorWithQSymInt32. Build a temporary FLOAT32 view over `source`
+     * and convert into `tensor`. The const-cast is safe: convertTensor only
+     * reads from inputTensor->data. */
+    quantization_t floatQ;
+    initFloat32Quantization(&floatQ);
+    tensor_t srcView;
+    srcView.data = (uint8_t *)(uintptr_t)source;
+    srcView.shape = tensor->shape;
+    srcView.quantization = &floatQ;
+    srcView.sparsity = NULL;
+
+    convertTensor(&srcView, tensor);
+}
+
 void initDistribution(tensor_t *tensor, const distribution_t *distribution) {
     if (tensor->quantization->type != FLOAT32) {
         PRINT_ERROR("initDistribution only supports FLOAT32 in this iteration");

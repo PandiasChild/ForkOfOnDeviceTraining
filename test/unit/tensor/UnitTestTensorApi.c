@@ -25,6 +25,12 @@ _Static_assert(_Generic((&initDistribution),
                    default: 0),
                "initDistribution must take (tensor_t *, const distribution_t *)");
 
+/* Compile-time contract: tensorFillFromFloatBuffer takes (tensor_t *, const float *, size_t). */
+_Static_assert(_Generic((&tensorFillFromFloatBuffer),
+                   void (*)(tensor_t *, const float *, size_t): 1,
+                   default: 0),
+               "tensorFillFromFloatBuffer must take (tensor_t *, const float *, size_t)");
+
 void setUp() {}
 void tearDown() {}
 
@@ -247,6 +253,41 @@ void testInitDistribution_KaimingNormal_NotAllZero(void) {
     freeTensor(t);
 }
 
+static void fillTensorFromStackArrayThatGoesOutOfScope(tensor_t *t) {
+    /* Local stack array — exits scope when this function returns. */
+    float src[6] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+    tensorFillFromFloatBuffer(t, src, 6);
+    /* `src` goes out of scope on return; tensor must keep its own copy. */
+}
+
+void testTensorFillFromFloatBuffer_CopiesValues_SourceCanGoOutOfScope(void) {
+    size_t *dims = reserveMemory(2 * sizeof(size_t));
+    dims[0] = 2;
+    dims[1] = 3;
+    size_t *order = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, 2, order);
+
+    tensor_t *t = initTensor(shape, quantizationInitFloat(), NULL);
+
+    fillTensorFromStackArrayThatGoesOutOfScope(t);
+
+    /* Force stack reuse — analogous to issue #93's regression pattern. */
+    for (int i = 0; i < 100; ++i) {
+        volatile float junk[6] = {(float)i, (float)~i, 0, 0, 0, 0};
+        (void)junk;
+    }
+
+    float *vals = (float *)t->data;
+    float expected[6] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+    for (size_t i = 0; i < 6; ++i) {
+        TEST_ASSERT_FLOAT_WITHIN(1e-9f, expected[i], vals[i]);
+    }
+
+    freeTensor(t);
+}
+
 void testInitTensor_Int32_AllocatesFourBytesPerElement(void) {
     /* Closes the calcNumberOfBytesForData gap surfaced by code-review on Task A:
      * the INT32 arm was missing, which would have made gradInitInt32 (Task D)
@@ -311,6 +352,7 @@ int main(void) {
     RUN_TEST(testTensorInitWithDistribution_ShapeIsCorrect);
     RUN_TEST(testInitTensor_AllocatesOwnZeroDataBuffer_FreeTensorIsSafe);
     RUN_TEST(testInitTensor_Int32_AllocatesFourBytesPerElement);
+    RUN_TEST(testTensorFillFromFloatBuffer_CopiesValues_SourceCanGoOutOfScope);
     RUN_TEST(testInitDistribution_Zeros_AllValuesAreZero);
     RUN_TEST(testInitDistribution_Ones_AllValuesAreOne);
     RUN_TEST(testInitDistribution_Uniform_AllValuesInRange);

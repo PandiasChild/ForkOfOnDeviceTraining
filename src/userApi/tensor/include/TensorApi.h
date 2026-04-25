@@ -109,6 +109,16 @@ tensor_t *initTensor(shape_t *shape, quantization_t *quantization, sparsity_t *s
  */
 void initDistribution(tensor_t *tensor, const distribution_t *distribution);
 
+/*! Copies `count` floats from a caller-owned source into a tensor's data
+ * buffer. Caller retains ownership of `source`. If the tensor is non-FLOAT32
+ * quantized, values are converted via the tensor's quantization.
+ *
+ * \param tensor: Pre-initialized tensor.
+ * \param source: Caller-owned float array (any storage class).
+ * \param count: Number of floats; must equal the tensor's element count.
+ */
+void tensorFillFromFloatBuffer(tensor_t *tensor, const float *source, size_t count);
+
 /*! Initializes int32 gradient tensor to match given param tensor.
  *
  * \param param: Pointer to param tensor
