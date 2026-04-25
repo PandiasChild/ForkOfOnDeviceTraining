@@ -140,6 +140,26 @@ void unitTestSoftmaxBackwardSymInt32() {
     }
 }
 
+void testSoftmaxLayerInitAndFreeRoundTrip(void) {
+    /* Roundtrip: softmaxLayerInit allocates layer + outer layerConfig +
+     * inner softmaxConfig (3 reserveMemory calls). freeSoftmaxLayer must
+     * release all three. Leak verification is delegated to the LSan
+     * sweep — this test asserts only that the round-trip completes
+     * without a crash and that the layer was wired correctly. */
+    quantization_t *floatQ = quantizationInitFloat();
+    layer_t *softmaxLayer = softmaxLayerInit(floatQ, floatQ);
+    TEST_ASSERT_NOT_NULL(softmaxLayer);
+    TEST_ASSERT_EQUAL_INT(SOFTMAX, softmaxLayer->type);
+    TEST_ASSERT_NOT_NULL(softmaxLayer->config);
+    TEST_ASSERT_NOT_NULL(softmaxLayer->config->softmax);
+
+    freeSoftmaxLayer(softmaxLayer);
+
+    /* floatQ is owned by the test; freeSoftmaxLayer must not have freed
+     * it (quantization configs are externally owned and shared). */
+    freeQuantization(floatQ);
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -150,5 +170,7 @@ int main() {
 
     RUN_TEST(unitTestSoftmaxBackwardFloat);
     RUN_TEST(unitTestSoftmaxBackwardSymInt32);
+
+    RUN_TEST(testSoftmaxLayerInitAndFreeRoundTrip);
     return UNITY_END();
 }

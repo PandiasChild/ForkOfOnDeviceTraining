@@ -3,13 +3,15 @@
 #include <stdlib.h>
 
 #include "Layer.h"
-#include "Tensor.h"
-#include "StorageApi.h"
-#include "TensorApi.h"
-#include "LinearApi.h"
 #include "Linear.h"
+#include "LinearApi.h"
+#include "StorageApi.h"
+#include "Tensor.h"
+#include "TensorApi.h"
 
-layer_t *linearLayerInit(parameter_t *weights, parameter_t *bias, quantization_t *forwardQ, quantization_t *weightGradsQ, quantization_t *biasGradsQ, quantization_t *propLossQ) {
+layer_t *linearLayerInit(parameter_t *weights, parameter_t *bias, quantization_t *forwardQ,
+                         quantization_t *weightGradsQ, quantization_t *biasGradsQ,
+                         quantization_t *propLossQ) {
     layer_t *linearLayer = reserveMemory(sizeof(layer_t));
 
     linearLayer->type = LINEAR;
@@ -49,7 +51,7 @@ layer_t *linearLayerInitNonTrainable(tensor_t *weights, tensor_t *bias, quantiza
 }
 
 void freeLinearLayer(layer_t *linearLayer) {
-    linearConfig_t *linearConfig = linearLayer->config->linear;
-    freeReservedMemory(linearConfig);
+    freeReservedMemory(linearLayer->config->linear);
+    freeReservedMemory(linearLayer->config);
     freeReservedMemory(linearLayer);
 }

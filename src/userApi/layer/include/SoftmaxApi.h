@@ -1,9 +1,11 @@
 #ifndef SOFTMAXAPI_H
 #define SOFTMAXAPI_H
 
-#include "Tensor.h"
 #include "Layer.h"
+#include "Tensor.h"
 
 layer_t *softmaxLayerInit(quantization_t *forwardQ, quantization_t *backwardQ);
 
-#endif //SOFTMAXAPI_H
+void freeSoftmaxLayer(layer_t *softmaxLayer);
+
+#endif // SOFTMAXAPI_H

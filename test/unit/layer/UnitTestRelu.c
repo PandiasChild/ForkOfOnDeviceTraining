@@ -136,6 +136,22 @@ void testReluBackwardSymInt32() {
     }
 }
 
+void testReluLayerInitAndFreeRoundTrip(void) {
+    /* Roundtrip: reluLayerInit allocates layer + outer layerConfig +
+     * inner reluConfig (3 reserveMemory calls). freeReluLayer must
+     * release all three. Pre-fix this test runs to completion but leaks
+     * the inner reluConfig; post-fix it is leak-clean (verified via the
+     * LSan sweep). NULL is acceptable for the quantization arguments —
+     * reluLayerInit only stores them, freeReluLayer doesn't touch them. */
+    layer_t *reluLayer = reluLayerInit(NULL, NULL);
+    TEST_ASSERT_NOT_NULL(reluLayer);
+    TEST_ASSERT_EQUAL_INT(RELU, reluLayer->type);
+    TEST_ASSERT_NOT_NULL(reluLayer->config);
+    TEST_ASSERT_NOT_NULL(reluLayer->config->relu);
+
+    freeReluLayer(reluLayer);
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -146,5 +162,7 @@ int main(void) {
 
     RUN_TEST(testReluBackwardFloat);
     RUN_TEST(testReluBackwardSymInt32);
+
+    RUN_TEST(testReluLayerInitAndFreeRoundTrip);
     return UNITY_END();
 }

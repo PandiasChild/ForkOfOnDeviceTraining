@@ -484,6 +484,27 @@ void testLinearLayerInitNonTrainable(void) {
     TEST_ASSERT_FLOAT_WITHIN(0.001f, -4.f, actual[1]);
 }
 
+void testLinearLayerInitAndFreeRoundTrip(void) {
+    /* Roundtrip: linearLayerInit allocates layer + outer layerConfig +
+     * inner linearConfig (3 reserveMemory calls). freeLinearLayer must
+     * release all three. Pre-fix this test runs to completion but leaks
+     * the outer layerConfig wrapper; post-fix it is leak-clean (verified
+     * via the LSan sweep).
+     *
+     * linearLayerInit only stores the parameter and quantization pointers
+     * without dereferencing them, and freeLinearLayer does not touch
+     * parameters/quantization (those are externally owned). So NULL is a
+     * valid stand-in here — keeps the test focused on the StorageApi
+     * lifecycle, not on tensor ownership. */
+    layer_t *linearLayer = linearLayerInit(NULL, NULL, NULL, NULL, NULL, NULL);
+    TEST_ASSERT_NOT_NULL(linearLayer);
+    TEST_ASSERT_EQUAL_INT(LINEAR, linearLayer->type);
+    TEST_ASSERT_NOT_NULL(linearLayer->config);
+    TEST_ASSERT_NOT_NULL(linearLayer->config->linear);
+
+    freeLinearLayer(linearLayer);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testLinearForwardFloat);
@@ -491,6 +512,7 @@ int main(void) {
 
     RUN_TEST(testLinearForwardSymInt32);
     RUN_TEST(testLinearBackwardSymInt32);
+    RUN_TEST(testLinearLayerInitAndFreeRoundTrip);
 
     RUN_TEST(testLinearBackwardFloatWithMismatchedQuantizations);
     RUN_TEST(testLinearLayerInitNonTrainable);
