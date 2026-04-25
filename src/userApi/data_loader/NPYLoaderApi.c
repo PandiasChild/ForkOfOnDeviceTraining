@@ -51,12 +51,22 @@ tensorArray_t *npyLoad(char *path) {
     tensorArr->size = numberOfTensors;
 
     for (size_t i = 0; i < numberOfTensors; i++) {
-        float *data = reserveMemory(numberOfValuesInRow * bytesPerValue);
-        size_t *dims = reserveMemory(numberOfDims * sizeof(size_t));
+        size_t *dims = reserveMemory(rowNumberOfDims * sizeof(size_t));
         memcpy(dims, rowDims, rowNumberOfDims * sizeof(size_t));
+        size_t *order = reserveMemory(rowNumberOfDims * sizeof(size_t));
+        setOrderOfDimsForNewTensor(rowNumberOfDims, order);
+        shape_t *shape = reserveMemory(sizeof(shape_t));
+        setShape(shape, dims, rowNumberOfDims, order);
 
-        size_t n = fread(data, bytesPerValue, numberOfValuesInRow, f);
-        tensorArr->array[i] = tensorInit(data, dims, rowShape.numberOfDimensions, q, NULL);
+        /* Fresh quantization clone per tensor: every array entry now owns its
+         * own quantization, so freeTensor on any one doesn't double-free a
+         * shared `q`. */
+        quantization_t *rowQ = getQLike(q);
+
+        tensor_t *t = initTensor(shape, rowQ, NULL);
+        tensorArr->array[i] = t;
+
+        size_t n = fread(t->data, bytesPerValue, numberOfValuesInRow, f);
         if (n != numberOfValuesInRow) {
             PRINT_ERROR("fread did not read the correct number of bytes!");
             exit(1);
