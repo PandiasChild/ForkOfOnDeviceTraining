@@ -240,80 +240,21 @@ tensor_t *tensorInitWithDistribution(distributionType_t distributionType, float 
 // grad inits
 
 tensor_t *gradInitInt32(tensor_t *param, sparsity_t *sparsity) {
-    tensor_t *grad = reserveMemory(sizeof(tensor_t));
-
-    grad->shape = param->shape;
-    quantization_t *gradQ = reserveMemory(sizeof(quantization_t));
-    initInt32Quantization(gradQ);
-    grad->quantization = gradQ;
-
-    size_t numberOfValues = calcNumberOfElementsByTensor(param);
-    size_t bytesPerElement = sizeof(int32_t);
-    uint8_t *data = reserveMemory(numberOfValues * bytesPerElement);
-    grad->data = data;
-
-    grad->sparsity = sparsity;
-
-    return grad;
+    return initTensor(getShapeLike(param->shape), quantizationInitInt32(), sparsity);
 }
 
 tensor_t *gradInitFloat(tensor_t *param, sparsity_t *sparsity) {
-    tensor_t *grad = reserveMemory(sizeof(tensor_t));
-
-    grad->shape = param->shape;
-    quantization_t *gradQ = reserveMemory(sizeof(quantization_t));
-    initFloat32Quantization(gradQ);
-    grad->quantization = gradQ;
-
-    size_t numberOfValues = calcNumberOfElementsByTensor(param);
-    size_t bytesPerElement = sizeof(float);
-    uint8_t *data = reserveMemory(numberOfValues * bytesPerElement);
-    grad->data = data;
-
-    grad->sparsity = sparsity;
-
-    return grad;
+    return initTensor(getShapeLike(param->shape), quantizationInitFloat(), sparsity);
 }
 
 tensor_t *gradInitSymInt32(tensor_t *param, roundingMode_t roundingMode, sparsity_t *sparsity) {
-    tensor_t *grad = reserveMemory(sizeof(tensor_t));
-
-    grad->shape = param->shape;
-    symInt32QConfig_t *gradQC = reserveMemory(sizeof(symInt32QConfig_t));
-    initSymInt32QConfig(roundingMode, gradQC);
-    quantization_t *gradQ = reserveMemory(sizeof(quantization_t));
-    initSymInt32Quantization(gradQC, gradQ);
-    grad->quantization = gradQ;
-
-    size_t numberOfValues = calcNumberOfElementsByTensor(param);
-    size_t bytesPerElement = sizeof(float);
-    uint8_t *data = reserveMemory(numberOfValues * bytesPerElement);
-    grad->data = data;
-
-    grad->sparsity = sparsity;
-
-    return grad;
+    return initTensor(getShapeLike(param->shape), quantizationInitSymInt32(roundingMode), sparsity);
 }
 
 tensor_t *gradInitAsym(tensor_t *param, uint8_t qBits, roundingMode_t roundingMode,
                        sparsity_t *sparsity) {
-    tensor_t *grad = reserveMemory(sizeof(tensor_t));
-
-    grad->shape = param->shape;
-    asymQConfig_t *gradQC = reserveMemory(sizeof(asymQConfig_t));
-    initAsymQConfig(qBits, roundingMode, gradQC);
-    quantization_t *gradQ = reserveMemory(sizeof(quantization_t));
-    initAsymQuantization(gradQC, gradQ);
-    grad->quantization = gradQ;
-
-    size_t numberOfValues = calcNumberOfElementsByTensor(param);
-    size_t bytesPerElement = sizeof(float);
-    uint8_t *data = reserveMemory(numberOfValues * bytesPerElement);
-    grad->data = data;
-
-    grad->sparsity = sparsity;
-
-    return grad;
+    return initTensor(getShapeLike(param->shape), quantizationInitAsym(qBits, roundingMode),
+                      sparsity);
 }
 
 // getLike

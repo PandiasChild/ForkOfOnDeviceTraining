@@ -16,4 +16,5 @@ target_link_libraries(TensorApi PRIVATE
         Common
         TensorConversion
         Distributions
+        QuantizationApi
 )

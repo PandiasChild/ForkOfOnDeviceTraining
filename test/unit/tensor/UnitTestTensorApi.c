@@ -288,6 +288,92 @@ void testTensorFillFromFloatBuffer_CopiesValues_SourceCanGoOutOfScope(void) {
     freeTensor(t);
 }
 
+void testGradInitFloat_DoesNotAliasParentShape(void) {
+    /* H2 regression: gradInit* must allocate a fresh shape instead of aliasing
+     * the parent tensor's shape. */
+    size_t *dims = reserveMemory(2 * sizeof(size_t));
+    dims[0] = 3;
+    dims[1] = 4;
+    size_t *order = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, 2, order);
+
+    tensor_t *param = initTensor(shape, quantizationInitFloat(), NULL);
+
+    tensor_t *grad = gradInitFloat(param, NULL);
+
+    TEST_ASSERT_TRUE_MESSAGE(grad->shape != param->shape,
+                             "gradInitFloat aliases parent shape (H2 hazard)");
+
+    /* Free grad first — must not corrupt parent. */
+    freeTensor(grad);
+
+    /* Parent's shape must still be readable. */
+    TEST_ASSERT_EQUAL_UINT(2, param->shape->numberOfDimensions);
+    TEST_ASSERT_EQUAL_UINT(3, param->shape->dimensions[0]);
+    TEST_ASSERT_EQUAL_UINT(4, param->shape->dimensions[1]);
+
+    freeTensor(param);
+}
+
+void testGradInitInt32_DoesNotAliasParentShape(void) {
+    size_t *dims = reserveMemory(2 * sizeof(size_t));
+    dims[0] = 3;
+    dims[1] = 4;
+    size_t *order = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, 2, order);
+
+    tensor_t *param = initTensor(shape, quantizationInitInt32(), NULL);
+    tensor_t *grad = gradInitInt32(param, NULL);
+
+    TEST_ASSERT_TRUE_MESSAGE(grad->shape != param->shape,
+                             "gradInitInt32 aliases parent shape (H2 hazard)");
+    freeTensor(grad);
+    TEST_ASSERT_EQUAL_UINT(3, param->shape->dimensions[0]);
+    freeTensor(param);
+}
+
+void testGradInitSymInt32_DoesNotAliasParentShape(void) {
+    size_t *dims = reserveMemory(2 * sizeof(size_t));
+    dims[0] = 3;
+    dims[1] = 4;
+    size_t *order = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, 2, order);
+
+    tensor_t *param = initTensor(shape, quantizationInitSymInt32(HTE), NULL);
+    tensor_t *grad = gradInitSymInt32(param, HTE, NULL);
+
+    TEST_ASSERT_TRUE_MESSAGE(grad->shape != param->shape,
+                             "gradInitSymInt32 aliases parent shape (H2 hazard)");
+    freeTensor(grad);
+    TEST_ASSERT_EQUAL_UINT(3, param->shape->dimensions[0]);
+    freeTensor(param);
+}
+
+void testGradInitAsym_DoesNotAliasParentShape(void) {
+    size_t *dims = reserveMemory(2 * sizeof(size_t));
+    dims[0] = 3;
+    dims[1] = 4;
+    size_t *order = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, 2, order);
+
+    tensor_t *param = initTensor(shape, quantizationInitAsym(8, HTE), NULL);
+    tensor_t *grad = gradInitAsym(param, 8, HTE, NULL);
+
+    TEST_ASSERT_TRUE_MESSAGE(grad->shape != param->shape,
+                             "gradInitAsym aliases parent shape (H2 hazard)");
+    freeTensor(grad);
+    TEST_ASSERT_EQUAL_UINT(3, param->shape->dimensions[0]);
+    freeTensor(param);
+}
+
 void testInitTensor_Int32_AllocatesFourBytesPerElement(void) {
     /* Closes the calcNumberOfBytesForData gap surfaced by code-review on Task A:
      * the INT32 arm was missing, which would have made gradInitInt32 (Task D)
@@ -353,6 +439,10 @@ int main(void) {
     RUN_TEST(testInitTensor_AllocatesOwnZeroDataBuffer_FreeTensorIsSafe);
     RUN_TEST(testInitTensor_Int32_AllocatesFourBytesPerElement);
     RUN_TEST(testTensorFillFromFloatBuffer_CopiesValues_SourceCanGoOutOfScope);
+    RUN_TEST(testGradInitFloat_DoesNotAliasParentShape);
+    RUN_TEST(testGradInitInt32_DoesNotAliasParentShape);
+    RUN_TEST(testGradInitSymInt32_DoesNotAliasParentShape);
+    RUN_TEST(testGradInitAsym_DoesNotAliasParentShape);
     RUN_TEST(testInitDistribution_Zeros_AllValuesAreZero);
     RUN_TEST(testInitDistribution_Ones_AllValuesAreOne);
     RUN_TEST(testInitDistribution_Uniform_AllValuesInRange);
