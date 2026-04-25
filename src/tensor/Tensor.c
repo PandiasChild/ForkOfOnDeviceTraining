@@ -1,15 +1,15 @@
 #define SOURCE_FILE "TENSOR"
 
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
 #include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
-#include "Tensor.h"
-#include "Quantization.h"
-#include "MinMax.h"
-#include "DTypes.h"
 #include "Common.h"
+#include "DTypes.h"
+#include "MinMax.h"
+#include "Quantization.h"
+#include "Tensor.h"
 
 size_t calcNumberOfElementsByShape(shape_t *shape) {
     size_t numElem = 1;
@@ -79,6 +79,8 @@ size_t calcNumberOfBytesForData(quantization_t *q, size_t numberOfElements) {
     switch (q->type) {
     case FLOAT32:
         return numberOfElements * sizeof(float);
+    case INT32:
+        return numberOfElements * sizeof(int32_t);
     case SYM_INT32:
         return numberOfElements * sizeof(int32_t);
     case ASYM:
@@ -116,8 +118,8 @@ uint32_t getBitmask(uint32_t startbit, uint32_t endbit) {
         }
         value *= 2;
     }
-    //printf("bitmask ");
-    //print_binary_uint8(counter);
+    // printf("bitmask ");
+    // print_binary_uint8(counter);
     return counter;
 }
 
@@ -133,12 +135,12 @@ uint8_t writeByte(uint8_t existingData, uint8_t data, uint8_t startbit, uint8_t 
     uint8_t endbitInternal = endbit - (startbit / 8) * 8;
     uint8_t bitmask = getBitmask(startbitInternal, endbitInternal);
     data <<= startbitInternal;
-    //print_binary_uint8(data);
+    // print_binary_uint8(data);
     uint8_t intermediate = data & bitmask;
-    //print_binary_uint8(bitmask);
-    //print_binary_uint8(intermediate);
+    // print_binary_uint8(bitmask);
+    // print_binary_uint8(intermediate);
     existingData = intermediate | existingData;
-    //print_binary_uint8(existingData);
+    // print_binary_uint8(existingData);
     return existingData;
 }
 
@@ -149,7 +151,6 @@ int max(int a, int b) {
 int min(int a, int b) {
     return (a < b) ? a : b;
 }
-
 
 void byteConversion(uint8_t *dataIn, size_t dataInBits, uint8_t *dataOut, size_t dataOutBits,
                     size_t numValues) {
@@ -167,8 +168,8 @@ void byteConversion(uint8_t *dataIn, size_t dataInBits, uint8_t *dataOut, size_t
         printf("Value %i\n", i);*/
         while ((dataInStartbit < dataInEndbit) | (dataOutStartbit < dataOutEndbit)) {
             uint8_t data = readByte(dataIn[dataInIndex], dataInStartbit, dataInEndbit);
-            dataOut[dataOutIndex] = writeByte(dataOut[dataOutIndex], data, dataOutStartbit,
-                                              dataOutEndbit);
+            dataOut[dataOutIndex] =
+                writeByte(dataOut[dataOutIndex], data, dataOutStartbit, dataOutEndbit);
 
             /*
             printf("dataInStartbit %d\n", dataInStartbit);
@@ -213,17 +214,14 @@ void byteConversion(uint8_t *dataIn, size_t dataInBits, uint8_t *dataOut, size_t
             if (dataOutStartbit / 8 > (dataOutStartbit - deltaOut) / 8) {
                 dataOutIndex += 1;
             }
-            //printf("\n");
-
+            // printf("\n");
         }
         dataInStartbit = dataInEndbit % 8;
         dataInEndbit = dataInStartbit + dataInBits;
         dataOutStartbit = dataOutEndbit % 8;
         dataOutEndbit = dataOutStartbit + dataOutBits;
-
     }
 }
-
 
 tensor_t *getParamFromParameter(parameter_t *parameter) {
     return parameter->param;
@@ -242,7 +240,6 @@ void transposeTensor(tensor_t *tensor, size_t dim0Index, size_t dim1Index) {
     tensor->shape->orderOfDimensions[dim1Index] = temp;
 }
 
-
 void setTensorValuesForConversion(uint8_t *data, quantization_t *q, tensor_t *originalTensor,
                                   tensor_t *outputTensor) {
     outputTensor->data = data;
@@ -251,8 +248,8 @@ void setTensorValuesForConversion(uint8_t *data, quantization_t *q, tensor_t *or
     outputTensor->sparsity = originalTensor->sparsity;
 }
 
-void setTensorValues(tensor_t *tensor, uint8_t *data, shape_t *shape,
-                     quantization_t *quantization, sparsity_t *sparsity) {
+void setTensorValues(tensor_t *tensor, uint8_t *data, shape_t *shape, quantization_t *quantization,
+                     sparsity_t *sparsity) {
     tensor->data = data;
     tensor->shape = shape;
     tensor->quantization = quantization;

@@ -247,6 +247,30 @@ void testInitDistribution_KaimingNormal_NotAllZero(void) {
     freeTensor(t);
 }
 
+void testInitTensor_Int32_AllocatesFourBytesPerElement(void) {
+    /* Closes the calcNumberOfBytesForData gap surfaced by code-review on Task A:
+     * the INT32 arm was missing, which would have made gradInitInt32 (Task D)
+     * exit(1) on its first call. */
+    size_t *dims = reserveMemory(2 * sizeof(size_t));
+    dims[0] = 2;
+    dims[1] = 3;
+    size_t *order = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, 2, order);
+
+    quantization_t *q = quantizationInitInt32();
+    tensor_t *t = initTensor(shape, q, NULL);
+
+    TEST_ASSERT_NOT_NULL(t);
+    TEST_ASSERT_NOT_NULL(t->data);
+    /* 6 elements × 4 bytes = 24 bytes; all zero. */
+    for (size_t i = 0; i < 24; ++i) {
+        TEST_ASSERT_EQUAL_UINT8(0, t->data[i]);
+    }
+    freeTensor(t);
+}
+
 void testInitTensor_AllocatesOwnZeroDataBuffer_FreeTensorIsSafe(void) {
     /* Build shape via reserveMemory so caller doesn't bypass the locality rule. */
     size_t *dims = reserveMemory(2 * sizeof(size_t));
@@ -286,6 +310,7 @@ int main(void) {
     RUN_TEST(testTensorInitWithDistribution_Normal_InitializesAllValues);
     RUN_TEST(testTensorInitWithDistribution_ShapeIsCorrect);
     RUN_TEST(testInitTensor_AllocatesOwnZeroDataBuffer_FreeTensorIsSafe);
+    RUN_TEST(testInitTensor_Int32_AllocatesFourBytesPerElement);
     RUN_TEST(testInitDistribution_Zeros_AllValuesAreZero);
     RUN_TEST(testInitDistribution_Ones_AllValuesAreOne);
     RUN_TEST(testInitDistribution_Uniform_AllValuesInRange);
