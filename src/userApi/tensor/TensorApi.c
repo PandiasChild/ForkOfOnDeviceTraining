@@ -384,7 +384,9 @@ void freeTensor(tensor_t *tensor) {
 
 void freeParameter(parameter_t *parameter) {
     freeTensor(parameter->param);
-    freeTensor(parameter->grad);
+    if (parameter->grad != NULL) {
+        freeTensor(parameter->grad);
+    }
     freeReservedMemory(parameter);
 }
 

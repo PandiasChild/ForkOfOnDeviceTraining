@@ -288,6 +288,25 @@ void testTensorFillFromFloatBuffer_CopiesValues_SourceCanGoOutOfScope(void) {
     freeTensor(t);
 }
 
+void testFreeParameter_NullGrad_DoesNotSegfault(void) {
+    /* H3 regression: linearLayerInitNonTrainable passes NULL for grad into
+     * parameterInit; today freeParameter dereferences it and crashes. */
+    size_t *dims = reserveMemory(2 * sizeof(size_t));
+    dims[0] = 1;
+    dims[1] = 2;
+    size_t *order = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, 2, order);
+
+    tensor_t *param = initTensor(shape, quantizationInitFloat(), NULL);
+    parameter_t *p = parameterInit(param, NULL);
+
+    freeParameter(p);
+    /* If we reach here, the H3 fix worked. */
+    TEST_PASS();
+}
+
 void testGradInitFloat_DoesNotAliasParentShape(void) {
     /* H2 regression: gradInit* must allocate a fresh shape instead of aliasing
      * the parent tensor's shape. */
@@ -439,6 +458,7 @@ int main(void) {
     RUN_TEST(testInitTensor_AllocatesOwnZeroDataBuffer_FreeTensorIsSafe);
     RUN_TEST(testInitTensor_Int32_AllocatesFourBytesPerElement);
     RUN_TEST(testTensorFillFromFloatBuffer_CopiesValues_SourceCanGoOutOfScope);
+    RUN_TEST(testFreeParameter_NullGrad_DoesNotSegfault);
     RUN_TEST(testGradInitFloat_DoesNotAliasParentShape);
     RUN_TEST(testGradInitInt32_DoesNotAliasParentShape);
     RUN_TEST(testGradInitSymInt32_DoesNotAliasParentShape);
