@@ -13,7 +13,10 @@
  *
  * \returns Pointer to initialized tensor
  */
-tensor_t *tensorInitInt32(int32_t *data, size_t *dims, size_t numberOfDims, sparsity_t *sparsity);
+__attribute__((deprecated("Use initTensor(shape, quantization, sparsity) + "
+                          "tensorFillFromFloatBuffer or initDistribution instead. "
+                          "Old API will be removed in Phase 2."))) tensor_t *
+tensorInitInt32(int32_t *data, size_t *dims, size_t numberOfDims, sparsity_t *sparsity);
 /*! Initializes float tensor with given data and shape.
  *
  * \param data: Data of tensor
@@ -23,7 +26,10 @@ tensor_t *tensorInitInt32(int32_t *data, size_t *dims, size_t numberOfDims, spar
  *
  * \returns Pointer to initialized tensor
  */
-tensor_t *tensorInitFloat(float *data, size_t *dims, size_t numberOfDims, sparsity_t *sparsity);
+__attribute__((deprecated("Use initTensor(shape, quantization, sparsity) + "
+                          "tensorFillFromFloatBuffer or initDistribution instead. "
+                          "Old API will be removed in Phase 2."))) tensor_t *
+tensorInitFloat(float *data, size_t *dims, size_t numberOfDims, sparsity_t *sparsity);
 /*! Initializes symInt32 tensor with given data and shape.
  *
  * \param data: Data of tensor
@@ -34,8 +40,11 @@ tensor_t *tensorInitFloat(float *data, size_t *dims, size_t numberOfDims, sparsi
  *
  * \returns Pointer to initialized tensor
  */
-tensor_t *tensorInitSymInt32(float *data, size_t *dims, size_t numberOfDims,
-                             roundingMode_t roundingMode, sparsity_t *sparsity);
+__attribute__((deprecated("Use initTensor(shape, quantization, sparsity) + "
+                          "tensorFillFromFloatBuffer or initDistribution instead. "
+                          "Old API will be removed in Phase 2."))) tensor_t *
+tensorInitSymInt32(float *data, size_t *dims, size_t numberOfDims, roundingMode_t roundingMode,
+                   sparsity_t *sparsity);
 /*! Initializes asym tensor with given data and shape.
  *
  * \param data: Data of tensor
@@ -47,8 +56,11 @@ tensor_t *tensorInitSymInt32(float *data, size_t *dims, size_t numberOfDims,
  *
  * \returns Pointer to initialized tensor
  */
-tensor_t *tensorInitAsym(float *data, size_t *dims, size_t numberOfDims, uint8_t qBits,
-                         roundingMode_t roundingMode, sparsity_t *sparsity);
+__attribute__((deprecated("Use initTensor(shape, quantization, sparsity) + "
+                          "tensorFillFromFloatBuffer or initDistribution instead. "
+                          "Old API will be removed in Phase 2."))) tensor_t *
+tensorInitAsym(float *data, size_t *dims, size_t numberOfDims, uint8_t qBits,
+               roundingMode_t roundingMode, sparsity_t *sparsity);
 /*! Initializes tensor to match given quantization.
  *
  * \param data: Data of tensor
@@ -59,8 +71,11 @@ tensor_t *tensorInitAsym(float *data, size_t *dims, size_t numberOfDims, uint8_t
  *
  * \returns Pointer to initialized tensor
  */
-tensor_t *tensorInit(float *data, size_t *dims, size_t numberOfDims, quantization_t *quantization,
-                     sparsity_t *sparsity);
+__attribute__((deprecated("Use initTensor(shape, quantization, sparsity) + "
+                          "tensorFillFromFloatBuffer or initDistribution instead. "
+                          "Old API will be removed in Phase 2."))) tensor_t *
+tensorInit(float *data, size_t *dims, size_t numberOfDims, quantization_t *quantization,
+           sparsity_t *sparsity);
 /*! Initializes tensor with distribution to match given quantization.
  *
  * \param distributionType: Type of distribution to be used
@@ -74,10 +89,12 @@ tensor_t *tensorInit(float *data, size_t *dims, size_t numberOfDims, quantizatio
  *
  * \returns Pointer to initialized tensor
  */
-tensor_t *tensorInitWithDistribution(distributionType_t distributionType, float *data, size_t *dims,
-                                     size_t numberOfDims, quantization_t *quantization,
-                                     sparsity_t *sparsity, size_t inputFeatures,
-                                     size_t outputFeatures);
+__attribute__((deprecated("Use initTensor(shape, quantization, sparsity) + "
+                          "initDistribution(t, &distribution) instead. "
+                          "Old API will be removed in Phase 2."))) tensor_t *
+tensorInitWithDistribution(distributionType_t distributionType, float *data, size_t *dims,
+                           size_t numberOfDims, quantization_t *quantization, sparsity_t *sparsity,
+                           size_t inputFeatures, size_t outputFeatures);
 
 /*! Initializes a tensor that owns its data buffer.
  *
