@@ -7,6 +7,30 @@ on:
     branches: [main]
 
 jobs:
+  alloc-locality:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reject malloc/calloc/realloc/free outside src/userApi/
+        run: |
+          set +e
+          matches=$(git grep -nE '\b(malloc|calloc|realloc|free)\s*\(' \
+            -- 'src/' 'test/' \
+            ':!src/userApi/' \
+            ':!*.md' \
+            | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|\*)')
+          set -e
+          if [ -n "$matches" ]; then
+            echo "Allocation-locality violation: malloc/calloc/realloc/free are only allowed in src/userApi/."
+            echo "All other code must route through reserveMemory/freeReservedMemory in src/userApi/StorageApi.{c,h}."
+            echo
+            echo "Offending lines:"
+            echo "$matches"
+            exit 1
+          fi
+
   c-build-and-test:
     runs-on: ubuntu-latest
 
