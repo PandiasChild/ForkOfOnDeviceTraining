@@ -3,8 +3,7 @@
 
 #include <stddef.h>
 
-typedef enum
-{
+typedef enum {
     ZEROS,
     ONES,
     UNIFORM,
@@ -14,6 +13,33 @@ typedef enum
     KAIMING_UNIFORM,
     KAIMING_NORMAL
 } distributionType_t;
+
+/*! Carries both the kind of distribution and the kind-specific parameters
+ * needed to draw values. Used by initDistribution() (TensorApi.h) and by
+ * future layer factories that take an initialization recipe.
+ *
+ * Discriminant: `type`. Read the union member matching that discriminant.
+ * ZEROS and ONES need no params; their union slot is unused.
+ */
+typedef struct {
+    distributionType_t type;
+    union {
+        struct {
+            float min, max;
+        } uniform;
+        struct {
+            float mean, stddev;
+        } normal;
+        struct {
+            float gain;
+            size_t fanIn, fanOut;
+        } xavier;
+        struct {
+            float gain;
+            size_t fanMode;
+        } kaiming;
+    } params;
+} distribution_t;
 
 /*! Gets random value from normal distribution.\n
  * Uses the Box-Muller transform.
@@ -61,7 +87,6 @@ float kaimingUniform(float gain, size_t fanMode);
  * @returns Float value
  */
 float xavierNormal(float gain, size_t fanIn, size_t fanOut);
-
 
 /*! Gets random value from Xavier distribution using the uniform distribution.
  *

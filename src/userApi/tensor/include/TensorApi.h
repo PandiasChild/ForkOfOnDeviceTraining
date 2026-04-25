@@ -96,6 +96,19 @@ tensor_t *tensorInitWithDistribution(distributionType_t distributionType, float 
  */
 tensor_t *initTensor(shape_t *shape, quantization_t *quantization, sparsity_t *sparsity);
 
+/*! Populates an already-initialized tensor's data buffer with values drawn
+ * from the given distribution. Tensor must be FLOAT32-quantized in this
+ * iteration; non-FLOAT32 support is a follow-up.
+ *
+ * The tensor must have its data buffer already allocated (via initTensor).
+ * The distribution value is read by `distribution->type`; the matching
+ * union member supplies the kind-specific parameters.
+ *
+ * \param tensor: Pre-initialized FLOAT32 tensor.
+ * \param distribution: Recipe for value generation. Read-only.
+ */
+void initDistribution(tensor_t *tensor, const distribution_t *distribution);
+
 /*! Initializes int32 gradient tensor to match given param tensor.
  *
  * \param param: Pointer to param tensor

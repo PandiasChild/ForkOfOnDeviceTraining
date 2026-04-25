@@ -1,5 +1,7 @@
 #define SOURCE_FILE "UNIT_TEST_TENSOR_API"
 
+#include <math.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -16,6 +18,12 @@ _Static_assert(_Generic((&initTensor),
                    tensor_t *(*)(shape_t *, quantization_t *, sparsity_t *): 1,
                    default: 0),
                "initTensor must take (shape_t *, quantization_t *, sparsity_t *)");
+
+/* Compile-time contract: initDistribution takes tensor_t * and const distribution_t *. */
+_Static_assert(_Generic((&initDistribution),
+                   void (*)(tensor_t *, const distribution_t *): 1,
+                   default: 0),
+               "initDistribution must take (tensor_t *, const distribution_t *)");
 
 void setUp() {}
 void tearDown() {}
@@ -98,6 +106,147 @@ void testTensorInitWithDistribution_ShapeIsCorrect() {
     TEST_ASSERT_EQUAL_UINT(6, numElements);
 }
 
+static tensor_t *makeFloatTensorForDistTest(size_t d0, size_t d1) {
+    size_t *dims = reserveMemory(2 * sizeof(size_t));
+    dims[0] = d0;
+    dims[1] = d1;
+    size_t *order = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, 2, order);
+    return initTensor(shape, quantizationInitFloat(), NULL);
+}
+
+void testInitDistribution_Zeros_AllValuesAreZero(void) {
+    tensor_t *t = makeFloatTensorForDistTest(3, 4);
+    /* Pre-write a sentinel so we can prove ZEROS overwrites. */
+    float *vals = (float *)t->data;
+    for (size_t i = 0; i < 12; ++i) {
+        vals[i] = 42.0f;
+    }
+
+    distribution_t d = {.type = ZEROS};
+    initDistribution(t, &d);
+
+    for (size_t i = 0; i < 12; ++i) {
+        TEST_ASSERT_FLOAT_WITHIN(1e-9f, 0.0f, vals[i]);
+    }
+    freeTensor(t);
+}
+
+void testInitDistribution_Ones_AllValuesAreOne(void) {
+    tensor_t *t = makeFloatTensorForDistTest(3, 4);
+    distribution_t d = {.type = ONES};
+    initDistribution(t, &d);
+    float *vals = (float *)t->data;
+    for (size_t i = 0; i < 12; ++i) {
+        TEST_ASSERT_FLOAT_WITHIN(1e-9f, 1.0f, vals[i]);
+    }
+    freeTensor(t);
+}
+
+void testInitDistribution_Uniform_AllValuesInRange(void) {
+    tensor_t *t = makeFloatTensorForDistTest(4, 5);
+    distribution_t d = {.type = UNIFORM, .params.uniform = {-0.5f, 0.5f}};
+    initDistribution(t, &d);
+    float *vals = (float *)t->data;
+    bool any_nonzero = false;
+    for (size_t i = 0; i < 20; ++i) {
+        TEST_ASSERT_TRUE(vals[i] >= -0.5f && vals[i] <= 0.5f);
+        if (vals[i] != 0.0f) {
+            any_nonzero = true;
+        }
+    }
+    TEST_ASSERT_TRUE(any_nonzero);
+    freeTensor(t);
+}
+
+void testInitDistribution_Normal_NotAllSentinel(void) {
+    tensor_t *t = makeFloatTensorForDistTest(4, 5);
+    float *vals = (float *)t->data;
+    for (size_t i = 0; i < 20; ++i) {
+        vals[i] = -999.0f;
+    }
+    distribution_t d = {.type = NORMAL, .params.normal = {0.0f, 0.01f}};
+    initDistribution(t, &d);
+    size_t sentinelCount = 0;
+    for (size_t i = 0; i < 20; ++i) {
+        if (vals[i] == -999.0f) {
+            sentinelCount++;
+        }
+    }
+    TEST_ASSERT_EQUAL_UINT(0, sentinelCount);
+    freeTensor(t);
+}
+
+void testInitDistribution_XavierUniform_NotAllZero(void) {
+    tensor_t *t = makeFloatTensorForDistTest(4, 5);
+    distribution_t d = {.type = XAVIER_UNIFORM,
+                        .params.xavier = {.gain = 1.0f, .fanIn = 4, .fanOut = 5}};
+    initDistribution(t, &d);
+    float *vals = (float *)t->data;
+    bool any_nonzero = false;
+    for (size_t i = 0; i < 20; ++i) {
+        if (vals[i] != 0.0f) {
+            any_nonzero = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(any_nonzero);
+    freeTensor(t);
+}
+
+void testInitDistribution_XavierNormal_NotAllZero(void) {
+    tensor_t *t = makeFloatTensorForDistTest(4, 5);
+    distribution_t d = {.type = XAVIER_NORMAL,
+                        .params.xavier = {.gain = 1.0f, .fanIn = 4, .fanOut = 5}};
+    initDistribution(t, &d);
+    float *vals = (float *)t->data;
+    bool any_nonzero = false;
+    for (size_t i = 0; i < 20; ++i) {
+        if (vals[i] != 0.0f) {
+            any_nonzero = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(any_nonzero);
+    freeTensor(t);
+}
+
+void testInitDistribution_KaimingUniform_NotAllZero(void) {
+    tensor_t *t = makeFloatTensorForDistTest(4, 5);
+    distribution_t d = {.type = KAIMING_UNIFORM,
+                        .params.kaiming = {.gain = sqrtf(2.0f), .fanMode = 4}};
+    initDistribution(t, &d);
+    float *vals = (float *)t->data;
+    bool any_nonzero = false;
+    for (size_t i = 0; i < 20; ++i) {
+        if (vals[i] != 0.0f) {
+            any_nonzero = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(any_nonzero);
+    freeTensor(t);
+}
+
+void testInitDistribution_KaimingNormal_NotAllZero(void) {
+    tensor_t *t = makeFloatTensorForDistTest(4, 5);
+    distribution_t d = {.type = KAIMING_NORMAL,
+                        .params.kaiming = {.gain = sqrtf(2.0f), .fanMode = 4}};
+    initDistribution(t, &d);
+    float *vals = (float *)t->data;
+    bool any_nonzero = false;
+    for (size_t i = 0; i < 20; ++i) {
+        if (vals[i] != 0.0f) {
+            any_nonzero = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(any_nonzero);
+    freeTensor(t);
+}
+
 void testInitTensor_AllocatesOwnZeroDataBuffer_FreeTensorIsSafe(void) {
     /* Build shape via reserveMemory so caller doesn't bypass the locality rule. */
     size_t *dims = reserveMemory(2 * sizeof(size_t));
@@ -137,5 +286,13 @@ int main(void) {
     RUN_TEST(testTensorInitWithDistribution_Normal_InitializesAllValues);
     RUN_TEST(testTensorInitWithDistribution_ShapeIsCorrect);
     RUN_TEST(testInitTensor_AllocatesOwnZeroDataBuffer_FreeTensorIsSafe);
+    RUN_TEST(testInitDistribution_Zeros_AllValuesAreZero);
+    RUN_TEST(testInitDistribution_Ones_AllValuesAreOne);
+    RUN_TEST(testInitDistribution_Uniform_AllValuesInRange);
+    RUN_TEST(testInitDistribution_Normal_NotAllSentinel);
+    RUN_TEST(testInitDistribution_XavierUniform_NotAllZero);
+    RUN_TEST(testInitDistribution_XavierNormal_NotAllZero);
+    RUN_TEST(testInitDistribution_KaimingUniform_NotAllZero);
+    RUN_TEST(testInitDistribution_KaimingNormal_NotAllZero);
     return UNITY_END();
 }

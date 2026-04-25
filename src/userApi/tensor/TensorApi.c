@@ -91,6 +91,67 @@ tensor_t *initTensor(shape_t *shape, quantization_t *quantization, sparsity_t *s
     return tensor;
 }
 
+void initDistribution(tensor_t *tensor, const distribution_t *distribution) {
+    if (tensor->quantization->type != FLOAT32) {
+        PRINT_ERROR("initDistribution only supports FLOAT32 in this iteration");
+        exit(1);
+    }
+    float *vals = (float *)tensor->data;
+    size_t n = calcNumberOfElementsByTensor(tensor);
+
+    switch (distribution->type) {
+    case ZEROS:
+        memset(vals, 0, n * sizeof(float));
+        break;
+    case ONES:
+        for (size_t i = 0; i < n; ++i) {
+            vals[i] = 1.0f;
+        }
+        break;
+    case UNIFORM:
+        for (size_t i = 0; i < n; ++i) {
+            vals[i] =
+                randomUniform(distribution->params.uniform.min, distribution->params.uniform.max);
+        }
+        break;
+    case NORMAL:
+        for (size_t i = 0; i < n; ++i) {
+            vals[i] =
+                randomNormal(distribution->params.normal.mean, distribution->params.normal.stddev);
+        }
+        break;
+    case XAVIER_UNIFORM:
+        for (size_t i = 0; i < n; ++i) {
+            vals[i] =
+                xavierUniform(distribution->params.xavier.gain, distribution->params.xavier.fanIn,
+                              distribution->params.xavier.fanOut);
+        }
+        break;
+    case XAVIER_NORMAL:
+        for (size_t i = 0; i < n; ++i) {
+            vals[i] =
+                xavierNormal(distribution->params.xavier.gain, distribution->params.xavier.fanIn,
+                             distribution->params.xavier.fanOut);
+        }
+        break;
+    case KAIMING_UNIFORM:
+        for (size_t i = 0; i < n; ++i) {
+            vals[i] = kaimingUniform(distribution->params.kaiming.gain,
+                                     distribution->params.kaiming.fanMode);
+        }
+        break;
+    case KAIMING_NORMAL:
+        for (size_t i = 0; i < n; ++i) {
+            vals[i] = kaimingNormal(distribution->params.kaiming.gain,
+                                    distribution->params.kaiming.fanMode);
+        }
+        break;
+    default:
+        PRINT_ERROR("Unknown distribution type!");
+        exit(1);
+    }
+}
+
 tensor_t *tensorInitWithDistribution(distributionType_t distributionType, float *data, size_t *dims,
                                      size_t numberOfDims, quantization_t *quantization,
                                      sparsity_t *sparsity, size_t inputFeatures,
