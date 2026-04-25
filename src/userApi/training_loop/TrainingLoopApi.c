@@ -139,9 +139,9 @@ static epochStats_t evaluateEpochInternal(layer_t **model, size_t modelSize, los
     size_t datasetSize = dataLoader->getDatasetSize();
     size_t numberOfBatches = datasetSize / dataLoader->batchSize;
 
-    size_t *tp = *reserveMemory(numClasses * sizeof(size_t));
-    size_t *predCount = *reserveMemory(numClasses * sizeof(size_t));
-    size_t *actualCount = *reserveMemory(numClasses * sizeof(size_t));
+    size_t *tp = reserveMemory(numClasses * sizeof(size_t));
+    size_t *predCount = reserveMemory(numClasses * sizeof(size_t));
+    size_t *actualCount = reserveMemory(numClasses * sizeof(size_t));
 
     for (size_t c = 0; c < numClasses; c++) {
         tp[c] = 0;

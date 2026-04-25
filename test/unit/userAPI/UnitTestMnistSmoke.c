@@ -62,7 +62,7 @@ static void initDataset() {
 }
 
 static sample_t *getSample(size_t id) {
-    sample_t *sample = *reserveMemory(sizeof(sample_t));
+    sample_t *sample = reserveMemory(sizeof(sample_t));
     sample->item = items[id];
     sample->label = labels[id];
     return sample;

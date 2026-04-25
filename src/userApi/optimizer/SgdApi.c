@@ -15,21 +15,21 @@
 // IMPORTANT: Currently, the quantization for states are the same as the corresponding parameter
 optimizer_t *sgdMCreateOptim(float learningRate, float momentumFactor, float weightDecay,
                              layer_t **model, size_t sizeModel, qtype_t qType) {
-    optimizer_t *optim = *reserveMemory(sizeof(optimizer_t));
+    optimizer_t *optim = reserveMemory(sizeof(optimizer_t));
     optim->type = SGD_M;
     optim->qtype = qType;
 
-    optimImpl_t *sgdImpl = *reserveMemory(sizeof(optimImpl_t));
-    sgd_t *sgd = *reserveMemory(sizeof(sgd_t));
+    optimImpl_t *sgdImpl = reserveMemory(sizeof(optimImpl_t));
+    sgd_t *sgd = reserveMemory(sizeof(sgd_t));
     sgdInit(sgd, learningRate, momentumFactor, weightDecay);
     sgdImpl->sgd = sgd;
     optim->impl = sgdImpl;
 
     size_t sizeStates = calcTotalNumberOfStates(model, sizeModel);
     optim->sizeStates = sizeStates;
-    states_t **states = *reserveMemory(sizeStates * sizeof(states_t *));
+    states_t **states = reserveMemory(sizeStates * sizeof(states_t *));
     optim->states = states;
-    parameter_t **parameter = *reserveMemory(sizeStates * sizeof(parameter_t *));
+    parameter_t **parameter = reserveMemory(sizeStates * sizeof(parameter_t *));
     optim->parameter = parameter;
     size_t statesPerParam = 1;
 
@@ -50,14 +50,14 @@ optimizer_t *sgdMCreateOptim(float learningRate, float momentumFactor, float wei
             optim->parameter[i + 1] = bias;
             tensor_t *biasStateBuffer = getTensorLike(bias->param);
 
-            states_t *weightStates = *reserveMemory(sizeof(states_t));
+            states_t *weightStates = reserveMemory(sizeof(states_t));
             weightStates->statesPerParameter = statesPerParam;
-            weightStates->stateBuffers = *reserveMemory(sizeof(tensor_t));
+            weightStates->stateBuffers = reserveMemory(sizeof(tensor_t));
             weightStates->stateBuffers[0] = weightStateBuffer;
 
-            states_t *biasStates = *reserveMemory(sizeof(states_t));
+            states_t *biasStates = reserveMemory(sizeof(states_t));
             biasStates->statesPerParameter = statesPerParam;
-            biasStates->stateBuffers = *reserveMemory(sizeof(tensor_t));
+            biasStates->stateBuffers = reserveMemory(sizeof(tensor_t));
             biasStates->stateBuffers[0] = biasStateBuffer;
 
             states[i] = weightStates;

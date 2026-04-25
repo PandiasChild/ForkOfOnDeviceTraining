@@ -1,5 +1,11 @@
 add_elastic_ai_unit_test(
         LIB_UNDER_TEST
+        StorageApi
+)
+
+
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
         InferenceApi
         MORE_LIBS
         CommonLayerLibs

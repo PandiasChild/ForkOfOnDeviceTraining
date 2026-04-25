@@ -3,11 +3,9 @@
 
 #include <stddef.h>
 
+void *reserveMemory(size_t numberOfBytes);
 
-void **reserveMemory(size_t numberOfBytes);
-
+/* NULL-safe (mirrors free(NULL)). */
 void freeReservedMemory(void *ptr);
 
-
-
-#endif //STORAGEAPI_H
+#endif // STORAGEAPI_H

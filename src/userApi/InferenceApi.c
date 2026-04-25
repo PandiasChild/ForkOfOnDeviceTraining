@@ -39,9 +39,9 @@ static void initBufferOutput(tensor_t *buffer, layer_t *currentLayer, shape_t *i
 
     size_t sizeDims = inputShape->numberOfDimensions;
 
-    shape_t *outShape = *reserveMemory(sizeof(shape_t));
-    size_t *outDims = *reserveMemory(sizeDims * sizeof(size_t));
-    size_t *outOrder = *reserveMemory(sizeDims * sizeof(size_t));
+    shape_t *outShape = reserveMemory(sizeof(shape_t));
+    size_t *outDims = reserveMemory(sizeDims * sizeof(size_t));
+    size_t *outOrder = reserveMemory(sizeDims * sizeof(size_t));
 
     outShape->dimensions = outDims;
     outShape->numberOfDimensions = sizeDims;
@@ -53,16 +53,16 @@ static void initBufferOutput(tensor_t *buffer, layer_t *currentLayer, shape_t *i
     size_t numValues =
         calcNumberOfElementsByShape(outShape);
     size_t sizeData = calcNumberOfBytesForData(currentQ, numValues);
-    uint8_t *data = *reserveMemory(sizeData);
+    uint8_t *data = reserveMemory(sizeData);
 
-    quantization_t *q = *reserveMemory(sizeof(quantization_t));
+    quantization_t *q = reserveMemory(sizeof(quantization_t));
     switch (currentQ->type) {
     case FLOAT32:
         initFloat32Quantization(q);
         break;
     case SYM_INT32:
         symInt32QConfig_t *currentQC = currentQ->qConfig;
-        symInt32QConfig_t *symInt32QC = *reserveMemory(sizeof(symInt32QConfig_t));
+        symInt32QConfig_t *symInt32QC = reserveMemory(sizeof(symInt32QConfig_t));
 
         initSymInt32QConfig(currentQC->roundingMode, symInt32QC);
         initSymInt32Quantization(symInt32QC, q);
@@ -81,9 +81,9 @@ static void initBufferInput(tensor_t *input, tensor_t *buffer) {
 
     size_t sizeDims = input->shape->numberOfDimensions;
 
-    shape_t *outShape = *reserveMemory(sizeof(shape_t));
-    size_t *outDims = *reserveMemory(sizeDims * sizeof(size_t));
-    size_t *outOrder = *reserveMemory(sizeDims * sizeof(size_t));
+    shape_t *outShape = reserveMemory(sizeof(shape_t));
+    size_t *outDims = reserveMemory(sizeDims * sizeof(size_t));
+    size_t *outOrder = reserveMemory(sizeDims * sizeof(size_t));
 
     outShape->dimensions = outDims;
     outShape->numberOfDimensions = sizeDims;
@@ -91,9 +91,9 @@ static void initBufferInput(tensor_t *input, tensor_t *buffer) {
 
     size_t numValues = calcNumberOfElementsByTensor(input);
     size_t sizeData = calcNumberOfBytesForData(currentQ, numValues);
-    uint8_t *data = *reserveMemory(sizeData);
+    uint8_t *data = reserveMemory(sizeData);
 
-    quantization_t *q = *reserveMemory(sizeof(quantization_t));
+    quantization_t *q = reserveMemory(sizeof(quantization_t));
     switch (currentQ->type) {
     case FLOAT32:
         q->type = FLOAT32;
@@ -102,7 +102,7 @@ static void initBufferInput(tensor_t *input, tensor_t *buffer) {
     case SYM_INT32:
         q->type = SYM_INT32;
         symInt32QConfig_t *currentQC = currentQ->qConfig;
-        symInt32QConfig_t *symInt32QC = *reserveMemory(sizeof(symInt32QConfig_t));
+        symInt32QConfig_t *symInt32QC = reserveMemory(sizeof(symInt32QConfig_t));
         symInt32QC->roundingMode = currentQC->roundingMode;
         q->qConfig = symInt32QC;
         break;
@@ -146,7 +146,7 @@ tensor_t *inference(layer_t **model, size_t numberOfLayers, tensor_t *input) {
 }
 
 tensor_t **inferenceBatched(layer_t **model, size_t numberOfLayers, batch_t *batch) {
-    tensor_t **tensorArr = *reserveMemory(batch->size * sizeof(tensor_t));
+    tensor_t **tensorArr = reserveMemory(batch->size * sizeof(tensor_t));
 
     for (size_t i = 0; i < batch->size; i++) {
         tensorArr[i] = inference(model, numberOfLayers, batch->samples[i]->item);
@@ -156,13 +156,13 @@ tensor_t **inferenceBatched(layer_t **model, size_t numberOfLayers, batch_t *bat
 }
 
 inferenceStats_t *reserveInferenceStats(tensor_t *label) {
-    inferenceStats_t *inferenceStats = *reserveMemory(sizeof(inferenceStats_t));
+    inferenceStats_t *inferenceStats = reserveMemory(sizeof(inferenceStats_t));
 
     size_t sizeOutput = calcNumberOfElementsByTensor(label);
 
-    float *outputData = *reserveMemory(sizeOutput * sizeof(float));
+    float *outputData = reserveMemory(sizeOutput * sizeof(float));
     size_t outputNumberOfDims = label->shape->numberOfDimensions;
-    size_t *outputDims = *reserveMemory(outputNumberOfDims * sizeof(size_t));
+    size_t *outputDims = reserveMemory(outputNumberOfDims * sizeof(size_t));
     quantization_t *outputQ = getQLike(label->quantization);
     tensor_t *output = tensorInit(outputData, outputDims, outputNumberOfDims, outputQ, NULL);
 

@@ -19,7 +19,7 @@ tensorArray_t *npyLoad(char *path) {
     checkMagic(f);
 
     uint32_t headerSize = readHeaderSize(f);
-    char *header = *reserveMemory(headerSize + 1);
+    char *header = reserveMemory(headerSize + 1);
     readHeader(header, headerSize, f);
 
     dtype_t dtype = getDTypeFromHeader(header);
@@ -45,14 +45,14 @@ tensorArray_t *npyLoad(char *path) {
     size_t bytesPerValue = calcBytesPerElement(q);
     size_t numberOfValuesInRow = calcNumberOfElementsByShape(&rowShape);
 
-    tensorArray_t *tensorArr = *reserveMemory(sizeof(tensorArray_t));
-    tensor_t **arr = *reserveMemory(numberOfTensors * sizeof(tensor_t *));
+    tensorArray_t *tensorArr = reserveMemory(sizeof(tensorArray_t));
+    tensor_t **arr = reserveMemory(numberOfTensors * sizeof(tensor_t *));
     tensorArr->array = arr;
     tensorArr->size = numberOfTensors;
 
     for (size_t i = 0; i < numberOfTensors; i++) {
-        float *data = *reserveMemory(numberOfValuesInRow * bytesPerValue);
-        size_t *dims = *reserveMemory(numberOfDims * sizeof(size_t));
+        float *data = reserveMemory(numberOfValuesInRow * bytesPerValue);
+        size_t *dims = reserveMemory(numberOfDims * sizeof(size_t));
         memcpy(dims, rowDims, rowNumberOfDims * sizeof(size_t));
 
         size_t n = fread(data, bytesPerValue, numberOfValuesInRow, f);
@@ -69,7 +69,7 @@ tensorArray_t *npyLoad(char *path) {
 }
 
 sample_t *npyGetSample(dataset_t *dataset, size_t index) {
-    sample_t *sample = *reserveMemory(sizeof(sample_t));
+    sample_t *sample = reserveMemory(sizeof(sample_t));
     sample->item = dataset->items->array[index];
     sample->label = dataset->labels->array[index];
 

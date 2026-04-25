@@ -57,7 +57,7 @@ static void initProxyDataset() {
 }
 
 static sample_t *getProxySample(size_t id) {
-    sample_t *s = *reserveMemory(sizeof(sample_t));
+    sample_t *s = reserveMemory(sizeof(sample_t));
     s->item = proxyDataset.items->array[id];
     s->label = proxyDataset.labels->array[id];
     return s;

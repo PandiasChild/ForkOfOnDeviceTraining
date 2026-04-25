@@ -102,9 +102,9 @@ static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t si
             numberOfDims = 2;
         }
 
-        size_t *dims = *reserveMemory(numberOfDims * sizeof(size_t));
-        size_t *order = *reserveMemory(numberOfDims * sizeof(size_t));
-        shape_t *outShape = *reserveMemory(sizeof(shape_t));
+        size_t *dims = reserveMemory(numberOfDims * sizeof(size_t));
+        size_t *order = reserveMemory(numberOfDims * sizeof(size_t));
+        shape_t *outShape = reserveMemory(sizeof(shape_t));
 
         outShape->dimensions = dims;
         outShape->numberOfDimensions = numberOfDims;
@@ -114,9 +114,9 @@ static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t si
 
         size_t numberOfValues = calcNumberOfElementsByShape(outShape);
         size_t sizeData = calcNumberOfBytesForData(currentQ, numberOfValues);
-        uint8_t *data = *reserveMemory(sizeData);
+        uint8_t *data = reserveMemory(sizeData);
 
-        quantization_t *q = *reserveMemory(sizeof(quantization_t));
+        quantization_t *q = reserveMemory(sizeof(quantization_t));
         switch (currentQ->type) {
         case FLOAT32:
             initFloat32Quantization(q);
@@ -124,7 +124,7 @@ static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t si
         case SYM_INT32:
             q->type = SYM_INT32;
             symInt32QConfig_t *currentQC = currentQ->qConfig;
-            symInt32QConfig_t *qC = *reserveMemory(sizeof(symInt32QConfig_t));
+            symInt32QConfig_t *qC = reserveMemory(sizeof(symInt32QConfig_t));
             initSymInt32QConfig(currentQC->roundingMode, qC);
             initSymInt32Quantization(qC, q);
             break;
@@ -133,14 +133,14 @@ static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t si
             exit(1);
         }
 
-        tensor_t *tensor = *reserveMemory(sizeof(tensor_t));
+        tensor_t *tensor = reserveMemory(sizeof(tensor_t));
         tensor->data = data;
         tensor->quantization = q;
         tensor->shape = outShape;
 
         tensor->sparsity = NULL;
         if (layerOutputs[i]->sparsity != NULL) {
-            sparsity_t *sparsity = *reserveMemory(sizeof(sparsity_t));
+            sparsity_t *sparsity = reserveMemory(sizeof(sparsity_t));
             tensor->sparsity = sparsity;
         }
 
@@ -158,9 +158,9 @@ static void initGradTensor(tensor_t *grad, tensor_t *layerOutput) {
     shape_t *currentShape = layerOutput->shape;
     quantization_t *currentQ = layerOutput->quantization;
 
-    size_t *dims = *reserveMemory(currentShape->numberOfDimensions * sizeof(size_t));
-    size_t *order = *reserveMemory(currentShape->numberOfDimensions * sizeof(size_t));
-    shape_t *inShape = *reserveMemory(sizeof(shape_t));
+    size_t *dims = reserveMemory(currentShape->numberOfDimensions * sizeof(size_t));
+    size_t *order = reserveMemory(currentShape->numberOfDimensions * sizeof(size_t));
+    shape_t *inShape = reserveMemory(sizeof(shape_t));
 
     inShape->dimensions = dims;
     inShape->numberOfDimensions = currentShape->numberOfDimensions;
@@ -175,16 +175,16 @@ static void initGradTensor(tensor_t *grad, tensor_t *layerOutput) {
 
     size_t numberOfValues = calcNumberOfElementsByShape(currentShape);
     size_t sizeData = calcNumberOfBytesForData(currentQ, numberOfValues);
-    uint8_t *data = *reserveMemory(sizeData);
+    uint8_t *data = reserveMemory(sizeData);
 
-    quantization_t *q = *reserveMemory(sizeof(quantization_t));
+    quantization_t *q = reserveMemory(sizeof(quantization_t));
     switch (currentQ->type) {
     case FLOAT32:
         initFloat32Quantization(q);
         break;
     case SYM_INT32:
         symInt32QConfig_t *currentQC = currentQ->qConfig;
-        symInt32QConfig_t *qC = *reserveMemory(sizeof(symInt32QConfig_t));
+        symInt32QConfig_t *qC = reserveMemory(sizeof(symInt32QConfig_t));
         initSymInt32QConfig(currentQC->roundingMode, qC);
         initSymInt32Quantization(qC, q);
         break;
@@ -199,7 +199,7 @@ static void initGradTensor(tensor_t *grad, tensor_t *layerOutput) {
 
     grad->sparsity = NULL;
     if (layerOutput->sparsity != NULL) {
-        sparsity_t *sparsity = *reserveMemory(sizeof(sparsity_t));
+        sparsity_t *sparsity = reserveMemory(sizeof(sparsity_t));
         grad->sparsity = sparsity;
     }
 }
@@ -211,7 +211,7 @@ static void deInitGradTensor(tensor_t *tensor) {
 }
 
 static trainingStats_t *initTrainingStats(tensor_t *output) {
-    trainingStats_t *trainingStats = *reserveMemory(sizeof(trainingStats_t));
+    trainingStats_t *trainingStats = reserveMemory(sizeof(trainingStats_t));
 
     tensor_t *o = getTensorLike(output);
     trainingStats->output = o;

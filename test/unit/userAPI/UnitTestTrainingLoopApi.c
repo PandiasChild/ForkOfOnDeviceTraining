@@ -188,7 +188,7 @@ static void initEpochDataset() {
 }
 
 static sample_t *getEpochSample(size_t id) {
-    sample_t *s = *reserveMemory(sizeof(sample_t));
+    sample_t *s = reserveMemory(sizeof(sample_t));
     s->item = epochDataset.items->array[id];
     s->label = epochDataset.labels->array[id];
     return s;
@@ -607,7 +607,7 @@ static void initPartialDataset() {
 }
 
 static sample_t *getPartialSample(size_t id) {
-    sample_t *s = *reserveMemory(sizeof(sample_t));
+    sample_t *s = reserveMemory(sizeof(sample_t));
     s->item = partialDataset.items->array[id];
     s->label = partialDataset.labels->array[id];
     return s;
@@ -697,7 +697,7 @@ static void initZeroPredDataset() {
 }
 
 static sample_t *getZeroPredSample(size_t id) {
-    sample_t *s = *reserveMemory(sizeof(sample_t));
+    sample_t *s = reserveMemory(sizeof(sample_t));
     s->item = zeroPredDataset.items->array[id];
     s->label = zeroPredDataset.labels->array[id];
     return s;

@@ -4,15 +4,10 @@
 
 #include "StorageApi.h"
 
-
-void **reserveMemory(size_t numberOfBytes) {
-    void *ptr = calloc(1, numberOfBytes);
-    void **handle = malloc(sizeof(void *));
-    *handle = ptr;
-    return handle;
+void *reserveMemory(size_t numberOfBytes) {
+    return calloc(1, numberOfBytes);
 }
 
 void freeReservedMemory(void *ptr) {
     free(ptr);
 }
-

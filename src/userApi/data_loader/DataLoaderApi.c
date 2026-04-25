@@ -23,10 +23,10 @@ dataLoader_t *dataLoaderInit(getSampleFn_t getSample,
         exit(1);
     }
 
-    dataLoader_t *dataLoader = *reserveMemory(sizeof(dataLoader_t));
+    dataLoader_t *dataLoader = reserveMemory(sizeof(dataLoader_t));
 
     size_t numberOfIndices = getDatasetSize();
-    size_t *indices = *reserveMemory(numberOfIndices * sizeof(size_t));
+    size_t *indices = reserveMemory(numberOfIndices * sizeof(size_t));
 
     initDataLoader(dataLoader, getSample, getDatasetSize, getBatch, batchSize, transform,
                    targetTransform, shuffle,
@@ -57,11 +57,11 @@ static sample_t *getSampleByIndex(dataLoader_t *dataLoader, size_t index) {
 }
 
 static batch_t *getBatch(dataLoader_t *dataLoader, size_t index) {
-    batch_t *batch = *reserveMemory(sizeof(batch_t));
+    batch_t *batch = reserveMemory(sizeof(batch_t));
 
     size_t batchSize = dataLoader->batchSize;
     batch->size = batchSize;
-    batch->samples = *reserveMemory(batchSize * sizeof(sample_t *));
+    batch->samples = reserveMemory(batchSize * sizeof(sample_t *));
 
     size_t sampleIndex = index * batchSize;
 
