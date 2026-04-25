@@ -1,20 +1,19 @@
 #define SOURCE_FILE "INFERENCE_Api"
 
-#include <stdio.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 
-#include "Tensor.h"
-#include "Layer.h"
+#include "Common.h"
 #include "InferenceApi.h"
-#include "TensorApi.h"
-#include "StorageApi.h"
+#include "Layer.h"
 #include "Linear.h"
 #include "Relu.h"
-#include "TensorConversion.h"
-#include "Common.h"
 #include "Softmax.h"
-
+#include "StorageApi.h"
+#include "Tensor.h"
+#include "TensorApi.h"
+#include "TensorConversion.h"
 
 // Initializes buffer to match output
 static void initBufferOutput(tensor_t *buffer, layer_t *currentLayer, shape_t *inputShape,
@@ -50,8 +49,7 @@ static void initBufferOutput(tensor_t *buffer, layer_t *currentLayer, shape_t *i
     calcOutputShapeFn_t calcOutputShape = layerFunctions[currentLayerType].calcOutputShape;
     calcOutputShape(currentLayer, inputShape, outShape);
 
-    size_t numValues =
-        calcNumberOfElementsByShape(outShape);
+    size_t numValues = calcNumberOfElementsByShape(outShape);
     size_t sizeData = calcNumberOfBytesForData(currentQ, numValues);
     uint8_t *data = reserveMemory(sizeData);
 
@@ -158,15 +156,9 @@ tensor_t **inferenceBatched(layer_t **model, size_t numberOfLayers, batch_t *bat
 inferenceStats_t *reserveInferenceStats(tensor_t *label) {
     inferenceStats_t *inferenceStats = reserveMemory(sizeof(inferenceStats_t));
 
-    size_t sizeOutput = calcNumberOfElementsByTensor(label);
-
-    float *outputData = reserveMemory(sizeOutput * sizeof(float));
-    size_t outputNumberOfDims = label->shape->numberOfDimensions;
-    size_t *outputDims = reserveMemory(outputNumberOfDims * sizeof(size_t));
+    shape_t *outputShape = getShapeLike(label->shape);
     quantization_t *outputQ = getQLike(label->quantization);
-    tensor_t *output = tensorInit(outputData, outputDims, outputNumberOfDims, outputQ, NULL);
-
-    inferenceStats->output = output;
+    inferenceStats->output = initTensor(outputShape, outputQ, NULL);
 
     return inferenceStats;
 }
