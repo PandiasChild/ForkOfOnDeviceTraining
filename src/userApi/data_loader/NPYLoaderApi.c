@@ -73,6 +73,9 @@ tensorArray_t *npyLoad(char *path) {
         }
     }
 
+    /* `q` was deep-copied per tensor via getQLike; free the original. */
+    freeQuantization(q);
+
     fclose(f);
 
     return tensorArr;

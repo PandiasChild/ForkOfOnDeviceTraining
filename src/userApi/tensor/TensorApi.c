@@ -105,11 +105,15 @@ void tensorFillFromFloatBuffer(tensor_t *tensor, const float *source, size_t cou
 
     /* Non-FLOAT32: route through convertTensor, mirroring the pattern in
      * initTensorWithQSymInt32. Build a temporary FLOAT32 view over `source`
-     * and convert into `tensor`. The const-cast is safe because the only
-     * write convertTensor's helpers do back into `inputTensor` is through
-     * `copyDimsAndSparsityToTensor`, which assigns `outputTensor->shape =
-     * inputTensor->shape` — given that we set `srcView.shape = tensor->shape`,
-     * that write is a self-assignment of the same pointer back into tensor. */
+     * and convert into `tensor`. The const-cast is safe per converter:
+     *   - SYM_INT32: convertFloatTensorToSymInt32Tensor writes only to
+     *     outputTensor->data and outputTensor->quantization->qConfig->scale.
+     *   - INT32 / ASYM: convertFloatTensorTo{Int32,Asym}Tensor end with
+     *     copyDimsAndSparsityToTensor(input, output), which writes
+     *     outputTensor->shape = inputTensor->shape. Since we set
+     *     srcView.shape = tensor->shape, that write self-assigns the same
+     *     pointer back into tensor — harmless. srcView.sparsity is NULL so
+     *     the sparsity memcpy branch is skipped. */
     quantization_t floatQ;
     initFloat32Quantization(&floatQ);
     tensor_t srcView;
