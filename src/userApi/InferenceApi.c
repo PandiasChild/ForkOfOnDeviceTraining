@@ -140,6 +140,7 @@ tensor_t *inference(layer_t **model, size_t numberOfLayers, tensor_t *input) {
 
     tensor_t *output = getTensorLike(&outputNext);
     convertTensor(&outputNext, output);
+    deInitBuffer(&outputNext);
     return output;
 }
 
@@ -192,5 +193,6 @@ inferenceStats_t *inferenceWithLoss(layer_t **model, size_t numberOfLayers, tens
     float loss = lossFns.forward(&outputNext, label);
     inferenceStats->loss = loss;
 
+    deInitBuffer(&outputNext);
     return inferenceStats;
 }
