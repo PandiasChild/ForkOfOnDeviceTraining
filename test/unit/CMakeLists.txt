@@ -1,6 +1,7 @@
 include(unit_test.cmake)
 
 add_subdirectory(arithmetic)
+add_subdirectory(common)
 add_subdirectory(csv)
 add_subdirectory(data_loader)
 add_subdirectory(layer)

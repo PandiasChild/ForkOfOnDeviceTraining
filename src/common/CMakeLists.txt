@@ -5,9 +5,9 @@ target_include_directories(Common__hdrs INTERFACE
 add_library(Common INTERFACE)
 target_link_libraries(Common INTERFACE Common__hdrs)
 
-if(DEBUG_MODE_ERROR)
-    target_compile_definitions(Common__hdrs INTERFACE DEBUG_MODE_ERROR=true)
-endif()
+# DEBUG_MODE_ERROR is the default — every ODT consumer gets PRINT_ERROR output
+# unless explicitly silenced (no opt-out preset today; revisit when MCU presets land).
+target_compile_definitions(Common__hdrs INTERFACE DEBUG_MODE_ERROR=true)
 
 if(DEBUG_MODE_INFO)
     target_compile_definitions(Common__hdrs INTERFACE DEBUG_MODE_INFO=true)
