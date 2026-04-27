@@ -167,9 +167,17 @@ void byteConversion(uint8_t *dataIn, size_t dataInBits, uint8_t *dataOut, size_t
         printf("\n");
         printf("Value %i\n", i);*/
         while ((dataInStartbit < dataInEndbit) | (dataOutStartbit < dataOutEndbit)) {
-            uint8_t data = readByte(dataIn[dataInIndex], dataInStartbit, dataInEndbit);
-            dataOut[dataOutIndex] =
-                writeByte(dataOut[dataOutIndex], data, dataOutStartbit, dataOutEndbit);
+            /* Guard each side: input may exhaust before output (widening) or
+             * output may fill before input (narrowing); skipping the out-of-range
+             * access avoids OOB while preserving zero-fill semantics. */
+            uint8_t data = 0;
+            if (dataInStartbit < dataInEndbit) {
+                data = readByte(dataIn[dataInIndex], dataInStartbit, dataInEndbit);
+            }
+            if (dataOutStartbit < dataOutEndbit) {
+                dataOut[dataOutIndex] =
+                    writeByte(dataOut[dataOutIndex], data, dataOutStartbit, dataOutEndbit);
+            }
 
             /*
             printf("dataInStartbit %d\n", dataInStartbit);

@@ -144,6 +144,59 @@ void testByteFlattening5() {
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, dataOut, numBytesDataOut);
 }
 
+/* Regression for an ASan-detected heap-buffer-overflow surfaced by
+ * testLinearBackwardFloatWithMismatchedQuantizations on the float32 -> asym8
+ * conversion path. byteConversion's inner while-loop keeps iterating after
+ * the output for a value is full to consume remaining input bits, accessing
+ * dataOut[dataOutIndex] one byte past the end of the buffer. The OOB write
+ * is a no-op on the value (writeByte with startbit==endbit), so the bug is
+ * invisible to value assertions and only fires under ASan. */
+void testByteConversion_NarrowingInt32ToByte_DoesNotOverreadOutputBuffer() {
+    /* Two int32 values, little-endian: 0xAABBCCDD, 0xEEFF1122. */
+    uint8_t dataIn[8] = {0xDD, 0xCC, 0xBB, 0xAA, 0x22, 0x11, 0xFF, 0xEE};
+    size_t dataInBits = 32;
+    size_t dataOutBits = 8;
+    size_t numValues = 2;
+    size_t numBytesDataOut = (numValues * dataOutBits - 1) / 8 + 1; /* = 2 */
+
+    uint8_t *dataOut = reserveMemory(numBytesDataOut);
+    byteConversion(dataIn, dataInBits, dataOut, dataOutBits, numValues);
+
+    uint8_t captured[numBytesDataOut];
+    memcpy(captured, dataOut, numBytesDataOut);
+    freeReservedMemory(dataOut);
+
+    uint8_t expectedBytes[2] = {0xDD, 0x22};
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, captured, numBytesDataOut);
+}
+
+/* Companion to the narrowing test above, exercising the sub-byte path of #86.
+ * 32-bit input -> 4-bit output, 4 values packed into 2 bytes. The same
+ * loop-control bug shows up: after the last value's bits are written, the
+ * inner while-loop continues consuming input bits and accesses
+ * dataOut[dataOutIndex] one byte past the end of the buffer. */
+void testByteConversion_NarrowingInt32ToSubByte_DoesNotOverreadOutputBuffer() {
+    /* Four int32 values, low 4 bits matter: 0xA, 0xB, 0xC, 0xD. */
+    uint8_t dataIn[16] = {
+        0x0A, 0, 0, 0, 0x0B, 0, 0, 0, 0x0C, 0, 0, 0, 0x0D, 0, 0, 0,
+    };
+    size_t dataInBits = 32;
+    size_t dataOutBits = 4;
+    size_t numValues = 4;
+    size_t numBytesDataOut = (numValues * dataOutBits - 1) / 8 + 1; /* = 2 */
+
+    uint8_t *dataOut = reserveMemory(numBytesDataOut);
+    byteConversion(dataIn, dataInBits, dataOut, dataOutBits, numValues);
+
+    uint8_t captured[numBytesDataOut];
+    memcpy(captured, dataOut, numBytesDataOut);
+    freeReservedMemory(dataOut);
+
+    /* byte 0 = (0xB << 4) | 0xA = 0xBA; byte 1 = (0xD << 4) | 0xC = 0xDC. */
+    uint8_t expectedBytes[2] = {0xBA, 0xDC};
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, captured, numBytesDataOut);
+}
+
 void testCopyTensor() {
     size_t numberOfValues = 3;
     tensor_t src;
@@ -191,6 +244,8 @@ int main(void) {
     RUN_TEST(testByteFlattening3);
     RUN_TEST(testByteFlattening4);
     RUN_TEST(testByteFlattening5);
+    RUN_TEST(testByteConversion_NarrowingInt32ToSubByte_DoesNotOverreadOutputBuffer);
+    RUN_TEST(testByteConversion_NarrowingInt32ToByte_DoesNotOverreadOutputBuffer);
 
     RUN_TEST(testGetBitmask);
     RUN_TEST(testGetBitmask2);

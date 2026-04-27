@@ -1,6 +1,8 @@
 #define SOURCE_FILE "UNIT_TEST_MNIST_SMOKE"
 
 #include <stddef.h>
+#include <stdio.h>
+#include <time.h>
 
 #include "unity.h"
 
@@ -230,8 +232,66 @@ void testMnistSmoke_FullTrainingPipelineReducesLoss() {
     TEST_ASSERT_TRUE(capturedLastTrainLoss < capturedFirstTrainLoss);
 }
 
+/* Regression test for #94. The original audit observed a silent exit(1) on
+ * macOS when an snprintf or gmtime_r call sat between init() and trainingRun()
+ * in the base project; #94 hypothesised an uninitialized-read or sized-buffer
+ * overrun in a static-init path whose visible symptom was gated on stack/dyld
+ * layout. This test mirrors the reproducer pattern (full FLOAT32 setup,
+ * gmtime_r + snprintf, then trainingRun) on the in-tree smoke pipeline. If the
+ * underlying memory bug is still present, trainingRun terminates with exit(1)
+ * before reaching any assertion; reaching the final TEST_ASSERT_TRUE proves
+ * the run completed normally. */
+void testMnistSmoke_SnprintfGmtimeRBetweenSetupAndTrainingRun_NoSilentExit() {
+    initDataset();
+
+    dataLoader_t *trainDl =
+        dataLoaderInit(getSample, getDatasetSize, 2, NULL, NULL, false, 0, true);
+    dataLoader_t *evalDl = dataLoaderInit(getSample, getDatasetSize, 1, NULL, NULL, false, 0, true);
+
+    layer_t *model[MODEL_SIZE];
+    quantization_t *q = NULL;
+    buildModel(model, &q);
+
+    optimizer_t *sgd = sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, MODEL_SIZE, FLOAT32);
+
+    /* The poison block from #94's reproducer: gmtime_r + snprintf wedged
+     * between setup and trainingRun. Pre-fix this triggered silent exit(1). */
+    char buf[64];
+    time_t t = time(NULL);
+    struct tm tmStruct;
+    gmtime_r(&t, &tmStruct);
+    snprintf(buf, sizeof(buf), "%04d-%02d-%02d", tmStruct.tm_year + 1900, tmStruct.tm_mon + 1,
+             tmStruct.tm_mday);
+
+    cbInvocations = 0;
+    trainingRunResult_t result = trainingRun(
+        model, MODEL_SIZE, (lossConfig_t){.funcType = CROSS_ENTROPY, .reduction = REDUCTION_MEAN},
+        trainDl, evalDl, sgd, 1, calculateGradsSequential, inferenceWithLoss, captureEpoch);
+
+    /* CAPTURE before free. */
+    size_t capturedCbInvocations = cbInvocations;
+    float capturedFinalTrainLoss = result.finalTrainLoss;
+    char capturedFirstChar = buf[0];
+
+    freeOptimSgdM(sgd);
+    freeSoftmaxLayer(model[3]);
+    freeLinearLayer(model[2]);
+    freeReluLayer(model[1]);
+    freeLinearLayer(model[0]);
+    freeDataLoader(evalDl);
+    freeDataLoader(trainDl);
+    freeQuantization(q);
+    freeDataset();
+
+    /* Reaching these at all proves trainingRun did not silent-exit. */
+    TEST_ASSERT_EQUAL_UINT(1, capturedCbInvocations);
+    TEST_ASSERT_TRUE(capturedFinalTrainLoss > 0.0f);
+    TEST_ASSERT_NOT_EQUAL('\0', capturedFirstChar);
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(testMnistSmoke_FullTrainingPipelineReducesLoss);
+    RUN_TEST(testMnistSmoke_SnprintfGmtimeRBetweenSetupAndTrainingRun_NoSilentExit);
     return UNITY_END();
 }
