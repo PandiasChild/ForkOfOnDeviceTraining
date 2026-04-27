@@ -1,26 +1,43 @@
-#include "Tensor.h"
-#include "Rounding.h"
 #include "MSE.h"
-#include "unity.h"
-#include "TensorConversion.h"
+#include "QuantizationApi.h"
+#include "Rounding.h"
+#include "StorageApi.h"
+#include "Tensor.h"
 #include "TensorApi.h"
+#include "TensorConversion.h"
+#include "unity.h"
 
 void testMSEForward() {
-    float outputData[] = {1.f, 2.f, 3.f};
-    size_t outputDims[] = {3};
-    size_t outputNumberOfDims = 1;
-    tensor_t *output = tensorInitFloat(outputData, outputDims, outputNumberOfDims, NULL);
+    /* Output (1D, 3 elements). */
+    size_t *outputDims = reserveMemory(1 * sizeof(size_t));
+    outputDims[0] = 3;
+    size_t *outputOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, outputOrder);
+    shape_t *outputShape = reserveMemory(sizeof(shape_t));
+    setShape(outputShape, outputDims, 1, outputOrder);
+    tensor_t *output = initTensor(outputShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(output, (float[]){1.f, 2.f, 3.f}, 3);
 
-    float labelData[] = {2.f, 4.f, 6.f};
-    size_t labelDims[] = {3};
-    size_t labelNumberOfDims = 1;
-    tensor_t *label = tensorInitFloat(labelData, labelDims, labelNumberOfDims, NULL);
+    /* Label (1D, 3 elements). */
+    size_t *labelDims = reserveMemory(1 * sizeof(size_t));
+    labelDims[0] = 3;
+    size_t *labelOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, labelOrder);
+    shape_t *labelShape = reserveMemory(sizeof(shape_t));
+    setShape(labelShape, labelDims, 1, labelOrder);
+    tensor_t *label = initTensor(labelShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(label, (float[]){2.f, 4.f, 6.f}, 3);
 
-    float loss = mseLossForward(output, label);
+    /* CAPTURE. */
+    float capturedLoss = mseLossForward(output, label);
 
+    /* FREE. */
+    freeTensor(label);
+    freeTensor(output);
+
+    /* ASSERT. */
     float expected = 4.67f;
-
-    TEST_ASSERT_FLOAT_WITHIN(0.01f, expected, loss);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, expected, capturedLoss);
 }
 
 void testMSELossBackwardFloat() {
@@ -30,10 +47,7 @@ void testMSELossBackwardFloat() {
     size_t numberOfDims = 1;
     size_t orderOfDims[] = {0};
     shape_t shape = {
-        .dimensions = dims,
-        .orderOfDimensions = orderOfDims,
-        .numberOfDimensions = numberOfDims
-    };
+        .dimensions = dims, .orderOfDimensions = orderOfDims, .numberOfDimensions = numberOfDims};
 
     tensor_t modelOutput;
     quantization_t modelOutputQ;
@@ -59,7 +73,7 @@ void testMSELossBackwardFloat() {
 
     float *actual = (float *)result.data;
 
-    for(size_t i = 0; i < 3; i++) {
+    for (size_t i = 0; i < 3; i++) {
         TEST_ASSERT_FLOAT_WITHIN(0.0001f, expected[i], actual[i]);
     }
 }
@@ -71,10 +85,7 @@ void testMSELossBackwardSymInt32() {
     size_t numberOfDims = 1;
     size_t orderOfDims[] = {0};
     shape_t shape = {
-        .dimensions = dims,
-        .orderOfDimensions = orderOfDims,
-        .numberOfDimensions = numberOfDims
-    };
+        .dimensions = dims, .orderOfDimensions = orderOfDims, .numberOfDimensions = numberOfDims};
 
     tensor_t modelOutput;
     quantization_t modelOutputQ;
@@ -88,7 +99,8 @@ void testMSELossBackwardSymInt32() {
     quantization_t modelOutputSymInt32Q;
     initSymInt32Quantization(&modelOutputSymInt32QC, &modelOutputSymInt32Q);
     uint8_t modelOutputSymInt32Data[numberOfElements * sizeof(int32_t)];
-    setTensorValuesForConversion(modelOutputSymInt32Data, &modelOutputSymInt32Q, &modelOutput, &modelOutputSymInt32);
+    setTensorValuesForConversion(modelOutputSymInt32Data, &modelOutputSymInt32Q, &modelOutput,
+                                 &modelOutputSymInt32);
     convertTensor(&modelOutput, &modelOutputSymInt32);
 
     tensor_t label;
@@ -106,7 +118,6 @@ void testMSELossBackwardSymInt32() {
     setTensorValuesForConversion(labelSymInt32Data, &labelSymInt32Q, &label, &labelSymInt32);
     convertTensor(&label, &labelSymInt32);
 
-
     tensor_t result;
     quantization_t resultQ;
     initFloat32Quantization(&resultQ);
@@ -122,7 +133,6 @@ void testMSELossBackwardSymInt32() {
     setTensorValuesForConversion(resultSymInt32Data, &resultSymInt32Q, &result, &resultSymInt32);
     convertTensor(&result, &resultSymInt32);
 
-
     mseLossBackward(&modelOutputSymInt32, &labelSymInt32, &resultSymInt32);
 
     convertTensor(&resultSymInt32, &result);
@@ -131,13 +141,13 @@ void testMSELossBackwardSymInt32() {
 
     float *actual = (float *)result.data;
 
-    for(size_t i = 0; i < numberOfElements; i++) {
+    for (size_t i = 0; i < numberOfElements; i++) {
         TEST_ASSERT_FLOAT_WITHIN(0.5f, expected[i], actual[i]);
     }
 }
 
-void setUp(){}
-void tearDown(){}
+void setUp() {}
+void tearDown() {}
 
 int main(void) {
     UNITY_BEGIN();

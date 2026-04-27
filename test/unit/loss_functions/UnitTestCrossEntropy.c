@@ -1,9 +1,9 @@
-#include "unity.h"
-#include "Softmax.h"
 #include "CrossEntropy.h"
 #include "QuantizationApi.h"
+#include "Softmax.h"
 #include "SoftmaxApi.h"
-
+#include "TensorApi.h"
+#include "unity.h"
 
 void unitTestCrossEntropyForward() {
     tensor_t logits;
@@ -44,11 +44,18 @@ void unitTestCrossEntropyForward() {
     initFloat32Quantization(&distQ);
     setTensorValues(&distribution, (uint8_t *)distData, &distShape, &distQ, NULL);
 
+    /* CAPTURE. */
+    float capturedActual = crossEntropyForwardFloat(&softmaxOutput, &distribution);
+
+    /* FREE. freeSoftmaxLayer releases the layer config wrapper only; it does
+     * NOT touch the stored forwardQ/backwardQ pointer (which is floatQ). So
+     * floatQ is safe to free after. */
+    freeSoftmaxLayer(softmaxLayer);
+    freeQuantization(floatQ);
+
+    /* ASSERT. */
     float expected = 0.5170299410820007f;
-    float actual = crossEntropyForwardFloat(&softmaxOutput, &distribution);
-
-    TEST_ASSERT_EQUAL_FLOAT(expected, actual);
-
+    TEST_ASSERT_EQUAL_FLOAT(expected, capturedActual);
 }
 
 void unitTestCrossEntropySoftmaxBackward() {
@@ -106,14 +113,23 @@ void unitTestCrossEntropySoftmaxBackward() {
 
     crossEntropySoftmaxBackward(&softmaxOutput, &distribution, &propLoss);
 
-    float expected[] = {-0.2410f, 0.1424f, 0.0986f};
-
-    float *actual = (float *)propLoss.data;
-
+    /* CAPTURE. propLoss.data is stack memory (propLossData[]); copy into a
+     * dedicated capture array so the assertions read from a buffer that
+     * doesn't depend on freeing softmaxLayer/floatQ first. */
+    float capturedActual[3];
     for (size_t i = 0; i < inputSize; i++) {
-        TEST_ASSERT_FLOAT_WITHIN(0.0001f, expected[i], actual[i]);
+        capturedActual[i] = ((float *)propLoss.data)[i];
     }
 
+    /* FREE. */
+    freeSoftmaxLayer(softmaxLayer);
+    freeQuantization(floatQ);
+
+    /* ASSERT. */
+    float expected[] = {-0.2410f, 0.1424f, 0.0986f};
+    for (size_t i = 0; i < inputSize; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(0.0001f, expected[i], capturedActual[i]);
+    }
 }
 
 void setUp() {}
