@@ -3,6 +3,7 @@
 #include "QuantizationApi.h"
 #include "Relu.h"
 #include "ReluApi.h"
+#include "StorageApi.h"
 #include "Tensor.h"
 #include "TensorApi.h"
 #include "TensorConversion.h"
@@ -11,128 +12,234 @@
 void testReluForwardFloat() {
     size_t numberOfElements = 6;
 
-    tensor_t input;
-    float inputData[] = {-1.f, 0.f, 1.f, 2.f, 5.f, -6.f};
-    size_t inputDims[] = {2, 3};
-    size_t inputNumberOfDims = 2;
-    size_t inputOrderOfDims[] = {0, 1};
-    shape_t inputShape = {.dimensions = inputDims,
-                          .orderOfDimensions = inputOrderOfDims,
-                          .numberOfDimensions = inputNumberOfDims};
-    quantization_t inputQ;
-    initFloat32Quantization(&inputQ);
-    setTensorValues(&input, (uint8_t *)inputData, &inputShape, &inputQ, NULL);
+    /* 1. Build heap input tensor (shape 2x3). */
+    size_t *inputDims = reserveMemory(2 * sizeof(size_t));
+    inputDims[0] = 2;
+    inputDims[1] = 3;
+    size_t *inputOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, inputOrder);
+    shape_t *inputShape = reserveMemory(sizeof(shape_t));
+    setShape(inputShape, inputDims, 2, inputOrder);
+    tensor_t *input = initTensor(inputShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(input, (float[]){-1.f, 0.f, 1.f, 2.f, 5.f, -6.f}, 6);
 
-    tensor_t output;
-    float outputData[numberOfElements];
-    size_t outputDims[] = {2, 3};
-    size_t outputNumberOfDims = 2;
-    size_t outputOrderOfDims[] = {0, 1};
-    shape_t outputShape = {.dimensions = outputDims,
-                           .orderOfDimensions = outputOrderOfDims,
-                           .numberOfDimensions = outputNumberOfDims};
-    quantization_t outputQ;
-    initFloat32Quantization(&outputQ);
-    setTensorValues(&output, (uint8_t *)outputData, &outputShape, &outputQ, NULL);
+    /* 2. Build heap output tensor (shape 2x3). */
+    size_t *outputDims = reserveMemory(2 * sizeof(size_t));
+    outputDims[0] = 2;
+    outputDims[1] = 3;
+    size_t *outputOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, outputOrder);
+    shape_t *outputShape = reserveMemory(sizeof(shape_t));
+    setShape(outputShape, outputDims, 2, outputOrder);
+    tensor_t *output = initTensor(outputShape, quantizationInitFloat(), NULL);
 
-    quantization_t floatQ;
-    initFloat32Quantization(&floatQ);
-    layer_t *reluLayer = reluLayerInit(&floatQ, &floatQ);
+    /* 3. Build shared float quantization for the layer. */
+    quantization_t *floatQ = quantizationInitFloat();
+    layer_t *reluLayer = reluLayerInit(floatQ, floatQ);
 
-    reluForward(reluLayer, &input, &output);
+    /* 4. Exercise. */
+    reluForward(reluLayer, input, output);
 
+    /* 5. CAPTURE assertion values. */
+    float captured[6];
+    readBytesAsFloatArray(numberOfElements, output->data, captured);
+
+    /* 6. FREE in reverse-init order. freeReluLayer releases only the layer
+     *    config wrapper; the shared floatQ is freed exactly once at the end. */
+    freeReluLayer(reluLayer);
+    freeTensor(output);
+    freeTensor(input);
+    freeQuantization(floatQ);
+
+    /* 7. ASSERT on captured. */
     float expected[] = {0.f, 0.f, 1.f, 2.f, 5.f, 0.f};
-
-    float actual[numberOfElements];
-    readBytesAsFloatArray(numberOfElements, output.data, actual);
-
-    TEST_ASSERT_EQUAL_FLOAT_ARRAY(expected, actual, numberOfElements);
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(expected, captured, numberOfElements);
 }
 
 void testReluForwardSymInt32() {
     size_t numberOfValues = 6;
-    size_t dims[] = {2, 3};
-    size_t numberOfDims = 2;
 
-    float inputData[] = {-1.f, 0.f, 1.f, 2.f, 5.f, -6.f};
-    tensor_t *input = tensorInitSymInt32(inputData, dims, numberOfDims, HTE, NULL);
+    /* 1. Build heap input tensor (SymInt32, shape 2x3). */
+    size_t *inputDims = reserveMemory(2 * sizeof(size_t));
+    inputDims[0] = 2;
+    inputDims[1] = 3;
+    size_t *inputOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, inputOrder);
+    shape_t *inputShape = reserveMemory(sizeof(shape_t));
+    setShape(inputShape, inputDims, 2, inputOrder);
+    tensor_t *input = initTensor(inputShape, quantizationInitSymInt32(HTE), NULL);
+    tensorFillFromFloatBuffer(input, (float[]){-1.f, 0.f, 1.f, 2.f, 5.f, -6.f}, 6);
 
-    float outputData[6] = {0};
-    tensor_t *output = tensorInitSymInt32(outputData, dims, numberOfDims, HTE, NULL);
+    /* 2. Build heap output tensor (SymInt32, shape 2x3). */
+    size_t *outputDims = reserveMemory(2 * sizeof(size_t));
+    outputDims[0] = 2;
+    outputDims[1] = 3;
+    size_t *outputOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, outputOrder);
+    shape_t *outputShape = reserveMemory(sizeof(shape_t));
+    setShape(outputShape, outputDims, 2, outputOrder);
+    tensor_t *output = initTensor(outputShape, quantizationInitSymInt32(HTE), NULL);
 
+    /* 3. Shared SymInt32 quantization for the layer. */
     quantization_t *symIntQ = quantizationInitSymInt32(HTE);
     layer_t *reluLayer = reluLayerInit(symIntQ, symIntQ);
     layerFunctions_t reluFns = layerFunctions[RELU];
     reluFns.forward(reluLayer, input, output);
 
-    float outputFloatData[6];
-    tensor_t *outputFloat = tensorInitFloat(outputFloatData, dims, numberOfDims, NULL);
+    /* 4. Convert SymInt32 output back to Float for comparison; output buffer
+     *    is heap-allocated to keep us in the heap-tier idiom. */
+    size_t *outFloatDims = reserveMemory(2 * sizeof(size_t));
+    outFloatDims[0] = 2;
+    outFloatDims[1] = 3;
+    size_t *outFloatOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, outFloatOrder);
+    shape_t *outFloatShape = reserveMemory(sizeof(shape_t));
+    setShape(outFloatShape, outFloatDims, 2, outFloatOrder);
+    tensor_t *outputFloat = initTensor(outFloatShape, quantizationInitFloat(), NULL);
     convertTensor(output, outputFloat);
 
-    float expected[] = {0, 0, 1, 2, 5, 0};
-    float *actual = (float *)outputFloat->data;
-
+    /* 5. CAPTURE. */
+    float captured[6];
     for (size_t i = 0; i < numberOfValues; i++) {
-        TEST_ASSERT_FLOAT_WITHIN(0.1f, expected[i], actual[i]);
+        captured[i] = ((float *)outputFloat->data)[i];
+    }
+
+    /* 6. FREE. */
+    freeTensor(outputFloat);
+    freeReluLayer(reluLayer);
+    freeTensor(output);
+    freeTensor(input);
+    freeQuantization(symIntQ);
+
+    /* 7. ASSERT. */
+    float expected[] = {0, 0, 1, 2, 5, 0};
+    for (size_t i = 0; i < numberOfValues; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(0.1f, expected[i], captured[i]);
     }
 }
 
 void testReluBackwardFloat() {
     size_t numberOfElements = 6;
 
-    size_t dims[] = {numberOfElements};
-    size_t numberOfDims = 1;
+    /* 1. Build heap forwardInput tensor. */
+    size_t *fwdDims = reserveMemory(1 * sizeof(size_t));
+    fwdDims[0] = numberOfElements;
+    size_t *fwdOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, fwdOrder);
+    shape_t *fwdShape = reserveMemory(sizeof(shape_t));
+    setShape(fwdShape, fwdDims, 1, fwdOrder);
+    tensor_t *forwardInput = initTensor(fwdShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(forwardInput, (float[]){-1.f, 0.f, 1.f, 2.f, 5.f, -6.f}, 6);
 
-    float forwardInputData[] = {-1.f, 0.f, 1.f, 2.f, 5.f, -6.f};
-    tensor_t *forwardInput = tensorInitFloat(forwardInputData, dims, numberOfDims, NULL);
+    /* 2. Build heap loss tensor. */
+    size_t *lossDims = reserveMemory(1 * sizeof(size_t));
+    lossDims[0] = numberOfElements;
+    size_t *lossOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, lossOrder);
+    shape_t *lossShape = reserveMemory(sizeof(shape_t));
+    setShape(lossShape, lossDims, 1, lossOrder);
+    tensor_t *loss = initTensor(lossShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(loss, (float[]){0.f, 2.f, -4.f, 6.f, 3.f, 2.f}, 6);
 
-    float lossData[] = {0.f, 2.f, -4.f, 6.f, 3.f, 2.f};
-    tensor_t *loss = tensorInitFloat(lossData, dims, numberOfDims, NULL);
+    /* 3. Build heap propLoss tensor (output of backward). */
+    size_t *propLossDims = reserveMemory(1 * sizeof(size_t));
+    propLossDims[0] = numberOfElements;
+    size_t *propLossOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, propLossOrder);
+    shape_t *propLossShape = reserveMemory(sizeof(shape_t));
+    setShape(propLossShape, propLossDims, 1, propLossOrder);
+    tensor_t *propLoss = initTensor(propLossShape, quantizationInitFloat(), NULL);
 
-    float propLossData[numberOfElements];
-    tensor_t *propLoss = tensorInitFloat(propLossData, dims, numberOfDims, NULL);
-
+    /* 4. Build the layer with shared float quantization. */
     quantization_t *floatQ = quantizationInitFloat();
     layer_t *reluLayer = reluLayerInit(floatQ, floatQ);
     layerFunctions_t reluFns = layerFunctions[RELU];
     reluFns.backward(reluLayer, forwardInput, loss, propLoss);
 
+    /* 5. CAPTURE. */
+    float captured[6];
+    for (size_t i = 0; i < numberOfElements; i++) {
+        captured[i] = ((float *)propLoss->data)[i];
+    }
+
+    /* 6. FREE. */
+    freeReluLayer(reluLayer);
+    freeTensor(propLoss);
+    freeTensor(loss);
+    freeTensor(forwardInput);
+    freeQuantization(floatQ);
+
+    /* 7. ASSERT. */
     float expected[] = {0.f, 0.f, -4.f, 6.f, 3.f, 0.f};
-
-    float *actual = (float *)propLoss->data;
-
-    TEST_ASSERT_EQUAL_FLOAT_ARRAY(expected, actual, numberOfElements);
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(expected, captured, numberOfElements);
 }
 
 void testReluBackwardSymInt32() {
     size_t numberOfValues = 6;
 
-    size_t dims[] = {6};
-    size_t numberOfDims = 1;
+    /* 1. Build heap forwardInput tensor (SymInt32). */
+    size_t *fwdDims = reserveMemory(1 * sizeof(size_t));
+    fwdDims[0] = numberOfValues;
+    size_t *fwdOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, fwdOrder);
+    shape_t *fwdShape = reserveMemory(sizeof(shape_t));
+    setShape(fwdShape, fwdDims, 1, fwdOrder);
+    tensor_t *forwardInput = initTensor(fwdShape, quantizationInitSymInt32(HTE), NULL);
+    tensorFillFromFloatBuffer(forwardInput, (float[]){-1.f, 0.f, 1.f, 2.f, 5.f, -6.f}, 6);
 
-    float forwardInputData[] = {-1.f, 0.f, 1.f, 2.f, 5.f, -6.f};
-    tensor_t *forwardInput = tensorInitSymInt32(forwardInputData, dims, numberOfDims, HTE, NULL);
+    /* 2. Build heap loss tensor (SymInt32). */
+    size_t *lossDims = reserveMemory(1 * sizeof(size_t));
+    lossDims[0] = numberOfValues;
+    size_t *lossOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, lossOrder);
+    shape_t *lossShape = reserveMemory(sizeof(shape_t));
+    setShape(lossShape, lossDims, 1, lossOrder);
+    tensor_t *loss = initTensor(lossShape, quantizationInitSymInt32(HTE), NULL);
+    tensorFillFromFloatBuffer(loss, (float[]){0.f, 2.f, -4.f, 6.f, 3.f, 2.f}, 6);
 
-    float lossData[] = {0.f, 2.f, -4.f, 6.f, 3.f, 2.f};
-    tensor_t *loss = tensorInitSymInt32(lossData, dims, numberOfDims, HTE, NULL);
+    /* 3. Build heap propLoss tensor (SymInt32). */
+    size_t *propLossDims = reserveMemory(1 * sizeof(size_t));
+    propLossDims[0] = numberOfValues;
+    size_t *propLossOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, propLossOrder);
+    shape_t *propLossShape = reserveMemory(sizeof(shape_t));
+    setShape(propLossShape, propLossDims, 1, propLossOrder);
+    tensor_t *propLoss = initTensor(propLossShape, quantizationInitSymInt32(HTE), NULL);
 
-    float propLossData[numberOfValues];
-    tensor_t *propLoss = tensorInitSymInt32(propLossData, dims, numberOfDims, HTE, NULL);
-
+    /* 4. Build layer with shared SymInt32 quantization. */
     quantization_t *symIntQ = quantizationInitSymInt32(HTE);
     layer_t *reluLayer = reluLayerInit(symIntQ, symIntQ);
     layerFunctions_t reluFns = layerFunctions[RELU];
     reluFns.backward(reluLayer, forwardInput, loss, propLoss);
 
-    float expected[] = {0, 0, -4, 6, 3, 0};
-
-    float propLossFloatData[6];
-    tensor_t *propLossFloat = tensorInitFloat(propLossFloatData, dims, numberOfDims, NULL);
+    /* 5. Convert SymInt32 propLoss back to Float for comparison. */
+    size_t *propLossFloatDims = reserveMemory(1 * sizeof(size_t));
+    propLossFloatDims[0] = numberOfValues;
+    size_t *propLossFloatOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, propLossFloatOrder);
+    shape_t *propLossFloatShape = reserveMemory(sizeof(shape_t));
+    setShape(propLossFloatShape, propLossFloatDims, 1, propLossFloatOrder);
+    tensor_t *propLossFloat = initTensor(propLossFloatShape, quantizationInitFloat(), NULL);
     convertTensor(propLoss, propLossFloat);
-    float *actual = (float *)propLossFloat->data;
 
+    /* 6. CAPTURE. */
+    float captured[6];
     for (size_t i = 0; i < numberOfValues; i++) {
-        TEST_ASSERT_FLOAT_WITHIN(0.1f, expected[i], actual[i]);
+        captured[i] = ((float *)propLossFloat->data)[i];
+    }
+
+    /* 7. FREE. */
+    freeTensor(propLossFloat);
+    freeReluLayer(reluLayer);
+    freeTensor(propLoss);
+    freeTensor(loss);
+    freeTensor(forwardInput);
+    freeQuantization(symIntQ);
+
+    /* 8. ASSERT. */
+    float expected[] = {0, 0, -4, 6, 3, 0};
+    for (size_t i = 0; i < numberOfValues; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(0.1f, expected[i], captured[i]);
     }
 }
 

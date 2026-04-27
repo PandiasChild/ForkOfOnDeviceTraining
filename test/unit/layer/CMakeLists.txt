@@ -6,6 +6,7 @@ add_elastic_ai_unit_test(
         TensorApi
         QuantizationApi
         LinearApi
+        StorageApi
 )
 
 
@@ -17,6 +18,7 @@ add_elastic_ai_unit_test(
         ReluApi
         TensorApi
         QuantizationApi
+        StorageApi
 )
 
 add_elastic_ai_unit_test(
@@ -27,6 +29,7 @@ add_elastic_ai_unit_test(
         TensorApi
         SoftmaxApi
         QuantizationApi
+        StorageApi
 )
 
 add_elastic_ai_unit_test(

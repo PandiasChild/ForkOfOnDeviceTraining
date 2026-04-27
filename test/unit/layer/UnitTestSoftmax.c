@@ -4,6 +4,8 @@
 #include "QuantizationApi.h"
 #include "Softmax.h"
 #include "SoftmaxApi.h"
+#include "StorageApi.h"
+#include "Tensor.h"
 #include "TensorApi.h"
 #include "TensorConversion.h"
 #include "unity.h"
@@ -11,132 +13,252 @@
 void unitTestSoftmaxForwardFloat() {
     size_t inputSize = 6;
 
-    float inputData[] = {-1.f, 0.f, 1.f, 2.f, 5.f, -6.f};
-    size_t inputDims[] = {2, 3};
-    size_t inputNumberOfDims = 2;
-    tensor_t *input = tensorInitFloat(inputData, inputDims, inputNumberOfDims, NULL);
+    /* 1. Build heap input tensor (shape 2x3). */
+    size_t *inputDims = reserveMemory(2 * sizeof(size_t));
+    inputDims[0] = 2;
+    inputDims[1] = 3;
+    size_t *inputOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, inputOrder);
+    shape_t *inputShape = reserveMemory(sizeof(shape_t));
+    setShape(inputShape, inputDims, 2, inputOrder);
+    tensor_t *input = initTensor(inputShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(input, (float[]){-1.f, 0.f, 1.f, 2.f, 5.f, -6.f}, 6);
 
-    float outputData[inputSize];
-    size_t outputDims[] = {2, 3};
-    size_t outputNumberOfDims = 2;
-    tensor_t *output = tensorInitFloat(outputData, outputDims, outputNumberOfDims, NULL);
+    /* 2. Build heap output tensor (shape 2x3). */
+    size_t *outputDims = reserveMemory(2 * sizeof(size_t));
+    outputDims[0] = 2;
+    outputDims[1] = 3;
+    size_t *outputOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, outputOrder);
+    shape_t *outputShape = reserveMemory(sizeof(shape_t));
+    setShape(outputShape, outputDims, 2, outputOrder);
+    tensor_t *output = initTensor(outputShape, quantizationInitFloat(), NULL);
 
+    /* 3. Build the layer with shared float quantization. */
     quantization_t *floatQ = quantizationInitFloat();
     layer_t *softmaxLayer = softmaxLayerInit(floatQ, floatQ);
     layerFunctions_t softmaxFns = layerFunctions[SOFTMAX];
     softmaxFns.forward(softmaxLayer, input, output);
 
+    /* 4. CAPTURE. */
+    float captured[6];
+    for (size_t i = 0; i < inputSize; i++) {
+        captured[i] = ((float *)output->data)[i];
+    }
+
+    /* 5. FREE. */
+    freeSoftmaxLayer(softmaxLayer);
+    freeTensor(output);
+    freeTensor(input);
+    freeQuantization(floatQ);
+
+    /* 6. ASSERT. */
     float expected[] = {2.3008e-03f, 6.2543e-03f, 1.7001e-02f,
                         4.6213e-02f, 9.2822e-01f, 1.5503e-05f};
-
-    float *actual = (float *)output->data;
-
     for (size_t i = 0; i < inputSize; i++) {
-        TEST_ASSERT_FLOAT_WITHIN(0.0001f, expected[i], actual[i]);
+        TEST_ASSERT_FLOAT_WITHIN(0.0001f, expected[i], captured[i]);
     }
 }
 
 void unitTestSoftmaxForwardSymInt32() {
     size_t inputSize = 6;
 
-    size_t dims[] = {2, 3};
-    size_t numberOfDims = 2;
+    /* 1. Build heap input tensor (SymInt32, shape 2x3). */
+    size_t *inputDims = reserveMemory(2 * sizeof(size_t));
+    inputDims[0] = 2;
+    inputDims[1] = 3;
+    size_t *inputOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, inputOrder);
+    shape_t *inputShape = reserveMemory(sizeof(shape_t));
+    setShape(inputShape, inputDims, 2, inputOrder);
+    tensor_t *input = initTensor(inputShape, quantizationInitSymInt32(HTE), NULL);
+    tensorFillFromFloatBuffer(input, (float[]){-1.f, 0.f, 1.f, 2.f, 5.f, -6.f}, 6);
 
-    float inputData[] = {-1.f, 0.f, 1.f, 2.f, 5.f, -6.f};
+    /* 2. Build heap output tensor (SymInt32, shape 2x3). */
+    size_t *outputDims = reserveMemory(2 * sizeof(size_t));
+    outputDims[0] = 2;
+    outputDims[1] = 3;
+    size_t *outputOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, outputOrder);
+    shape_t *outputShape = reserveMemory(sizeof(shape_t));
+    setShape(outputShape, outputDims, 2, outputOrder);
+    tensor_t *output = initTensor(outputShape, quantizationInitSymInt32(HTE), NULL);
 
-    tensor_t *input = tensorInitSymInt32(inputData, dims, numberOfDims, HTE, NULL);
-
-    float outputData[inputSize];
-    tensor_t *output = tensorInitSymInt32(outputData, dims, numberOfDims, HTE, NULL);
-
+    /* 3. Shared SymInt32 quantization for the layer. */
     quantization_t *symIntQ = quantizationInitSymInt32(HTE);
     layer_t *softmaxLayer = softmaxLayerInit(symIntQ, symIntQ);
     layerFunctions_t softmaxFns = layerFunctions[SOFTMAX];
     softmaxFns.forward(softmaxLayer, input, output);
 
-    float outputFloatData[inputSize];
-    tensor_t *outputFloat = tensorInitFloat(outputFloatData, dims, numberOfDims, NULL);
+    /* 4. Convert SymInt32 output back to Float for comparison. */
+    size_t *outFloatDims = reserveMemory(2 * sizeof(size_t));
+    outFloatDims[0] = 2;
+    outFloatDims[1] = 3;
+    size_t *outFloatOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, outFloatOrder);
+    shape_t *outFloatShape = reserveMemory(sizeof(shape_t));
+    setShape(outFloatShape, outFloatDims, 2, outFloatOrder);
+    tensor_t *outputFloat = initTensor(outFloatShape, quantizationInitFloat(), NULL);
     convertTensor(output, outputFloat);
 
+    /* 5. CAPTURE. */
+    float captured[6];
+    for (size_t i = 0; i < inputSize; i++) {
+        captured[i] = ((float *)outputFloat->data)[i];
+    }
+
+    /* 6. FREE. */
+    freeTensor(outputFloat);
+    freeSoftmaxLayer(softmaxLayer);
+    freeTensor(output);
+    freeTensor(input);
+    freeQuantization(symIntQ);
+
+    /* 7. ASSERT. */
     float expected[] = {2.3008e-03f, 6.2543e-03f, 1.7001e-02f,
                         4.6213e-02f, 9.2822e-01f, 1.5503e-05f};
-    float *actual = (float *)outputFloat->data;
-
     for (size_t i = 0; i < inputSize; i++) {
-        TEST_ASSERT_FLOAT_WITHIN(0.1f, expected[i], actual[i]);
+        TEST_ASSERT_FLOAT_WITHIN(0.1f, expected[i], captured[i]);
     }
 }
 
 void unitTestSoftmaxBackwardFloat() {
     size_t inputSize = 6;
 
-    float inputData[] = {2.3008e-03, 6.2543e-03, 1.7001e-02, 4.6213e-02, 9.2822e-01, 1.5503e-05};
-    size_t inputDims[] = {2, 3};
-    size_t inputNumberOfDims = 2;
-    tensor_t *input = tensorInitFloat(inputData, inputDims, inputNumberOfDims, NULL);
+    /* 1. Build heap input tensor. */
+    size_t *inputDims = reserveMemory(2 * sizeof(size_t));
+    inputDims[0] = 2;
+    inputDims[1] = 3;
+    size_t *inputOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, inputOrder);
+    shape_t *inputShape = reserveMemory(sizeof(shape_t));
+    setShape(inputShape, inputDims, 2, inputOrder);
+    tensor_t *input = initTensor(inputShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(
+        input,
+        (float[]){2.3008e-03f, 6.2543e-03f, 1.7001e-02f, 4.6213e-02f, 9.2822e-01f, 1.5503e-05f}, 6);
 
-    float lossData[] = {0.f, 2.f, -4.f, 6.f, 3.f, 2.f};
-    size_t lossDims[] = {2, 3};
-    size_t lossNumberOfDims = 2;
-    tensor_t *loss = tensorInitFloat(lossData, lossDims, lossNumberOfDims, NULL);
+    /* 2. Build heap loss tensor. */
+    size_t *lossDims = reserveMemory(2 * sizeof(size_t));
+    lossDims[0] = 2;
+    lossDims[1] = 3;
+    size_t *lossOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, lossOrder);
+    shape_t *lossShape = reserveMemory(sizeof(shape_t));
+    setShape(lossShape, lossDims, 2, lossOrder);
+    tensor_t *loss = initTensor(lossShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(loss, (float[]){0.f, 2.f, -4.f, 6.f, 3.f, 2.f}, 6);
 
-    float propLossData[inputSize];
-    size_t propLossDims[] = {2, 3};
-    size_t propLossNumberOfDims = 2;
-    tensor_t *propLoss = tensorInitFloat(propLossData, propLossDims, propLossNumberOfDims, NULL);
+    /* 3. Build heap propLoss tensor. */
+    size_t *propLossDims = reserveMemory(2 * sizeof(size_t));
+    propLossDims[0] = 2;
+    propLossDims[1] = 3;
+    size_t *propLossOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, propLossOrder);
+    shape_t *propLossShape = reserveMemory(sizeof(shape_t));
+    setShape(propLossShape, propLossDims, 2, propLossOrder);
+    tensor_t *propLoss = initTensor(propLossShape, quantizationInitFloat(), NULL);
 
+    /* 4. Build layer. */
     quantization_t *floatQ = quantizationInitFloat();
     layer_t *softmaxLayer = softmaxLayerInit(floatQ, floatQ);
     layerFunctions_t softmaxFns = layerFunctions[SOFTMAX];
     softmaxFns.backward(softmaxLayer, input, loss, propLoss);
 
+    /* 5. CAPTURE. */
+    float captured[6];
+    for (size_t i = 0; i < inputSize; i++) {
+        captured[i] = ((float *)propLoss->data)[i];
+    }
+
+    /* 6. FREE. */
+    freeSoftmaxLayer(softmaxLayer);
+    freeTensor(propLoss);
+    freeTensor(loss);
+    freeTensor(input);
+    freeQuantization(floatQ);
+
+    /* 7. ASSERT. */
     float expected[] = {-6.9173e-03f, -6.2947e-03f, -1.1912e-01f,
                         1.3834e-01f,  -5.9973e-03f, -1.5603e-05f};
-
-    float *actual = (float *)propLoss->data;
-
     for (size_t i = 0; i < inputSize; i++) {
-        TEST_ASSERT_FLOAT_WITHIN(0.0001f, expected[i], actual[i]);
+        TEST_ASSERT_FLOAT_WITHIN(0.0001f, expected[i], captured[i]);
     }
 }
 
 void unitTestSoftmaxBackwardSymInt32() {
     size_t inputSize = 6;
 
-    float inputData[] = {2.3008e-03f, 6.2543e-03f, 1.7001e-02f,
-                         4.6213e-02f, 9.2822e-01f, 1.5503e-05f};
-    size_t inputDims[] = {2, 3};
-    size_t inputNumberOfDims = 2;
-    tensor_t *input = tensorInitSymInt32(inputData, inputDims, inputNumberOfDims, HTE, NULL);
+    /* 1. Build heap input tensor (SymInt32). */
+    size_t *inputDims = reserveMemory(2 * sizeof(size_t));
+    inputDims[0] = 2;
+    inputDims[1] = 3;
+    size_t *inputOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, inputOrder);
+    shape_t *inputShape = reserveMemory(sizeof(shape_t));
+    setShape(inputShape, inputDims, 2, inputOrder);
+    tensor_t *input = initTensor(inputShape, quantizationInitSymInt32(HTE), NULL);
+    tensorFillFromFloatBuffer(
+        input,
+        (float[]){2.3008e-03f, 6.2543e-03f, 1.7001e-02f, 4.6213e-02f, 9.2822e-01f, 1.5503e-05f}, 6);
 
-    float lossData[] = {0.f, 2.f, -4.f, 6.f, 3.f, 2.f};
-    size_t lossDims[] = {2, 3};
-    size_t lossNumberOfDims = 2;
-    tensor_t *loss = tensorInitSymInt32(lossData, lossDims, lossNumberOfDims, HTE, NULL);
+    /* 2. Build heap loss tensor (SymInt32). */
+    size_t *lossDims = reserveMemory(2 * sizeof(size_t));
+    lossDims[0] = 2;
+    lossDims[1] = 3;
+    size_t *lossOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, lossOrder);
+    shape_t *lossShape = reserveMemory(sizeof(shape_t));
+    setShape(lossShape, lossDims, 2, lossOrder);
+    tensor_t *loss = initTensor(lossShape, quantizationInitSymInt32(HTE), NULL);
+    tensorFillFromFloatBuffer(loss, (float[]){0.f, 2.f, -4.f, 6.f, 3.f, 2.f}, 6);
 
-    float propLossData[inputSize];
-    memset(propLossData, 0, sizeof(propLossData));
-    size_t propLossDims[] = {2, 3};
-    size_t propLossNumberOfDims = 2;
-    tensor_t *propLoss =
-        tensorInitSymInt32(propLossData, propLossDims, propLossNumberOfDims, HTE, NULL);
+    /* 3. Build heap propLoss tensor (SymInt32). */
+    size_t *propLossDims = reserveMemory(2 * sizeof(size_t));
+    propLossDims[0] = 2;
+    propLossDims[1] = 3;
+    size_t *propLossOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, propLossOrder);
+    shape_t *propLossShape = reserveMemory(sizeof(shape_t));
+    setShape(propLossShape, propLossDims, 2, propLossOrder);
+    tensor_t *propLoss = initTensor(propLossShape, quantizationInitSymInt32(HTE), NULL);
 
+    /* 4. Build layer. */
     quantization_t *symIntQ = quantizationInitSymInt32(HTE);
     layer_t *softmaxLayer = softmaxLayerInit(symIntQ, symIntQ);
     layerFunctions_t softmaxFns = layerFunctions[SOFTMAX];
     softmaxFns.backward(softmaxLayer, input, loss, propLoss);
 
+    /* 5. Convert SymInt32 propLoss back to Float for comparison. */
+    size_t *propLossFloatDims = reserveMemory(2 * sizeof(size_t));
+    propLossFloatDims[0] = 2;
+    propLossFloatDims[1] = 3;
+    size_t *propLossFloatOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, propLossFloatOrder);
+    shape_t *propLossFloatShape = reserveMemory(sizeof(shape_t));
+    setShape(propLossFloatShape, propLossFloatDims, 2, propLossFloatOrder);
+    tensor_t *propLossFloat = initTensor(propLossFloatShape, quantizationInitFloat(), NULL);
+    convertTensor(propLoss, propLossFloat);
+
+    /* 6. CAPTURE. */
+    float captured[6];
+    for (size_t i = 0; i < inputSize; i++) {
+        captured[i] = ((float *)propLossFloat->data)[i];
+    }
+
+    /* 7. FREE. */
+    freeTensor(propLossFloat);
+    freeSoftmaxLayer(softmaxLayer);
+    freeTensor(propLoss);
+    freeTensor(loss);
+    freeTensor(input);
+    freeQuantization(symIntQ);
+
+    /* 8. ASSERT. */
     float expected[] = {-6.9173e-03f, -6.2947e-03f, -1.1912e-01f,
                         1.3834e-01f,  -5.9973e-03f, -1.5603e-05f};
-
-    float propLossDataFloat[inputSize];
-    tensor_t *propLossFloat =
-        tensorInitFloat(propLossDataFloat, propLossDims, propLossNumberOfDims, NULL);
-    convertTensor(propLoss, propLossFloat);
-    float *actual = (float *)propLossFloat->data;
-
     for (size_t i = 0; i < inputSize; i++) {
-        TEST_ASSERT_FLOAT_WITHIN(0.01f, expected[i], actual[i]);
+        TEST_ASSERT_FLOAT_WITHIN(0.01f, expected[i], captured[i]);
     }
 }
 
