@@ -51,12 +51,12 @@ optimizer_t *sgdMCreateOptim(float learningRate, float momentumFactor, float wei
 
             states_t *weightStates = reserveMemory(sizeof(states_t));
             weightStates->statesPerParameter = statesPerParam;
-            weightStates->stateBuffers = reserveMemory(sizeof(tensor_t));
+            weightStates->stateBuffers = reserveMemory(sizeof(tensor_t *));
             weightStates->stateBuffers[0] = weightStateBuffer;
 
             states_t *biasStates = reserveMemory(sizeof(states_t));
             biasStates->statesPerParameter = statesPerParam;
-            biasStates->stateBuffers = reserveMemory(sizeof(tensor_t));
+            biasStates->stateBuffers = reserveMemory(sizeof(tensor_t *));
             biasStates->stateBuffers[0] = biasStateBuffer;
 
             states[i] = weightStates;
