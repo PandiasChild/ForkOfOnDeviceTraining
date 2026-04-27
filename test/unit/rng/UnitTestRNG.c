@@ -1,5 +1,5 @@
-#include "unity.h"
 #include "RNG.h"
+#include "unity.h"
 
 void setUp(void) {}
 
@@ -23,7 +23,9 @@ void testRngNextFloatDistribution(void) {
     for (size_t i = 0; i < n; i++) {
         float val = rngNextFloat();
         size_t bucket = (size_t)(val * buckets);
-        if (bucket >= buckets) bucket = buckets - 1;
+        if (bucket >= buckets) {
+            bucket = buckets - 1;
+        }
         counts[bucket]++;
     }
 
@@ -67,11 +69,26 @@ void testRngShuffleUsesGlobalState(void) {
     }
 }
 
+void testRngSetSeedZeroNotAliasedToOne(void) {
+    rngSetSeed(0);
+    float a0 = rngNextFloat();
+
+    rngSetSeed(1);
+    float b0 = rngNextFloat();
+
+    TEST_ASSERT_TRUE(a0 != b0);
+
+    rngSetSeed(0);
+    float a1 = rngNextFloat();
+    TEST_ASSERT_EQUAL_FLOAT(a0, a1);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testRngNextFloatInRange);
     RUN_TEST(testRngNextFloatDistribution);
     RUN_TEST(testRngNextFloatReproducible);
     RUN_TEST(testRngShuffleUsesGlobalState);
+    RUN_TEST(testRngSetSeedZeroNotAliasedToOne);
     return UNITY_END();
 }
