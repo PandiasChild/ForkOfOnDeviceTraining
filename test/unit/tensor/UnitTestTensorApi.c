@@ -134,10 +134,17 @@ void testInitDistribution_Zeros_AllValuesAreZero(void) {
     distribution_t d = {.type = ZEROS};
     initDistribution(t, &d);
 
+    /* CAPTURE values before free. */
+    float captured[12];
     for (size_t i = 0; i < 12; ++i) {
-        TEST_ASSERT_FLOAT_WITHIN(1e-9f, 0.0f, vals[i]);
+        captured[i] = vals[i];
     }
     freeTensor(t);
+
+    /* ASSERT on captured. */
+    for (size_t i = 0; i < 12; ++i) {
+        TEST_ASSERT_FLOAT_WITHIN(1e-9f, 0.0f, captured[i]);
+    }
 }
 
 void testInitDistribution_Ones_AllValuesAreOne(void) {
@@ -145,10 +152,18 @@ void testInitDistribution_Ones_AllValuesAreOne(void) {
     distribution_t d = {.type = ONES};
     initDistribution(t, &d);
     float *vals = (float *)t->data;
+
+    /* CAPTURE. */
+    float captured[12];
     for (size_t i = 0; i < 12; ++i) {
-        TEST_ASSERT_FLOAT_WITHIN(1e-9f, 1.0f, vals[i]);
+        captured[i] = vals[i];
     }
     freeTensor(t);
+
+    /* ASSERT. */
+    for (size_t i = 0; i < 12; ++i) {
+        TEST_ASSERT_FLOAT_WITHIN(1e-9f, 1.0f, captured[i]);
+    }
 }
 
 void testInitDistribution_Uniform_AllValuesInRange(void) {
@@ -156,15 +171,23 @@ void testInitDistribution_Uniform_AllValuesInRange(void) {
     distribution_t d = {.type = UNIFORM, .params.uniform = {-0.5f, 0.5f}};
     initDistribution(t, &d);
     float *vals = (float *)t->data;
+
+    /* CAPTURE values + derived bool flag. */
+    float captured[20];
     bool any_nonzero = false;
     for (size_t i = 0; i < 20; ++i) {
-        TEST_ASSERT_TRUE(vals[i] >= -0.5f && vals[i] <= 0.5f);
+        captured[i] = vals[i];
         if (vals[i] != 0.0f) {
             any_nonzero = true;
         }
     }
-    TEST_ASSERT_TRUE(any_nonzero);
     freeTensor(t);
+
+    /* ASSERT on captured. */
+    for (size_t i = 0; i < 20; ++i) {
+        TEST_ASSERT_TRUE(captured[i] >= -0.5f && captured[i] <= 0.5f);
+    }
+    TEST_ASSERT_TRUE(any_nonzero);
 }
 
 void testInitDistribution_Normal_NotAllSentinel(void) {
@@ -175,14 +198,18 @@ void testInitDistribution_Normal_NotAllSentinel(void) {
     }
     distribution_t d = {.type = NORMAL, .params.normal = {0.0f, 0.01f}};
     initDistribution(t, &d);
+
+    /* CAPTURE the derived sentinel count. */
     size_t sentinelCount = 0;
     for (size_t i = 0; i < 20; ++i) {
         if (vals[i] == -999.0f) {
             sentinelCount++;
         }
     }
-    TEST_ASSERT_EQUAL_UINT(0, sentinelCount);
     freeTensor(t);
+
+    /* ASSERT on captured. */
+    TEST_ASSERT_EQUAL_UINT(0, sentinelCount);
 }
 
 void testInitDistribution_XavierUniform_NotAllZero(void) {
@@ -191,6 +218,8 @@ void testInitDistribution_XavierUniform_NotAllZero(void) {
                         .params.xavier = {.gain = 1.0f, .fanIn = 4, .fanOut = 5}};
     initDistribution(t, &d);
     float *vals = (float *)t->data;
+
+    /* CAPTURE the derived bool flag. */
     bool any_nonzero = false;
     for (size_t i = 0; i < 20; ++i) {
         if (vals[i] != 0.0f) {
@@ -198,8 +227,10 @@ void testInitDistribution_XavierUniform_NotAllZero(void) {
             break;
         }
     }
-    TEST_ASSERT_TRUE(any_nonzero);
     freeTensor(t);
+
+    /* ASSERT on captured. */
+    TEST_ASSERT_TRUE(any_nonzero);
 }
 
 void testInitDistribution_XavierNormal_NotAllZero(void) {
@@ -208,6 +239,8 @@ void testInitDistribution_XavierNormal_NotAllZero(void) {
                         .params.xavier = {.gain = 1.0f, .fanIn = 4, .fanOut = 5}};
     initDistribution(t, &d);
     float *vals = (float *)t->data;
+
+    /* CAPTURE. */
     bool any_nonzero = false;
     for (size_t i = 0; i < 20; ++i) {
         if (vals[i] != 0.0f) {
@@ -215,8 +248,10 @@ void testInitDistribution_XavierNormal_NotAllZero(void) {
             break;
         }
     }
-    TEST_ASSERT_TRUE(any_nonzero);
     freeTensor(t);
+
+    /* ASSERT. */
+    TEST_ASSERT_TRUE(any_nonzero);
 }
 
 void testInitDistribution_KaimingUniform_NotAllZero(void) {
@@ -225,6 +260,8 @@ void testInitDistribution_KaimingUniform_NotAllZero(void) {
                         .params.kaiming = {.gain = sqrtf(2.0f), .fanMode = 4}};
     initDistribution(t, &d);
     float *vals = (float *)t->data;
+
+    /* CAPTURE. */
     bool any_nonzero = false;
     for (size_t i = 0; i < 20; ++i) {
         if (vals[i] != 0.0f) {
@@ -232,8 +269,10 @@ void testInitDistribution_KaimingUniform_NotAllZero(void) {
             break;
         }
     }
-    TEST_ASSERT_TRUE(any_nonzero);
     freeTensor(t);
+
+    /* ASSERT. */
+    TEST_ASSERT_TRUE(any_nonzero);
 }
 
 void testInitDistribution_KaimingNormal_NotAllZero(void) {
@@ -242,6 +281,8 @@ void testInitDistribution_KaimingNormal_NotAllZero(void) {
                         .params.kaiming = {.gain = sqrtf(2.0f), .fanMode = 4}};
     initDistribution(t, &d);
     float *vals = (float *)t->data;
+
+    /* CAPTURE. */
     bool any_nonzero = false;
     for (size_t i = 0; i < 20; ++i) {
         if (vals[i] != 0.0f) {
@@ -249,8 +290,10 @@ void testInitDistribution_KaimingNormal_NotAllZero(void) {
             break;
         }
     }
-    TEST_ASSERT_TRUE(any_nonzero);
     freeTensor(t);
+
+    /* ASSERT. */
+    TEST_ASSERT_TRUE(any_nonzero);
 }
 
 static void fillTensorFromStackArrayThatGoesOutOfScope(tensor_t *t) {
