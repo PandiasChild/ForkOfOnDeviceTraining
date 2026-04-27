@@ -40,4 +40,5 @@ add_elastic_ai_unit_test(
         FlattenApi
         TensorApi
         QuantizationApi
+        StorageApi
 )

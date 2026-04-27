@@ -91,6 +91,7 @@ target_link_libraries(UnitTestFlattenIntegration PRIVATE
         FlattenApi
         LinearApi
         SoftmaxApi
+        SgdApi
         TensorApi
         QuantizationApi
         LossFunction
