@@ -3,14 +3,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "Tensor.h"
-#include "Layer.h"
-#include "SgdApi.h"
-#include "TensorApi.h"
-#include "Linear.h"
 #include "Common.h"
+#include "Layer.h"
+#include "Linear.h"
+#include "SgdApi.h"
 #include "StorageApi.h"
-
+#include "Tensor.h"
+#include "TensorApi.h"
 
 // IMPORTANT: Currently, the quantization for states are the same as the corresponding parameter
 optimizer_t *sgdMCreateOptim(float learningRate, float momentumFactor, float weightDecay,
@@ -79,6 +78,7 @@ void freeState(states_t *state) {
     for (size_t i = 0; i < state->statesPerParameter; i++) {
         freeTensor(state->stateBuffers[i]);
     }
+    freeReservedMemory(state->stateBuffers);
     freeReservedMemory(state);
 }
 
@@ -87,7 +87,10 @@ void freeOptimSgdM(optimizer_t *sgdM) {
         freeParameter(sgdM->parameter[i]);
         freeState(sgdM->states[i]);
     }
+    freeReservedMemory(sgdM->parameter);
+    freeReservedMemory(sgdM->states);
     sgd_t *sgdImpl = sgdM->impl->sgd;
     freeReservedMemory(sgdImpl);
+    freeReservedMemory(sgdM->impl);
     freeReservedMemory(sgdM);
 }
