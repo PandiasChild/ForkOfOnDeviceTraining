@@ -1,78 +1,106 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "TensorApi.h"
-#include "Tensor.h"
-#include "unity.h"
-#include "Serialize.h"
 #include "Deserialize.h"
-
-#include "QuantizationApi.h"
 #include "Linear.h"
 #include "LinearApi.h"
-#include "ReluApi.h"
-#include "SoftmaxApi.h"
+#include "QuantizationApi.h"
 #include "Relu.h"
+#include "ReluApi.h"
+#include "Serialize.h"
+#include "Softmax.h"
+#include "SoftmaxApi.h"
+#include "StorageApi.h"
+#include "Tensor.h"
+#include "TensorApi.h"
+#include "unity.h"
 
-#include <Softmax.h>
+/* SERIALIZE_TEST_FILE_PATH is injected by the CMake target_compile_definitions
+ * in test/unit/serial/CMakeLists.txt as an absolute path so the test does not
+ * depend on the working directory (which differs between host runs and Docker
+ * LSan runs). */
+#define FILE_PATH SERIALIZE_TEST_FILE_PATH
 
-#define FILE_PATH "../../../../../test/unit/serial/SerializeTestFile.bin"
+static tensor_t *makeFloatTensor2D(size_t d0, size_t d1, const float *src, size_t count) {
+    /* Heap-tier construction per CONVENTIONS Rule 1. */
+    size_t *dims = reserveMemory(2 * sizeof(size_t));
+    dims[0] = d0;
+    dims[1] = d1;
+    size_t *order = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, 2, order);
+
+    tensor_t *t = initTensor(shape, quantizationInitFloat(), NULL);
+    if (src != NULL) {
+        tensorFillFromFloatBuffer(t, src, count);
+    }
+    return t;
+}
 
 void testSerializeAndDeserializeTensor() {
     size_t numberOfValues = 6;
     float data[] = {9, 9, 9, 4.5f, 2.1112f, 999.123f};
-    size_t dims[] = {2, 3};
-    size_t numberOfDims = 2;
 
-    tensor_t *serialTensor = tensorInitFloat(data, dims, numberOfDims, NULL);
+    tensor_t *serialTensor = makeFloatTensor2D(2, 3, data, numberOfValues);
 
     FILE *f = fopen(FILE_PATH, "wb");
     serializeTensor(serialTensor, f);
     fclose(f);
 
-    float deserialData[6] = {0};
-    size_t deserialDims[2] = {0};
-    size_t deserialOrder[2] = {0};
-    shape_t deserialShape = {
-        .dimensions = deserialDims,
-        .numberOfDimensions = 0,
-        .orderOfDimensions = deserialOrder
-    };
-    quantization_t deserialQ;
-
-    tensor_t deserialTensor = {
-        .shape = &deserialShape,
-        .data = (uint8_t *)deserialData,
-        .sparsity = NULL,
-        .quantization = &deserialQ
-    };
+    /* Heap-allocated zero-init buffer destination via initTensor. */
+    tensor_t *deserialTensor = makeFloatTensor2D(2, 3, NULL, 0);
 
     f = fopen(FILE_PATH, "rb");
-    deserializeTensor(&deserialTensor, f);
+    deserializeTensor(deserialTensor, f);
     fclose(f);
 
-    TEST_ASSERT_EQUAL_FLOAT_ARRAY(data, deserialTensor.data, numberOfValues);
-    TEST_ASSERT_EQUAL(serialTensor->quantization->type, deserialTensor.quantization->type);
-    TEST_ASSERT_EQUAL(serialTensor->shape->numberOfDimensions,
-                      deserialTensor.shape->numberOfDimensions);
-    TEST_ASSERT_EQUAL_size_t_ARRAY(serialTensor->shape->dimensions,
-                                   deserialTensor.shape->dimensions, numberOfDims);
-    TEST_ASSERT_EQUAL_size_t_ARRAY(serialTensor->shape->orderOfDimensions,
-                                   deserialTensor.shape->orderOfDimensions, numberOfDims);
+    /* CAPTURE every assertion value before any free. */
+    float capturedDeserialData[6];
+    for (size_t i = 0; i < numberOfValues; i++) {
+        capturedDeserialData[i] = ((float *)deserialTensor->data)[i];
+    }
+    qtype_t capturedSerialQType = serialTensor->quantization->type;
+    qtype_t capturedDeserialQType = deserialTensor->quantization->type;
+    size_t capturedSerialNumDims = serialTensor->shape->numberOfDimensions;
+    size_t capturedDeserialNumDims = deserialTensor->shape->numberOfDimensions;
+
+    size_t capturedSerialDims[2];
+    size_t capturedDeserialDims[2];
+    size_t capturedSerialOrder[2];
+    size_t capturedDeserialOrder[2];
+    for (size_t i = 0; i < 2; i++) {
+        capturedSerialDims[i] = serialTensor->shape->dimensions[i];
+        capturedDeserialDims[i] = deserialTensor->shape->dimensions[i];
+        capturedSerialOrder[i] = serialTensor->shape->orderOfDimensions[i];
+        capturedDeserialOrder[i] = deserialTensor->shape->orderOfDimensions[i];
+    }
+
+    /* FREE in reverse-init order. */
+    freeTensor(deserialTensor);
+    freeTensor(serialTensor);
+
+    /* ASSERT on captured. */
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(data, capturedDeserialData, numberOfValues);
+    TEST_ASSERT_EQUAL(capturedSerialQType, capturedDeserialQType);
+    TEST_ASSERT_EQUAL(capturedSerialNumDims, capturedDeserialNumDims);
+    TEST_ASSERT_EQUAL_size_t_ARRAY(capturedSerialDims, capturedDeserialDims, 2);
+    TEST_ASSERT_EQUAL_size_t_ARRAY(capturedSerialOrder, capturedDeserialOrder, 2);
 }
 
 void testSerializeAndDeserializeModel() {
-    quantization_t *serialQ = quantizationInitFloat();
+    /* One shared layer-config quantization per side. Layer free-functions
+     * release only the wrapper, so layerQ stays alive across the layer
+     * frees and is freed once with freeQuantization at the end. */
+    quantization_t *serialLayerQ = quantizationInitFloat();
+    quantization_t *deserialLayerQ = quantizationInitFloat();
 
+    /* === Serial side: Linear (20 x 28*28) -> ReLU -> Linear (10 x 20) -> Softmax === */
     float serialWeight0Data[20 * 28 * 28];
     for (size_t i = 0; i < 28 * 28 * 20; i++) {
-        serialWeight0Data[i] = (float) i;
+        serialWeight0Data[i] = (float)i;
     }
-
-    size_t serialWeight0Dims[] = {20, 28 * 28};
-    size_t serialWeight0NumberOfDims = 2;
-    tensor_t *serialWeight0Param = tensorInitFloat(serialWeight0Data, serialWeight0Dims,
-                                                   serialWeight0NumberOfDims, NULL);
+    tensor_t *serialWeight0Param = makeFloatTensor2D(20, 28 * 28, serialWeight0Data, 20 * 28 * 28);
     tensor_t *serialWeight0Grad = gradInitFloat(serialWeight0Param, NULL);
     parameter_t *serialWeight0 = parameterInit(serialWeight0Param, serialWeight0Grad);
 
@@ -80,26 +108,19 @@ void testSerializeAndDeserializeModel() {
     for (size_t i = 0; i < 20; i++) {
         serialBias0Data[i] = (float)i;
     }
-    size_t serialBias0Dims[] = {1, 20};
-    size_t serialBias0NumberOfDims = 2;
-    tensor_t *serialBias0Param = tensorInitFloat(serialBias0Data, serialBias0Dims,
-                                                 serialBias0NumberOfDims, NULL);
+    tensor_t *serialBias0Param = makeFloatTensor2D(1, 20, serialBias0Data, 20);
     tensor_t *serialBias0Grad = gradInitFloat(serialBias0Param, NULL);
     parameter_t *serialBias0 = parameterInit(serialBias0Param, serialBias0Grad);
 
-    layer_t *serialLinear0 = linearLayerInit(serialWeight0, serialBias0, serialQ, serialQ, serialQ,
-                                             serialQ);
-
-    layer_t *serialRelu = reluLayerInit(serialQ, serialQ);
+    layer_t *serialLinear0 = linearLayerInit(serialWeight0, serialBias0, serialLayerQ, serialLayerQ,
+                                             serialLayerQ, serialLayerQ);
+    layer_t *serialRelu = reluLayerInit(serialLayerQ, serialLayerQ);
 
     float serialWeight1Data[10 * 20];
     for (size_t i = 0; i < 10 * 20; i++) {
         serialWeight1Data[i] = (float)i;
     }
-    size_t serialWeight1Dims[] = {10, 20};
-    size_t serialWeight1NumberOfDims = 2;
-    tensor_t *serialWeight1Param = tensorInitFloat(serialWeight1Data, serialWeight1Dims,
-                                                   serialWeight1NumberOfDims, NULL);
+    tensor_t *serialWeight1Param = makeFloatTensor2D(10, 20, serialWeight1Data, 10 * 20);
     tensor_t *serialWeight1Grad = gradInitFloat(serialWeight1Param, NULL);
     parameter_t *serialWeight1 = parameterInit(serialWeight1Param, serialWeight1Grad);
 
@@ -107,17 +128,13 @@ void testSerializeAndDeserializeModel() {
     for (size_t i = 0; i < 10; i++) {
         serialBias1Data[i] = (float)i;
     }
-    size_t serialBias1Dims[] = {1, 10};
-    size_t serialBias1NumberOfDims = 2;
-    tensor_t *serialBias1Param = tensorInitFloat(serialBias1Data, serialBias1Dims,
-                                                 serialBias1NumberOfDims, NULL);
+    tensor_t *serialBias1Param = makeFloatTensor2D(1, 10, serialBias1Data, 10);
     tensor_t *serialBias1Grad = gradInitFloat(serialBias1Param, NULL);
     parameter_t *serialBias1 = parameterInit(serialBias1Param, serialBias1Grad);
 
-    layer_t *serialLinear1 = linearLayerInit(serialWeight1, serialBias1, serialQ, serialQ, serialQ,
-                                             serialQ);
-
-    layer_t *serialSoftmax = softmaxLayerInit(serialQ, serialQ);
+    layer_t *serialLinear1 = linearLayerInit(serialWeight1, serialBias1, serialLayerQ, serialLayerQ,
+                                             serialLayerQ, serialLayerQ);
+    layer_t *serialSoftmax = softmaxLayerInit(serialLayerQ, serialLayerQ);
 
     layer_t *serialModel[] = {serialLinear0, serialRelu, serialLinear1, serialSoftmax};
     size_t sizeModel = 4;
@@ -126,50 +143,30 @@ void testSerializeAndDeserializeModel() {
     serializeModel(serialModel, sizeModel, f);
     fclose(f);
 
-    quantization_t deserialQ;
-
-    float deserialWeight0Data[20 * 28 * 28] = {0};
-    size_t deserialWeight0Dims[] = {20, 28 * 28};
-    size_t deserialWeight0NumberOfDims = 2;
-    tensor_t *deserialWeight0Param = tensorInitFloat(deserialWeight0Data, deserialWeight0Dims,
-                                                     deserialWeight0NumberOfDims, NULL);
+    /* === Deserial side: zero-init mirror with the same layer topology. === */
+    tensor_t *deserialWeight0Param = makeFloatTensor2D(20, 28 * 28, NULL, 0);
     tensor_t *deserialWeight0Grad = gradInitFloat(deserialWeight0Param, NULL);
     parameter_t *deserialWeight0 = parameterInit(deserialWeight0Param, deserialWeight0Grad);
 
-    float deserialBias0Data[20] = {0};
-    size_t deserialBias0Dims[] = {1, 20};
-    size_t deserialBias0NumberOfDims = 2;
-    tensor_t *deserialBias0Param = tensorInitFloat(deserialBias0Data, deserialBias0Dims,
-                                                   deserialBias0NumberOfDims, NULL);
+    tensor_t *deserialBias0Param = makeFloatTensor2D(1, 20, NULL, 0);
     tensor_t *deserialBias0Grad = gradInitFloat(deserialBias0Param, NULL);
     parameter_t *deserialBias0 = parameterInit(deserialBias0Param, deserialBias0Grad);
 
-    layer_t *deserialLinear0 = linearLayerInit(deserialWeight0, deserialBias0, &deserialQ,
-                                               &deserialQ,
-                                               &deserialQ, &deserialQ);
+    layer_t *deserialLinear0 = linearLayerInit(deserialWeight0, deserialBias0, deserialLayerQ,
+                                               deserialLayerQ, deserialLayerQ, deserialLayerQ);
+    layer_t *deserialRelu = reluLayerInit(deserialLayerQ, deserialLayerQ);
 
-    layer_t *deserialRelu = reluLayerInit(&deserialQ, &deserialQ);
-
-    float deserialWeight1Data[10 * 20] = {0};
-    size_t deserialWeight1Dims[] = {10, 20};
-    size_t deserialWeight1NumberOfDims = 2;
-    tensor_t *deserialWeight1Param = tensorInitFloat(deserialWeight1Data, deserialWeight1Dims,
-                                                     deserialWeight1NumberOfDims, NULL);
+    tensor_t *deserialWeight1Param = makeFloatTensor2D(10, 20, NULL, 0);
     tensor_t *deserialWeight1Grad = gradInitFloat(deserialWeight1Param, NULL);
     parameter_t *deserialWeight1 = parameterInit(deserialWeight1Param, deserialWeight1Grad);
 
-    float deserialBias1Data[10] = {0};
-    size_t deserialBias1Dims[] = {1, 10};
-    size_t deserialBias1NumberOfDims = 2;
-    tensor_t *deserialBias1Param = tensorInitFloat(deserialBias1Data, deserialBias1Dims,
-                                                   deserialBias1NumberOfDims, NULL);
+    tensor_t *deserialBias1Param = makeFloatTensor2D(1, 10, NULL, 0);
     tensor_t *deserialBias1Grad = gradInitFloat(deserialBias1Param, NULL);
     parameter_t *deserialBias1 = parameterInit(deserialBias1Param, deserialBias1Grad);
 
-    layer_t *deserialLinear1 = linearLayerInit(deserialWeight1, deserialBias1, &deserialQ,
-                                               &deserialQ, &deserialQ, &deserialQ);
-
-    layer_t *deserialSoftmax = softmaxLayerInit(&deserialQ, &deserialQ);
+    layer_t *deserialLinear1 = linearLayerInit(deserialWeight1, deserialBias1, deserialLayerQ,
+                                               deserialLayerQ, deserialLayerQ, deserialLayerQ);
+    layer_t *deserialSoftmax = softmaxLayerInit(deserialLayerQ, deserialLayerQ);
 
     layer_t *deserialModel[] = {deserialLinear0, deserialRelu, deserialLinear1, deserialSoftmax};
 
@@ -177,56 +174,127 @@ void testSerializeAndDeserializeModel() {
     deserializeModel(deserialModel, sizeModel, f);
     fclose(f);
 
-    size_t numberOfWeights0 = calcNumberOfElementsByTensor(
-        serialModel[0]->config->linear->weights->param);
-    float *serialLinear0Weights = (float *)serialModel[0]->config->linear->weights->param->data;
-    float *deserialLinear0Weights = (float *)deserialModel[0]->config->linear->weights->param->data;
-    TEST_ASSERT_EQUAL_FLOAT_ARRAY(serialLinear0Weights, deserialLinear0Weights, numberOfWeights0);
+    /* CAPTURE every assertion value before any free. */
+    size_t numberOfWeights0 =
+        calcNumberOfElementsByTensor(serialModel[0]->config->linear->weights->param);
+    size_t numberOfBiases0 =
+        calcNumberOfElementsByTensor(serialModel[0]->config->linear->bias->param);
+    size_t numberOfWeights1 =
+        calcNumberOfElementsByTensor(serialModel[2]->config->linear->weights->param);
+    size_t numberOfBiases1 =
+        calcNumberOfElementsByTensor(serialModel[2]->config->linear->bias->param);
 
-    size_t numberOfBiases0 = calcNumberOfElementsByTensor(
-        serialModel[0]->config->linear->bias->param);
-    float *serialLinear0Biases = (float *)serialModel[0]->config->linear->bias->param->data;
-    float *deserialLinear0Biases = (float *)deserialModel[0]->config->linear->bias->param->data;
-    TEST_ASSERT_EQUAL_FLOAT_ARRAY(serialLinear0Biases, deserialLinear0Biases, numberOfBiases0);
+    /* Capture weight/bias arrays into heap buffers (sizes vary per layer). */
+    float *capturedSerialW0 = reserveMemory(numberOfWeights0 * sizeof(float));
+    float *capturedDeserialW0 = reserveMemory(numberOfWeights0 * sizeof(float));
+    float *capturedSerialB0 = reserveMemory(numberOfBiases0 * sizeof(float));
+    float *capturedDeserialB0 = reserveMemory(numberOfBiases0 * sizeof(float));
+    float *capturedSerialW1 = reserveMemory(numberOfWeights1 * sizeof(float));
+    float *capturedDeserialW1 = reserveMemory(numberOfWeights1 * sizeof(float));
+    float *capturedSerialB1 = reserveMemory(numberOfBiases1 * sizeof(float));
+    float *capturedDeserialB1 = reserveMemory(numberOfBiases1 * sizeof(float));
 
-    TEST_ASSERT_EQUAL(serialModel[0]->config->linear->forwardQ->type,
-                      deserialModel[0]->config->linear->forwardQ->type);
-    TEST_ASSERT_EQUAL(serialModel[0]->config->linear->weightGradQ->type,
-                      deserialModel[0]->config->linear->weightGradQ->type);
-    TEST_ASSERT_EQUAL(serialModel[0]->config->linear->biasGradQ->type,
-                      deserialModel[0]->config->linear->biasGradQ->type);
-    TEST_ASSERT_EQUAL(serialModel[0]->config->linear->propLossQ->type,
-                      deserialModel[0]->config->linear->propLossQ->type);
+    for (size_t i = 0; i < numberOfWeights0; i++) {
+        capturedSerialW0[i] = ((float *)serialModel[0]->config->linear->weights->param->data)[i];
+        capturedDeserialW0[i] =
+            ((float *)deserialModel[0]->config->linear->weights->param->data)[i];
+    }
+    for (size_t i = 0; i < numberOfBiases0; i++) {
+        capturedSerialB0[i] = ((float *)serialModel[0]->config->linear->bias->param->data)[i];
+        capturedDeserialB0[i] = ((float *)deserialModel[0]->config->linear->bias->param->data)[i];
+    }
+    for (size_t i = 0; i < numberOfWeights1; i++) {
+        capturedSerialW1[i] = ((float *)serialModel[2]->config->linear->weights->param->data)[i];
+        capturedDeserialW1[i] =
+            ((float *)deserialModel[2]->config->linear->weights->param->data)[i];
+    }
+    for (size_t i = 0; i < numberOfBiases1; i++) {
+        capturedSerialB1[i] = ((float *)serialModel[2]->config->linear->bias->param->data)[i];
+        capturedDeserialB1[i] = ((float *)deserialModel[2]->config->linear->bias->param->data)[i];
+    }
 
-    TEST_ASSERT_EQUAL(serialModel[1]->config->relu->forwardQ->type,
-                      deserialModel[1]->config->relu->forwardQ->type);
-    TEST_ASSERT_EQUAL(serialModel[1]->config->relu->backwardQ->type,
-                      deserialModel[1]->config->relu->backwardQ->type);
+    qtype_t capturedSerialL0FwdQ = serialModel[0]->config->linear->forwardQ->type;
+    qtype_t capturedDeserialL0FwdQ = deserialModel[0]->config->linear->forwardQ->type;
+    qtype_t capturedSerialL0WGQ = serialModel[0]->config->linear->weightGradQ->type;
+    qtype_t capturedDeserialL0WGQ = deserialModel[0]->config->linear->weightGradQ->type;
+    qtype_t capturedSerialL0BGQ = serialModel[0]->config->linear->biasGradQ->type;
+    qtype_t capturedDeserialL0BGQ = deserialModel[0]->config->linear->biasGradQ->type;
+    qtype_t capturedSerialL0PLQ = serialModel[0]->config->linear->propLossQ->type;
+    qtype_t capturedDeserialL0PLQ = deserialModel[0]->config->linear->propLossQ->type;
 
-    size_t numberOfWeights1 = calcNumberOfElementsByTensor(
-    serialModel[2]->config->linear->weights->param);
-    float *serialLinear1Weights = (float *)serialModel[2]->config->linear->weights->param->data;
-    float *deserialLinear1Weights = (float *)deserialModel[2]->config->linear->weights->param->data;
-    TEST_ASSERT_EQUAL_FLOAT_ARRAY(serialLinear1Weights, deserialLinear1Weights, numberOfWeights1);
+    qtype_t capturedSerialReluFwdQ = serialModel[1]->config->relu->forwardQ->type;
+    qtype_t capturedDeserialReluFwdQ = deserialModel[1]->config->relu->forwardQ->type;
+    qtype_t capturedSerialReluBwdQ = serialModel[1]->config->relu->backwardQ->type;
+    qtype_t capturedDeserialReluBwdQ = deserialModel[1]->config->relu->backwardQ->type;
 
-    size_t numberOfBiases1 = calcNumberOfElementsByTensor(
-        serialModel[2]->config->linear->bias->param);
-    float *serialLinear1Biases = (float *)serialModel[2]->config->linear->bias->param->data;
-    float *deserialLinear1Biases = (float *)deserialModel[2]->config->linear->bias->param->data;
-    TEST_ASSERT_EQUAL_FLOAT_ARRAY(serialLinear1Biases, deserialLinear1Biases, numberOfBiases1);
+    qtype_t capturedSerialL1FwdQ = serialModel[2]->config->linear->forwardQ->type;
+    qtype_t capturedDeserialL1FwdQ = deserialModel[2]->config->linear->forwardQ->type;
+    qtype_t capturedSerialL1WGQ = serialModel[2]->config->linear->weightGradQ->type;
+    qtype_t capturedDeserialL1WGQ = deserialModel[2]->config->linear->weightGradQ->type;
+    qtype_t capturedSerialL1BGQ = serialModel[2]->config->linear->biasGradQ->type;
+    qtype_t capturedDeserialL1BGQ = deserialModel[2]->config->linear->biasGradQ->type;
+    qtype_t capturedSerialL1PLQ = serialModel[2]->config->linear->propLossQ->type;
+    qtype_t capturedDeserialL1PLQ = deserialModel[2]->config->linear->propLossQ->type;
 
-    TEST_ASSERT_EQUAL(serialModel[2]->config->linear->forwardQ->type,
-                      deserialModel[2]->config->linear->forwardQ->type);
-    TEST_ASSERT_EQUAL(serialModel[2]->config->linear->weightGradQ->type,
-                      deserialModel[2]->config->linear->weightGradQ->type);
-    TEST_ASSERT_EQUAL(serialModel[2]->config->linear->biasGradQ->type,
-                      deserialModel[2]->config->linear->biasGradQ->type);
-    TEST_ASSERT_EQUAL(serialModel[2]->config->linear->propLossQ->type,
-                      deserialModel[2]->config->linear->propLossQ->type);
+    qtype_t capturedSerialSoftFwdQ = serialModel[3]->config->softmax->forwardQ->type;
+    qtype_t capturedDeserialSoftFwdQ = deserialModel[3]->config->softmax->forwardQ->type;
+    qtype_t capturedSerialSoftBwdQ = serialModel[3]->config->softmax->backwardQ->type;
+    qtype_t capturedDeserialSoftBwdQ = deserialModel[3]->config->softmax->backwardQ->type;
 
+    /* FREE in reverse-init order. Layer free-functions release only the
+     * wrapper; parameters and the shared layerQ are caller-managed (per
+     * docs/CONVENTIONS.md "Test memory discipline"). */
+    freeSoftmaxLayer(deserialSoftmax);
+    freeLinearLayer(deserialLinear1);
+    freeParameter(deserialBias1);
+    freeParameter(deserialWeight1);
+    freeReluLayer(deserialRelu);
+    freeLinearLayer(deserialLinear0);
+    freeParameter(deserialBias0);
+    freeParameter(deserialWeight0);
+    freeQuantization(deserialLayerQ);
 
-    TEST_ASSERT_EQUAL(serialModel[3]->config->softmax->forwardQ->type, deserialModel[3]->config->softmax->forwardQ->type);
-    TEST_ASSERT_EQUAL(serialModel[3]->config->softmax->backwardQ->type, deserialModel[3]->config->softmax->backwardQ->type);
+    freeSoftmaxLayer(serialSoftmax);
+    freeLinearLayer(serialLinear1);
+    freeParameter(serialBias1);
+    freeParameter(serialWeight1);
+    freeReluLayer(serialRelu);
+    freeLinearLayer(serialLinear0);
+    freeParameter(serialBias0);
+    freeParameter(serialWeight0);
+    freeQuantization(serialLayerQ);
+
+    /* ASSERT on captured. */
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(capturedSerialW0, capturedDeserialW0, numberOfWeights0);
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(capturedSerialB0, capturedDeserialB0, numberOfBiases0);
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(capturedSerialW1, capturedDeserialW1, numberOfWeights1);
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(capturedSerialB1, capturedDeserialB1, numberOfBiases1);
+
+    TEST_ASSERT_EQUAL(capturedSerialL0FwdQ, capturedDeserialL0FwdQ);
+    TEST_ASSERT_EQUAL(capturedSerialL0WGQ, capturedDeserialL0WGQ);
+    TEST_ASSERT_EQUAL(capturedSerialL0BGQ, capturedDeserialL0BGQ);
+    TEST_ASSERT_EQUAL(capturedSerialL0PLQ, capturedDeserialL0PLQ);
+
+    TEST_ASSERT_EQUAL(capturedSerialReluFwdQ, capturedDeserialReluFwdQ);
+    TEST_ASSERT_EQUAL(capturedSerialReluBwdQ, capturedDeserialReluBwdQ);
+
+    TEST_ASSERT_EQUAL(capturedSerialL1FwdQ, capturedDeserialL1FwdQ);
+    TEST_ASSERT_EQUAL(capturedSerialL1WGQ, capturedDeserialL1WGQ);
+    TEST_ASSERT_EQUAL(capturedSerialL1BGQ, capturedDeserialL1BGQ);
+    TEST_ASSERT_EQUAL(capturedSerialL1PLQ, capturedDeserialL1PLQ);
+
+    TEST_ASSERT_EQUAL(capturedSerialSoftFwdQ, capturedDeserialSoftFwdQ);
+    TEST_ASSERT_EQUAL(capturedSerialSoftBwdQ, capturedDeserialSoftBwdQ);
+
+    /* Release the assertion-buffer scratch space last. */
+    freeReservedMemory(capturedSerialW0);
+    freeReservedMemory(capturedDeserialW0);
+    freeReservedMemory(capturedSerialB0);
+    freeReservedMemory(capturedDeserialB0);
+    freeReservedMemory(capturedSerialW1);
+    freeReservedMemory(capturedDeserialW1);
+    freeReservedMemory(capturedSerialB1);
+    freeReservedMemory(capturedDeserialB1);
 }
 
 void setUp() {}

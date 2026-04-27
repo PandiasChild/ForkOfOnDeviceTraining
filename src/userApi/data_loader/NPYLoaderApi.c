@@ -31,6 +31,9 @@ tensorArray_t *npyLoad(char *path) {
     size_t orderOfDims[numberOfDims];
     getShapeFromHeader(&totalShape, totalDims, orderOfDims, header, numberOfDims);
 
+    /* Header is fully consumed; release before the per-tensor loop runs. */
+    freeReservedMemory(header);
+
     size_t numberOfTensors = totalShape.dimensions[0];
 
     shape_t rowShape;
@@ -87,6 +90,18 @@ sample_t *npyGetSample(dataset_t *dataset, size_t index) {
     sample->label = dataset->labels->array[index];
 
     return sample;
+}
+
+void freeTensorArray(tensorArray_t *tensorArr) {
+    /* Walk every entry and freeTensor it; freeTensor cascades to data,
+     * shape (+ dims, + order), quantization, sparsity, and the tensor
+     * struct. Then release the array buffer and the tensorArray_t struct
+     * itself, both reservedMemory-allocated by npyLoad. */
+    for (size_t i = 0; i < tensorArr->size; i++) {
+        freeTensor(tensorArr->array[i]);
+    }
+    freeReservedMemory(tensorArr->array);
+    freeReservedMemory(tensorArr);
 }
 
 static void getRowShape(shape_t *totalShape, shape_t *rowShape) {

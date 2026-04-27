@@ -34,82 +34,102 @@ _Static_assert(_Generic((&tensorFillFromFloatBuffer),
 void setUp() {}
 void tearDown() {}
 
+/* Forward decl for the file-local factory (definition further down). */
+static tensor_t *makeFloatTensorForDistTest(size_t d0, size_t d1);
+
 void testTensorInitWithDistribution_Zeros_InitializesProductOfDimsValues() {
-    // dims = {2, 5} → product = 10, sum = 7
-    // Bug: += gives 7, *= gives 10
-    // Fill data with sentinel 42.0f, then ZEROS should overwrite exactly 10 values
-    float data[10];
+    /* dims = {2, 5} -> product = 10, sum = 7. Pre-fill with sentinel 42.0f,
+     * then ZEROS should overwrite exactly 10 values (loop bound = product,
+     * not sum). */
+    tensor_t *t = makeFloatTensorForDistTest(2, 5);
+    float *vals = (float *)t->data;
     for (size_t i = 0; i < 10; i++) {
-        data[i] = 42.0f;
+        vals[i] = 42.0f;
     }
-    size_t dims[] = {2, 5};
-    quantization_t q;
-    initFloat32Quantization(&q);
 
-    tensor_t *t = tensorInitWithDistribution(ZEROS, data, dims, 2, &q, NULL, 2, 5);
+    distribution_t d = {.type = ZEROS};
+    initDistribution(t, &d);
 
-    // All 10 values should be zero
-    float *values = (float *)t->data;
+    /* CAPTURE before free. */
+    float captured[10];
     for (size_t i = 0; i < 10; i++) {
-        TEST_ASSERT_FLOAT_WITHIN(1e-9f, 0.0f, values[i]);
+        captured[i] = vals[i];
+    }
+    freeTensor(t);
+
+    /* ASSERT on captured. */
+    for (size_t i = 0; i < 10; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(1e-9f, 0.0f, captured[i]);
     }
 }
 
 void testTensorInitWithDistribution_Ones_InitializesAllValues() {
-    // dims = {3, 4} → product = 12, sum = 7
-    // Fill data with 0.0f, then ONES should set exactly 12 values to 1.0f
-    float data[12];
-    memset(data, 0, sizeof(data));
-    size_t dims[] = {3, 4};
-    quantization_t q;
-    initFloat32Quantization(&q);
-
-    tensor_t *t = tensorInitWithDistribution(ONES, data, dims, 2, &q, NULL, 3, 4);
-
-    float *values = (float *)t->data;
+    /* dims = {3, 4} -> product = 12. Pre-fill with 0.0f, then ONES sets all
+     * 12 values to 1.0f. */
+    tensor_t *t = makeFloatTensorForDistTest(3, 4);
+    float *vals = (float *)t->data;
+    /* initTensor zero-initializes data; explicit pre-fill kept for clarity. */
     for (size_t i = 0; i < 12; i++) {
-        TEST_ASSERT_FLOAT_WITHIN(1e-9f, 1.0f, values[i]);
+        vals[i] = 0.0f;
+    }
+
+    distribution_t d = {.type = ONES};
+    initDistribution(t, &d);
+
+    /* CAPTURE. */
+    float captured[12];
+    for (size_t i = 0; i < 12; i++) {
+        captured[i] = vals[i];
+    }
+    freeTensor(t);
+
+    /* ASSERT. */
+    for (size_t i = 0; i < 12; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(1e-9f, 1.0f, captured[i]);
     }
 }
 
 void testTensorInitWithDistribution_Normal_InitializesAllValues() {
-    // dims = {4, 5} → product = 20, sum = 9
-    // If only 9 values are initialized, remaining 11 stay at sentinel
-    float data[20];
+    /* dims = {4, 5} -> product = 20, sum = 9. If the loop runs sum-many
+     * iterations only, the trailing 11 values stay at sentinel. */
+    tensor_t *t = makeFloatTensorForDistTest(4, 5);
+    float *vals = (float *)t->data;
     float sentinel = -999.0f;
     for (size_t i = 0; i < 20; i++) {
-        data[i] = sentinel;
+        vals[i] = sentinel;
     }
-    size_t dims[] = {4, 5};
-    quantization_t q;
-    initFloat32Quantization(&q);
 
-    tensor_t *t = tensorInitWithDistribution(NORMAL, data, dims, 2, &q, NULL, 4, 5);
+    distribution_t d = {.type = NORMAL, .params.normal = {0.0f, 0.01f}};
+    initDistribution(t, &d);
 
-    // With NORMAL distribution, values should NOT be the sentinel
-    float *values = (float *)t->data;
+    /* CAPTURE the derived sentinel count. */
     size_t sentinelCount = 0;
     for (size_t i = 0; i < 20; i++) {
-        if (values[i] == sentinel) {
+        if (vals[i] == sentinel) {
             sentinelCount++;
         }
     }
-    // All 20 values should have been overwritten — none should remain as sentinel
+    freeTensor(t);
+
+    /* ASSERT on captured. */
     TEST_ASSERT_EQUAL_UINT(0, sentinelCount);
 }
 
 void testTensorInitWithDistribution_ShapeIsCorrect() {
-    // Verify the resulting tensor has the correct shape dimensions
-    float data[6] = {0};
-    size_t dims[] = {2, 3};
-    quantization_t q;
-    initFloat32Quantization(&q);
+    /* Verify the resulting tensor has the correct shape dimensions after
+     * initDistribution runs. */
+    tensor_t *t = makeFloatTensorForDistTest(2, 3);
+    distribution_t d = {.type = ZEROS};
+    initDistribution(t, &d);
 
-    tensor_t *t = tensorInitWithDistribution(ZEROS, data, dims, 2, &q, NULL, 2, 3);
+    /* CAPTURE shape data before free. */
+    size_t capturedNumDims = t->shape->numberOfDimensions;
+    size_t capturedNumElements = calcNumberOfElementsByTensor(t);
+    freeTensor(t);
 
-    TEST_ASSERT_EQUAL_UINT(2, t->shape->numberOfDimensions);
-    size_t numElements = calcNumberOfElementsByTensor(t);
-    TEST_ASSERT_EQUAL_UINT(6, numElements);
+    /* ASSERT on captured. */
+    TEST_ASSERT_EQUAL_UINT(2, capturedNumDims);
+    TEST_ASSERT_EQUAL_UINT(6, capturedNumElements);
 }
 
 static tensor_t *makeFloatTensorForDistTest(size_t d0, size_t d1) {

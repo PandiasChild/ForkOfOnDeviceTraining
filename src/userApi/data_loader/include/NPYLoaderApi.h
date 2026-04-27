@@ -1,6 +1,8 @@
 #ifndef NPYLOADERAPI_H
 #define NPYLOADERAPI_H
 
+#include "Dataset.h"
+
 /*!
  * Loads a .npy file as a tensor array.
  *
@@ -20,4 +22,14 @@ tensorArray_t *npyLoad(char *path);
  */
 sample_t *npyGetSample(dataset_t *dataset, size_t index);
 
-#endif //NPYLOADERAPI_H
+/*!
+ * Frees a tensorArray_t allocated by npyLoad: walks the inner array,
+ * freeTensor()s every entry, then releases the array buffer and the
+ * tensorArray_t struct itself. Stack- or static-allocated tensorArray_t
+ * values must not be passed here.
+ *
+ * \param tensorArr: Pointer returned by npyLoad
+ */
+void freeTensorArray(tensorArray_t *tensorArr);
+
+#endif // NPYLOADERAPI_H
