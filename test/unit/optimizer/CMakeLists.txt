@@ -5,6 +5,8 @@ add_elastic_ai_unit_test(
         CommonLayerLibs
         SgdApi
         TensorApi
+        QuantizationApi
+        StorageApi
         LinearApi
         ReluApi
 )
