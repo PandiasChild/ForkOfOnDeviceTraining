@@ -1,9 +1,10 @@
 #include "DTypes.h"
+#include "StorageApi.h"
 #include "Tensor.h"
 #include "unity.h"
 
 #include <stdlib.h>
-
+#include <string.h>
 
 void testGetBitmask() {
     uint8_t startbit = 1;
@@ -54,47 +55,62 @@ void testByteFlattening() {
     size_t dataOutBits = 19;
     size_t numValues = 3;
     size_t numBytesDataOut = (dataOutBits * numValues - 1) / 8 + 1;
-    uint8_t *dataOut = calloc(numBytesDataOut, sizeof(uint8_t));
+    uint8_t *dataOut = reserveMemory(numBytesDataOut);
     byteConversion(dataIn, dataInBits, dataOut, dataOutBits, numValues);
 
-    uint8_t expectedBytes[] = {0b000000001, 0b00000000, 0b00011000, 0b00000000, 0b10000000,
-                               0b00010011, 0b00000000, 0b00000000};
+    /* CAPTURE before free. */
+    uint8_t captured[numBytesDataOut];
+    memcpy(captured, dataOut, numBytesDataOut);
+    freeReservedMemory(dataOut);
 
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, dataOut, numBytesDataOut);
+    uint8_t expectedBytes[] = {0b000000001, 0b00000000, 0b00011000, 0b00000000,
+                               0b10000000,  0b00010011, 0b00000000, 0b00000000};
+
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, captured, numBytesDataOut);
 }
 
 void testByteFlattening2() {
     // {1, 2, 78}
-    uint8_t dataIn[] = {0b000000001, 0b00000000, 0b00011000, 0b00000000, 0b10000000, 0b00010011,
-                        0b00000000, 0b00000000};
+    uint8_t dataIn[] = {0b000000001, 0b00000000, 0b00011000, 0b00000000,
+                        0b10000000,  0b00010011, 0b00000000, 0b00000000};
     size_t dataInBits = 19;
 
     size_t dataOutBits = 9;
     size_t numValues = 3;
     size_t numBytesDataOut = (dataOutBits * numValues - 1) / 8 + 1;
-    uint8_t *dataOut = calloc(numBytesDataOut, sizeof(uint8_t));
+    uint8_t *dataOut = reserveMemory(numBytesDataOut);
     byteConversion(dataIn, dataInBits, dataOut, dataOutBits, numValues);
+
+    /* CAPTURE before free. */
+    uint8_t captured[numBytesDataOut];
+    memcpy(captured, dataOut, numBytesDataOut);
+    freeReservedMemory(dataOut);
 
     uint8_t expectedBytes[] = {0b000000001, 0b00000110, 0b00111000, 0b00000001};
 
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, dataOut, numBytesDataOut);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, captured, numBytesDataOut);
 }
 
 void testByteFlattening3() {
     // {1, 2, 78}
-    uint8_t dataIn[] = {0b000000001, 0b00000000, 0b00001100, 0b00000000, 0b00000100, 0b00001011,
-                        0b00000000, 0b00000000};
+    uint8_t dataIn[] = {0b000000001, 0b00000000, 0b00001100, 0b00000000,
+                        0b00000100,  0b00001011, 0b00000000, 0b00000000};
     size_t dataInBits = 8;
 
     size_t dataOutBits = 4;
     size_t numValues = 8;
     size_t numBytesDataOut = (dataOutBits * numValues - 1) / 8 + 1;
-    uint8_t *dataOut = calloc(numBytesDataOut, sizeof(uint8_t));
+    uint8_t *dataOut = reserveMemory(numBytesDataOut);
     byteConversion(dataIn, dataInBits, dataOut, dataOutBits, numValues);
+
+    /* CAPTURE before free. */
+    uint8_t captured[numBytesDataOut];
+    memcpy(captured, dataOut, numBytesDataOut);
+    freeReservedMemory(dataOut);
 
     uint8_t expectedBytes[] = {0b000000001, 0b00001100, 0b10110100, 0b00000000};
 
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, dataOut, numBytesDataOut);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, captured, numBytesDataOut);
 }
 
 void testByteFlattening4() {
@@ -102,10 +118,16 @@ void testByteFlattening4() {
     size_t dataInBits = 5;
     size_t dataOutBits = 8;
     size_t numBytesDataOut = 6;
-    uint8_t *dataOut = calloc(numBytesDataOut, sizeof(uint8_t));
+    uint8_t *dataOut = reserveMemory(numBytesDataOut);
     byteConversion(dataIn, dataInBits, dataOut, dataOutBits, numBytesDataOut);
+
+    /* CAPTURE before free. */
+    uint8_t captured[numBytesDataOut];
+    memcpy(captured, dataOut, numBytesDataOut);
+    freeReservedMemory(dataOut);
+
     uint8_t expectedBytes[] = {16, 22, 27, 31, 6, 0};
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, dataOut, numBytesDataOut);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, captured, numBytesDataOut);
 }
 
 void testByteFlattening5() {
@@ -114,12 +136,12 @@ void testByteFlattening5() {
     size_t dataOutBits = 32;
     size_t numValues = 6;
     size_t numBytesDataOut = 4 * numValues;
-    uint8_t dataOut[numBytesDataOut];;
+    uint8_t dataOut[numBytesDataOut];
+    ;
     byteConversion(dataIn, dataInBits, dataOut, dataOutBits, numValues);
-    uint8_t expectedBytes[] = {16, 0, 0, 0, 22, 0, 0, 0, 27, 0, 0, 0, 31, 0, 0, 0, 6, 0, 0, 0, 0, 0,
-                               0, 0};
+    uint8_t expectedBytes[] = {16, 0, 0, 0, 22, 0, 0, 0, 27, 0, 0, 0,
+                               31, 0, 0, 0, 6,  0, 0, 0, 0,  0, 0, 0};
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, dataOut, numBytesDataOut);
-
 }
 
 void testCopyTensor() {
@@ -130,10 +152,7 @@ void testCopyTensor() {
     size_t numberOfDims = 2;
     size_t orderOfDims[] = {0, 1};
     shape_t shape = {
-        .dimensions = dims,
-        .numberOfDimensions = numberOfDims,
-        .orderOfDimensions = orderOfDims
-    };
+        .dimensions = dims, .numberOfDimensions = numberOfDims, .orderOfDimensions = orderOfDims};
     quantization_t q;
     initFloat32Quantization(&q);
 
@@ -144,11 +163,9 @@ void testCopyTensor() {
     size_t destDims[2];
     size_t destNumberOfDims;
     size_t destOrderOfDims[2];
-    shape_t destShape = {
-        .dimensions = destDims,
-        .numberOfDimensions = destNumberOfDims,
-        .orderOfDimensions = destOrderOfDims
-    };
+    shape_t destShape = {.dimensions = destDims,
+                         .numberOfDimensions = destNumberOfDims,
+                         .orderOfDimensions = destOrderOfDims};
     setTensorValues(&dest, (uint8_t *)destData, &destShape, &q, NULL);
 
     copyTensor(&dest, &src);
