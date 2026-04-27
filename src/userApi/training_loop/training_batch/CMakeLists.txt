@@ -9,5 +9,6 @@ target_link_libraries(TrainingBatchDefault PRIVATE
         LossFunction
         InferenceApi
         DataLoader
+        DataLoaderApi
         Common
 )

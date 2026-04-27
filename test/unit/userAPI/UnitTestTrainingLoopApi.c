@@ -2,23 +2,23 @@
 
 #include <stddef.h>
 
-#include "LossFunction.h"
-#include "TensorApi.h"
-#include "LinearApi.h"
-#include "SgdApi.h"
-#include "unity.h"
-#include "TrainingLoopApi.h"
 #include "CalculateGradsSequential.h"
+#include "DataLoaderApi.h"
+#include "Dataset.h"
+#include "InferenceApi.h"
+#include "Linear.h"
+#include "LinearApi.h"
+#include "LossFunction.h"
+#include "QuantizationApi.h"
+#include "ReluApi.h"
+#include "SgdApi.h"
+#include "StorageApi.h"
+#include "TensorApi.h"
+#include "TensorConversion.h"
 #include "TrainingBatchDefault.h"
 #include "TrainingEpochDefault.h"
-#include "TensorConversion.h"
-#include "QuantizationApi.h"
-#include "Linear.h"
-#include "ReluApi.h"
-#include "InferenceApi.h"
-#include "DataLoaderApi.h"
-#include "StorageApi.h"
-#include "Dataset.h"
+#include "TrainingLoopApi.h"
+#include "unity.h"
 
 void testCalculateGradsSequential_MatchesPyTorch() {
     float weightData[] = {1.f, 1.f, 1.f, 1.f, 1.f, 1.f};
@@ -136,10 +136,15 @@ void testEvaluationBatch_ReturnsAverageLoss() {
     freeInferenceStats(stats0);
     freeInferenceStats(stats1);
 
-    // Build a batch
-    sample_t s0 = {.item = input0, .label = label0};
-    sample_t s1 = {.item = input1, .label = label1};
-    sample_t *samples[] = {&s0, &s1};
+    // Build a batch. Samples must be heap-allocated: evaluationBatch frees
+    // each via freeSample (the batch-consumer convention set by #119).
+    sample_t *s0 = reserveMemory(sizeof(sample_t));
+    s0->item = input0;
+    s0->label = label0;
+    sample_t *s1 = reserveMemory(sizeof(sample_t));
+    s1->item = input1;
+    s1->label = label1;
+    sample_t *samples[] = {s0, s1};
     batch_t batch = {.samples = samples, .size = 2};
 
     float actualAvgLoss = evaluationBatch(model, 1, MSE, &batch, inferenceWithLoss);
@@ -154,13 +159,19 @@ static dataset_t epochDataset;
 static bool epochDatasetInit = false;
 
 static void initEpochDataset() {
-    if (epochDatasetInit) return;
+    if (epochDatasetInit) {
+        return;
+    }
 
     // 4 samples: input [1,2], label [1,0] or [0,1]
-    static float in0[] = {5.f, 1.f}; static float in1[] = {1.f, 5.f};
-    static float in2[] = {3.f, 1.f}; static float in3[] = {1.f, 3.f};
-    static float lb0[] = {1.f, 0.f}; static float lb1[] = {0.f, 1.f};
-    static float lb2[] = {1.f, 0.f}; static float lb3[] = {0.f, 1.f};
+    static float in0[] = {5.f, 1.f};
+    static float in1[] = {1.f, 5.f};
+    static float in2[] = {3.f, 1.f};
+    static float in3[] = {1.f, 3.f};
+    static float lb0[] = {1.f, 0.f};
+    static float lb1[] = {0.f, 1.f};
+    static float lb2[] = {1.f, 0.f};
+    static float lb3[] = {0.f, 1.f};
 
     static size_t inDims[] = {1, 2};
     static size_t lbDims[] = {1, 2};
@@ -221,8 +232,8 @@ void testEvaluationEpoch_ReturnsAverageLossAcrossBatches() {
     layer_t *linear = linearLayerInit(w, b, &testQ, &testQ, &testQ, &testQ);
     layer_t *model[] = {linear};
 
-    dataLoader_t *dl = dataLoaderInit(getEpochSample, getEpochDatasetSize, 1,
-                                       NULL, NULL, false, 0, true);
+    dataLoader_t *dl =
+        dataLoaderInit(getEpochSample, getEpochDatasetSize, 1, NULL, NULL, false, 0, true);
 
     float totalAvg = evaluationEpoch(model, 1, MSE, dl, inferenceWithLoss);
 
@@ -262,8 +273,8 @@ void testEvaluationEpoch_MinibatchMatchesMicrobatchAverage() {
     // Per-sample losses: 8.5, 8.5, 2.5, 2.5
     // Batch 0 avg = (8.5+8.5)/2 = 8.5; Batch 1 avg = (2.5+2.5)/2 = 2.5
     // Epoch avg = (8.5+2.5)/2 = 5.5 — identical to microbatch result
-    dataLoader_t *dl = dataLoaderInit(getEpochSample, getEpochDatasetSize, 2,
-                                       NULL, NULL, false, 0, true);
+    dataLoader_t *dl =
+        dataLoaderInit(getEpochSample, getEpochDatasetSize, 2, NULL, NULL, false, 0, true);
 
     float totalAvg = evaluationEpoch(model, 1, MSE, dl, inferenceWithLoss);
 
@@ -313,14 +324,22 @@ void testTrainingBatchDefault_ReturnsAverageLossAndAccumulatesGrads() {
 
     // Reset grads to zero before testing trainingBatchDefault
     float *gArr = (float *)wGrad->data;
-    for (size_t i = 0; i < 6; i++) gArr[i] = 0.f;
+    for (size_t i = 0; i < 6; i++) {
+        gArr[i] = 0.f;
+    }
     float *bgArr = (float *)bGrad->data;
-    bgArr[0] = 0.f; bgArr[1] = 0.f;
+    bgArr[0] = 0.f;
+    bgArr[1] = 0.f;
 
-    // Build batch
-    sample_t s0 = {.item = in0, .label = lb0};
-    sample_t s1 = {.item = in1, .label = lb1};
-    sample_t *samples[] = {&s0, &s1};
+    // Build batch. Samples must be heap-allocated: trainingBatchDefault frees
+    // each via freeSample (the batch-consumer convention set by #119).
+    sample_t *s0 = reserveMemory(sizeof(sample_t));
+    s0->item = in0;
+    s0->label = lb0;
+    sample_t *s1 = reserveMemory(sizeof(sample_t));
+    s1->item = in1;
+    s1->label = lb1;
+    sample_t *samples[] = {s0, s1};
     batch_t batch = {.samples = samples, .size = 2};
 
     float actualAvg = trainingBatchDefault(model, 1, MSE, &batch, calculateGradsSequential);
@@ -353,17 +372,19 @@ void testTrainingEpochDefault_DoesOptimizerStepPerBatch() {
 
     // Save initial weights
     float initWeights[4];
-    for (size_t i = 0; i < 4; i++) initWeights[i] = wData[i];
+    for (size_t i = 0; i < 4; i++) {
+        initWeights[i] = wData[i];
+    }
 
     optimizer_t *sgd = sgdMCreateOptim(0.01f, 0.f, 0.f, model, sizeModel, FLOAT32);
 
     // Use epoch dataset (batchSize=1 → 4 batches)
     initEpochDataset();
-    dataLoader_t *dl = dataLoaderInit(getEpochSample, getEpochDatasetSize, 1,
-                                       NULL, NULL, false, 0, true);
+    dataLoader_t *dl =
+        dataLoaderInit(getEpochSample, getEpochDatasetSize, 1, NULL, NULL, false, 0, true);
 
-    float epochLoss = trainingEpochDefault(model, sizeModel, MSE, dl, sgd,
-                                            calculateGradsSequential);
+    float epochLoss =
+        trainingEpochDefault(model, sizeModel, MSE, dl, sgd, calculateGradsSequential);
 
     // Weights should have changed
     float *curWeights = (float *)wParam->data;
@@ -405,16 +426,18 @@ void testTrainingEpochDefault_MinibatchStepsOncePerMinibatch() {
     size_t sizeModel = 1;
 
     float initWeights[4];
-    for (size_t i = 0; i < 4; i++) initWeights[i] = wData[i];
+    for (size_t i = 0; i < 4; i++) {
+        initWeights[i] = wData[i];
+    }
 
     optimizer_t *sgd = sgdMCreateOptim(0.01f, 0.f, 0.f, model, sizeModel, FLOAT32);
 
     initEpochDataset();
-    dataLoader_t *dl = dataLoaderInit(getEpochSample, getEpochDatasetSize, 2,
-                                       NULL, NULL, false, 0, true);
+    dataLoader_t *dl =
+        dataLoaderInit(getEpochSample, getEpochDatasetSize, 2, NULL, NULL, false, 0, true);
 
-    float epochLoss = trainingEpochDefault(model, sizeModel, MSE, dl, sgd,
-                                            calculateGradsSequential);
+    float epochLoss =
+        trainingEpochDefault(model, sizeModel, MSE, dl, sgd, calculateGradsSequential);
 
     float *curWeights = (float *)wParam->data;
     bool changed = false;
@@ -451,10 +474,10 @@ void testTrainingRun_ReturnsResult() {
     optimizer_t *sgd = sgdMCreateOptim(0.01f, 0.f, 0.f, model, 1, FLOAT32);
 
     initEpochDataset();
-    dataLoader_t *trainDl = dataLoaderInit(getEpochSample, getEpochDatasetSize, 1,
-                                            NULL, NULL, false, 0, true);
-    dataLoader_t *evalDl = dataLoaderInit(getEpochSample, getEpochDatasetSize, 1,
-                                           NULL, NULL, false, 0, true);
+    dataLoader_t *trainDl =
+        dataLoaderInit(getEpochSample, getEpochDatasetSize, 1, NULL, NULL, false, 0, true);
+    dataLoader_t *evalDl =
+        dataLoaderInit(getEpochSample, getEpochDatasetSize, 1, NULL, NULL, false, 0, true);
 
     trainingRunResult_t result = trainingRun(model, 1, MSE, trainDl, evalDl, sgd, 2,
                                              calculateGradsSequential, inferenceWithLoss, NULL);
@@ -505,15 +528,15 @@ void testTrainingRun_CallsCallbackEachEpochWithStats() {
     optimizer_t *sgd = sgdMCreateOptim(0.01f, 0.f, 0.f, model, 1, FLOAT32);
 
     initEpochDataset();
-    dataLoader_t *trainDl = dataLoaderInit(getEpochSample, getEpochDatasetSize, 1,
-                                            NULL, NULL, false, 0, true);
-    dataLoader_t *evalDl = dataLoaderInit(getEpochSample, getEpochDatasetSize, 1,
-                                           NULL, NULL, false, 0, true);
+    dataLoader_t *trainDl =
+        dataLoaderInit(getEpochSample, getEpochDatasetSize, 1, NULL, NULL, false, 0, true);
+    dataLoader_t *evalDl =
+        dataLoaderInit(getEpochSample, getEpochDatasetSize, 1, NULL, NULL, false, 0, true);
 
     size_t numberOfEpochs = 3;
-    trainingRunResult_t result = trainingRun(model, 1, MSE, trainDl, evalDl, sgd, numberOfEpochs,
-                                              calculateGradsSequential, inferenceWithLoss,
-                                              captureCallback);
+    trainingRunResult_t result =
+        trainingRun(model, 1, MSE, trainDl, evalDl, sgd, numberOfEpochs, calculateGradsSequential,
+                    inferenceWithLoss, captureCallback);
 
     // Callback was invoked once per epoch, in order
     TEST_ASSERT_EQUAL_UINT(numberOfEpochs, cbCallCount);
@@ -549,13 +572,13 @@ void testEvaluationEpochWithMetrics_AllCorrect() {
     layer_t *linear = linearLayerInit(w, b, &testQ, &testQ, &testQ, &testQ);
     layer_t *model[] = {linear};
 
-    dataLoader_t *dl = dataLoaderInit(getEpochSample, getEpochDatasetSize, 1,
-                                       NULL, NULL, false, 0, true);
+    dataLoader_t *dl =
+        dataLoaderInit(getEpochSample, getEpochDatasetSize, 1, NULL, NULL, false, 0, true);
 
     // Identity model: all 4 samples predict correctly (same as testEvaluationEpochAccuracy)
     epochStats_t stats = evaluationEpochWithMetrics(model, 1, MSE, dl, inferenceWithLoss);
 
-    TEST_ASSERT_FLOAT_WITHIN(0.01f, 5.5f, stats.loss);  // same as testEvaluationEpoch
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 5.5f, stats.loss); // same as testEvaluationEpoch
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, stats.accuracy);
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, stats.precision);
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, stats.recall);
@@ -569,7 +592,9 @@ static dataset_t partialDataset;
 static bool partialDatasetInit = false;
 
 static void initPartialDataset() {
-    if (partialDatasetInit) return;
+    if (partialDatasetInit) {
+        return;
+    }
 
     static float in0[] = {5.f, 1.f}; // pred=0
     static float in1[] = {3.f, 1.f}; // pred=0
@@ -639,8 +664,8 @@ void testEvaluationEpochWithMetrics_PartiallyCorrect() {
     layer_t *linear = linearLayerInit(w, b, &testQ, &testQ, &testQ, &testQ);
     layer_t *model[] = {linear};
 
-    dataLoader_t *dl = dataLoaderInit(getPartialSample, getPartialDatasetSize, 1,
-                                       NULL, NULL, false, 0, true);
+    dataLoader_t *dl =
+        dataLoaderInit(getPartialSample, getPartialDatasetSize, 1, NULL, NULL, false, 0, true);
 
     epochStats_t stats = evaluationEpochWithMetrics(model, 1, MSE, dl, inferenceWithLoss);
 
@@ -663,7 +688,9 @@ static dataset_t zeroPredDataset;
 static bool zeroPredDatasetInit = false;
 
 static void initZeroPredDataset() {
-    if (zeroPredDatasetInit) return;
+    if (zeroPredDatasetInit) {
+        return;
+    }
 
     static float in0[] = {5.f, 1.f}; // pred=0
     static float in1[] = {3.f, 1.f}; // pred=0
@@ -729,8 +756,8 @@ void testEvaluationEpochWithMetrics_HandlesZeroPredictionClass() {
     layer_t *linear = linearLayerInit(w, b, &testQ, &testQ, &testQ, &testQ);
     layer_t *model[] = {linear};
 
-    dataLoader_t *dl = dataLoaderInit(getZeroPredSample, getZeroPredDatasetSize, 1,
-                                       NULL, NULL, false, 0, true);
+    dataLoader_t *dl =
+        dataLoaderInit(getZeroPredSample, getZeroPredDatasetSize, 1, NULL, NULL, false, 0, true);
 
     epochStats_t stats = evaluationEpochWithMetrics(model, 1, MSE, dl, inferenceWithLoss);
 
@@ -775,13 +802,13 @@ void testEvaluationEpochWithReport_ReturnsConfusionMatrix() {
     layer_t *linear = linearLayerInit(w, b, &testQ, &testQ, &testQ, &testQ);
     layer_t *model[] = {linear};
 
-    dataLoader_t *dl = dataLoaderInit(getPartialSample, getPartialDatasetSize, 1,
-                                       NULL, NULL, false, 0, true);
+    dataLoader_t *dl =
+        dataLoaderInit(getPartialSample, getPartialDatasetSize, 1, NULL, NULL, false, 0, true);
 
     // Pre-fill with non-zero to verify WithReport zeroes the caller's buffer before accumulating
     size_t cm[2 * 2] = {99, 99, 99, 99};
-    classificationReport_t report = evaluationEpochWithReport(model, 1, MSE, dl,
-                                                               inferenceWithLoss, cm, 2);
+    classificationReport_t report =
+        evaluationEpochWithReport(model, 1, MSE, dl, inferenceWithLoss, cm, 2);
 
     // Expected CM[predicted][actual]: [[2,1],[0,1]]
     // cm[0*2+0]=2, cm[0*2+1]=1, cm[1*2+0]=0, cm[1*2+1]=1
