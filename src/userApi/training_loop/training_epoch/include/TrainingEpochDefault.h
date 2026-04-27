@@ -3,7 +3,7 @@
 
 #include "TrainingLoopApi.h"
 
-float trainingEpochDefault(layer_t **model, size_t modelSize, lossType_t lossType,
+float trainingEpochDefault(layer_t **model, size_t modelSize, lossConfig_t lossConfig,
                            dataLoader_t *dataLoader, optimizer_t *optimizer,
                            calculateGradsFn_t calculateGradsFn);
 

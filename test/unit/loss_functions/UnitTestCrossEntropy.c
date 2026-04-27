@@ -111,7 +111,8 @@ void unitTestCrossEntropySoftmaxBackward() {
     initFloat32Quantization(&propLossQ);
     setTensorValues(&propLoss, (uint8_t *)propLossData, &propLossShape, &propLossQ, NULL);
 
-    crossEntropySoftmaxBackward(&softmaxOutput, &distribution, &propLoss);
+    crossEntropySoftmaxBackward(&softmaxOutput, &distribution, &propLoss, /* batchSize */ 1,
+                                REDUCTION_SUM);
 
     /* CAPTURE. propLoss.data is stack memory (propLossData[]); copy into a
      * dedicated capture array so the assertions read from a buffer that
@@ -132,6 +133,74 @@ void unitTestCrossEntropySoftmaxBackward() {
     }
 }
 
+void testCrossEntropyBackward_MeanDividesByBatchSize(void) {
+    size_t inputSize = 3;
+
+    tensor_t softmaxOutput;
+    float softmaxData[] = {0.7f, 0.2f, 0.1f};
+    size_t dims[] = {1, inputSize};
+    size_t order[] = {0, 1};
+    shape_t shape;
+    setShape(&shape, dims, 2, order);
+    quantization_t softmaxQ;
+    initFloat32Quantization(&softmaxQ);
+    setTensorValues(&softmaxOutput, (uint8_t *)softmaxData, &shape, &softmaxQ, NULL);
+
+    tensor_t distribution;
+    float distData[] = {1.f, 0.f, 0.f};
+    quantization_t distQ;
+    initFloat32Quantization(&distQ);
+    setTensorValues(&distribution, (uint8_t *)distData, &shape, &distQ, NULL);
+
+    tensor_t lossGrad;
+    float lossGradData[3] = {0};
+    quantization_t lossGradQ;
+    initFloat32Quantization(&lossGradQ);
+    setTensorValues(&lossGrad, (uint8_t *)lossGradData, &shape, &lossGradQ, NULL);
+
+    crossEntropySoftmaxBackward(&softmaxOutput, &distribution, &lossGrad,
+                                /* batchSize */ 4, REDUCTION_MEAN);
+
+    float expected[3] = {(0.7f - 1.f) / 4.f, (0.2f - 0.f) / 4.f, (0.1f - 0.f) / 4.f};
+    for (size_t i = 0; i < inputSize; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(1e-5f, expected[i], ((float *)lossGrad.data)[i]);
+    }
+}
+
+void testCrossEntropyBackward_SumPreservesMagnitude(void) {
+    size_t inputSize = 3;
+
+    tensor_t softmaxOutput;
+    float softmaxData[] = {0.7f, 0.2f, 0.1f};
+    size_t dims[] = {1, inputSize};
+    size_t order[] = {0, 1};
+    shape_t shape;
+    setShape(&shape, dims, 2, order);
+    quantization_t softmaxQ;
+    initFloat32Quantization(&softmaxQ);
+    setTensorValues(&softmaxOutput, (uint8_t *)softmaxData, &shape, &softmaxQ, NULL);
+
+    tensor_t distribution;
+    float distData[] = {1.f, 0.f, 0.f};
+    quantization_t distQ;
+    initFloat32Quantization(&distQ);
+    setTensorValues(&distribution, (uint8_t *)distData, &shape, &distQ, NULL);
+
+    tensor_t lossGrad;
+    float lossGradData[3] = {0};
+    quantization_t lossGradQ;
+    initFloat32Quantization(&lossGradQ);
+    setTensorValues(&lossGrad, (uint8_t *)lossGradData, &shape, &lossGradQ, NULL);
+
+    crossEntropySoftmaxBackward(&softmaxOutput, &distribution, &lossGrad,
+                                /* batchSize */ 4, REDUCTION_SUM);
+
+    float expected[3] = {0.7f - 1.f, 0.2f - 0.f, 0.1f - 0.f};
+    for (size_t i = 0; i < inputSize; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(1e-5f, expected[i], ((float *)lossGrad.data)[i]);
+    }
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -139,5 +208,7 @@ int main() {
     UNITY_BEGIN();
     RUN_TEST(unitTestCrossEntropyForward);
     RUN_TEST(unitTestCrossEntropySoftmaxBackward);
+    RUN_TEST(testCrossEntropyBackward_MeanDividesByBatchSize);
+    RUN_TEST(testCrossEntropyBackward_SumPreservesMagnitude);
     return UNITY_END();
 }

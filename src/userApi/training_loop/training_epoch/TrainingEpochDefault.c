@@ -1,12 +1,12 @@
 #define SOURCE_FILE "TRAINING_EPOCH_DEFAULT"
 
 #include "TrainingEpochDefault.h"
-#include "TrainingBatchDefault.h"
+#include "Common.h"
 #include "DataLoaderApi.h"
 #include "Optimizer.h"
-#include "Common.h"
+#include "TrainingBatchDefault.h"
 
-float trainingEpochDefault(layer_t **model, size_t modelSize, lossType_t lossType,
+float trainingEpochDefault(layer_t **model, size_t modelSize, lossConfig_t lossConfig,
                            dataLoader_t *dataLoader, optimizer_t *optimizer,
                            calculateGradsFn_t calculateGradsFn) {
     size_t datasetSize = dataLoader->getDatasetSize();
@@ -16,7 +16,7 @@ float trainingEpochDefault(layer_t **model, size_t modelSize, lossType_t lossTyp
 
     for (size_t i = 0; i < numberOfBatches; i++) {
         batch_t *batch = dataLoader->getBatch(dataLoader, i);
-        totalLoss += trainingBatchDefault(model, modelSize, lossType, batch, calculateGradsFn);
+        totalLoss += trainingBatchDefault(model, modelSize, lossConfig, batch, calculateGradsFn);
         optimFns.step(optimizer);
         optimFns.zero(optimizer);
         freeBatch(batch);

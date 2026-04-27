@@ -16,7 +16,8 @@
 #include "TensorApi.h"
 #include "TrainingLoopApiInternal.h"
 
-trainingStats_t *calculateGradsSequential(layer_t **model, size_t modelSize, lossType_t lossType,
+trainingStats_t *calculateGradsSequential(layer_t **model, size_t modelSize,
+                                          lossConfig_t lossConfig, size_t batchSize,
                                           tensor_t *input, tensor_t *label) {
 
     tensor_t *layerOutputs[modelSize + 1];
@@ -36,19 +37,19 @@ trainingStats_t *calculateGradsSequential(layer_t **model, size_t modelSize, los
 
     // LOSS
 
-    lossFunctions_t lossFns = lossFunctions[lossType];
+    lossFunctions_t lossFns = lossFunctions[lossConfig.funcType];
     float loss = lossFns.forward(layerOutputs[modelSize], label);
     trainingStats->loss = loss;
 
     // Backward pass
     size_t backwardIndex = modelSize - 1;
-    if (lossType == CROSS_ENTROPY) {
+    if (lossConfig.funcType == CROSS_ENTROPY) {
         backwardIndex -= 1;
     }
 
     tensor_t gradNext;
     initGradTensor(&gradNext, layerOutputs[modelSize]);
-    lossFns.backward(layerOutputs[modelSize], label, &gradNext);
+    lossFns.backward(layerOutputs[modelSize], label, &gradNext, batchSize, lossConfig.reduction);
 
     for (int i = (int)backwardIndex; i >= 0; i--) {
         tensor_t gradCurr;

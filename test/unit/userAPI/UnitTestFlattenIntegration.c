@@ -77,7 +77,7 @@ void testCalculateGradsSequential_WithFlattenFirst_DoesNotCrash(void) {
     tensor_t *label = initTensor(labelShape, quantizationInitFloat(), NULL);
     tensorFillFromFloatBuffer(label, (float[]){1.0f, 0.0f}, 2);
 
-    trainingStats_t *stats = calculateGradsSequential(model, 3, MSE, input, label);
+    trainingStats_t *stats = calculateGradsSequential(model, 3, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM}, 1, input, label);
 
     /* CAPTURE before frees. */
     bool capturedStatsNotNull = (stats != NULL);
@@ -131,7 +131,7 @@ void testCalculateGradsSequential_FlattenRank1_DoesNotOOB(void) {
     layer_t *flatten = flattenLayerInit();
     layer_t *model[1] = {flatten};
 
-    trainingStats_t *stats = calculateGradsSequential(model, 1, MSE, input, label);
+    trainingStats_t *stats = calculateGradsSequential(model, 1, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM}, 1, input, label);
 
     /* CAPTURE before frees. */
     bool capturedStatsNotNull = (stats != NULL);
@@ -181,7 +181,7 @@ void testCalculateGradsSequential_FlattenOnly_PreservesValues(void) {
     layer_t *flatten = flattenLayerInit();
     layer_t *model[1] = {flatten};
 
-    trainingStats_t *stats = calculateGradsSequential(model, 1, MSE, input, label);
+    trainingStats_t *stats = calculateGradsSequential(model, 1, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM}, 1, input, label);
 
     /* CAPTURE before frees. */
     bool capturedStatsNotNull = (stats != NULL);

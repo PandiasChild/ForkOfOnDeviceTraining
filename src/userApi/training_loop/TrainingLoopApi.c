@@ -16,13 +16,13 @@ void freeTrainingStats(trainingStats_t *trainingStats) {
     freeReservedMemory(trainingStats);
 }
 
-float evaluationBatch(layer_t **model, size_t modelSize, lossType_t lossType, batch_t *batch,
+float evaluationBatch(layer_t **model, size_t modelSize, lossFuncType_t funcType, batch_t *batch,
                       inferenceWithLossFn_t inferenceFn) {
     float totalLoss = 0.0f;
 
     for (size_t i = 0; i < batch->size; i++) {
         inferenceStats_t *stats = inferenceFn(model, modelSize, batch->samples[i]->item,
-                                              batch->samples[i]->label, lossType);
+                                              batch->samples[i]->label, funcType);
         totalLoss += stats->loss;
         freeInferenceStats(stats);
         freeSample(batch->samples[i]);
@@ -44,7 +44,7 @@ static size_t argmax(const float *data, size_t n) {
     return maxIdx;
 }
 
-float evaluationEpoch(layer_t **model, size_t modelSize, lossType_t lossType,
+float evaluationEpoch(layer_t **model, size_t modelSize, lossFuncType_t funcType,
                       dataLoader_t *dataLoader, inferenceWithLossFn_t inferenceFn) {
     size_t datasetSize = dataLoader->getDatasetSize();
     size_t numberOfBatches = datasetSize / dataLoader->batchSize;
@@ -52,14 +52,14 @@ float evaluationEpoch(layer_t **model, size_t modelSize, lossType_t lossType,
 
     for (size_t i = 0; i < numberOfBatches; i++) {
         batch_t *batch = dataLoader->getBatch(dataLoader, i);
-        totalLoss += evaluationBatch(model, modelSize, lossType, batch, inferenceFn);
+        totalLoss += evaluationBatch(model, modelSize, funcType, batch, inferenceFn);
         freeBatch(batch);
     }
 
     return totalLoss / (float)numberOfBatches;
 }
 
-static float evaluateBatchInternal(layer_t **model, size_t modelSize, lossType_t lossType,
+static float evaluateBatchInternal(layer_t **model, size_t modelSize, lossFuncType_t funcType,
                                    batch_t *batch, inferenceWithLossFn_t inferenceFn, size_t *tp,
                                    size_t *predCount, size_t *actualCount, size_t *confusionMatrix,
                                    size_t numClasses) {
@@ -67,7 +67,7 @@ static float evaluateBatchInternal(layer_t **model, size_t modelSize, lossType_t
 
     for (size_t i = 0; i < batch->size; i++) {
         inferenceStats_t *stats = inferenceFn(model, modelSize, batch->samples[i]->item,
-                                              batch->samples[i]->label, lossType);
+                                              batch->samples[i]->label, funcType);
         totalLoss += stats->loss;
 
         float *outputData = (float *)stats->output->data;
@@ -133,8 +133,8 @@ static float computeMacroF1(const size_t *tp, const size_t *predCount, const siz
     return sum / (float)numClasses;
 }
 
-static epochStats_t evaluateEpochInternal(layer_t **model, size_t modelSize, lossType_t lossType,
-                                          dataLoader_t *dataLoader,
+static epochStats_t evaluateEpochInternal(layer_t **model, size_t modelSize,
+                                          lossFuncType_t funcType, dataLoader_t *dataLoader,
                                           inferenceWithLossFn_t inferenceFn,
                                           size_t *confusionMatrix, size_t numClasses) {
     size_t datasetSize = dataLoader->getDatasetSize();
@@ -155,7 +155,7 @@ static epochStats_t evaluateEpochInternal(layer_t **model, size_t modelSize, los
 
     for (size_t i = 0; i < numberOfBatches; i++) {
         batch_t *batch = dataLoader->getBatch(dataLoader, i);
-        totalLoss += evaluateBatchInternal(model, modelSize, lossType, batch, inferenceFn, tp,
+        totalLoss += evaluateBatchInternal(model, modelSize, funcType, batch, inferenceFn, tp,
                                            predCount, actualCount, confusionMatrix, numClasses);
         totalSamples += batch->size;
         freeBatch(batch);
@@ -175,7 +175,7 @@ static epochStats_t evaluateEpochInternal(layer_t **model, size_t modelSize, los
     return stats;
 }
 
-epochStats_t evaluationEpochWithMetrics(layer_t **model, size_t modelSize, lossType_t lossType,
+epochStats_t evaluationEpochWithMetrics(layer_t **model, size_t modelSize, lossFuncType_t funcType,
                                         dataLoader_t *dataLoader,
                                         inferenceWithLossFn_t inferenceFn) {
     // Peek at first sample to derive numClasses from label shape
@@ -186,12 +186,12 @@ epochStats_t evaluationEpochWithMetrics(layer_t **model, size_t modelSize, lossT
     }
     freeBatch(firstBatch);
 
-    return evaluateEpochInternal(model, modelSize, lossType, dataLoader, inferenceFn, NULL,
+    return evaluateEpochInternal(model, modelSize, funcType, dataLoader, inferenceFn, NULL,
                                  numClasses);
 }
 
 classificationReport_t evaluationEpochWithReport(layer_t **model, size_t modelSize,
-                                                 lossType_t lossType, dataLoader_t *dataLoader,
+                                                 lossFuncType_t funcType, dataLoader_t *dataLoader,
                                                  inferenceWithLossFn_t inferenceFn,
                                                  size_t *cmBuffer, size_t numClasses) {
     // Zero the caller's CM buffer
@@ -200,14 +200,14 @@ classificationReport_t evaluationEpochWithReport(layer_t **model, size_t modelSi
     }
 
     classificationReport_t report;
-    report.stats = evaluateEpochInternal(model, modelSize, lossType, dataLoader, inferenceFn,
+    report.stats = evaluateEpochInternal(model, modelSize, funcType, dataLoader, inferenceFn,
                                          cmBuffer, numClasses);
     report.confusionMatrix = cmBuffer;
     report.numClasses = numClasses;
     return report;
 }
 
-trainingRunResult_t trainingRun(layer_t **model, size_t modelSize, lossType_t lossType,
+trainingRunResult_t trainingRun(layer_t **model, size_t modelSize, lossConfig_t lossConfig,
                                 dataLoader_t *trainDataLoader, dataLoader_t *evalDataLoader,
                                 optimizer_t *optimizer, size_t numberOfEpochs,
                                 calculateGradsFn_t calculateGradsFn,
@@ -223,10 +223,10 @@ trainingRunResult_t trainingRun(layer_t **model, size_t modelSize, lossType_t lo
     freeBatch(firstBatch);
 
     for (size_t epoch = 0; epoch < numberOfEpochs; epoch++) {
-        float trainLoss = trainingEpochDefault(model, modelSize, lossType, trainDataLoader,
+        float trainLoss = trainingEpochDefault(model, modelSize, lossConfig, trainDataLoader,
                                                optimizer, calculateGradsFn);
-        epochStats_t evalStats = evaluateEpochInternal(model, modelSize, lossType, evalDataLoader,
-                                                       inferenceFn, NULL, numClasses);
+        epochStats_t evalStats = evaluateEpochInternal(
+            model, modelSize, lossConfig.funcType, evalDataLoader, inferenceFn, NULL, numClasses);
 
         if (callback != NULL) {
             callback(epoch, trainLoss, evalStats);

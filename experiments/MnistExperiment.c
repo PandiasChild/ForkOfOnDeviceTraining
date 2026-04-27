@@ -176,9 +176,10 @@ int main(void) {
 
     clock_t start = clock();
 
-    trainingRunResult_t result =
-        trainingRun(model, MODEL_SIZE, CROSS_ENTROPY, trainDataloader, testDataloader, sgd,
-                    numberOfEpochs, calculateGradsSequential, inferenceWithLoss, epochCallback);
+    trainingRunResult_t result = trainingRun(
+        model, MODEL_SIZE, (lossConfig_t){.funcType = CROSS_ENTROPY, .reduction = REDUCTION_MEAN},
+        trainDataloader, testDataloader, sgd, numberOfEpochs, calculateGradsSequential,
+        inferenceWithLoss, epochCallback);
 
     clock_t end = clock();
 

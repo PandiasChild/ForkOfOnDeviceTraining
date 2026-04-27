@@ -170,7 +170,7 @@ void freeInferenceStats(inferenceStats_t *inferenceStats) {
 }
 
 inferenceStats_t *inferenceWithLoss(layer_t **model, size_t numberOfLayers, tensor_t *input,
-                                    tensor_t *label, lossType_t lossType) {
+                                    tensor_t *label, lossFuncType_t funcType) {
     tensor_t outputNext;
     initBufferInput(input, &outputNext);
 
@@ -189,7 +189,7 @@ inferenceStats_t *inferenceWithLoss(layer_t **model, size_t numberOfLayers, tens
     inferenceStats_t *inferenceStats = reserveInferenceStats(label);
     copyTensor(inferenceStats->output, &outputNext);
 
-    lossFunctions_t lossFns = lossFunctions[lossType];
+    lossFunctions_t lossFns = lossFunctions[funcType];
     float loss = lossFns.forward(&outputNext, label);
     inferenceStats->loss = loss;
 

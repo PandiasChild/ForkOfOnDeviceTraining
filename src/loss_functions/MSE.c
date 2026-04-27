@@ -4,12 +4,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "Common.h"
 #include "MSE.h"
+#include "Sub.h"
 #include "Tensor.h"
 #include "TensorConversion.h"
-#include "Sub.h"
-#include "Common.h"
-
 
 float mseLossForwardFloat(tensor_t *output, tensor_t *label) {
     size_t size = calcNumberOfElementsByTensor(output);
@@ -69,10 +68,13 @@ float mseLossForward(tensor_t *output, tensor_t *label) {
     }
 }
 
-void mseLossBackwardFloat(tensor_t *modelOutput, tensor_t *label, tensor_t *result) {
+void mseLossBackwardFloat(tensor_t *modelOutput, tensor_t *label, tensor_t *result,
+                          size_t batchSize, reduction_t reduction) {
     size_t numberOfElements = calcNumberOfElementsByTensor(modelOutput);
 
-    float mean = 2.f / (float)numberOfElements;
+    float perSampleMean = 2.f / (float)numberOfElements;
+    float batchDivisor = (reduction == REDUCTION_MEAN) ? (float)batchSize : 1.0f;
+    float mean = perSampleMean / batchDivisor;
 
     float *modelOutputArray = (float *)modelOutput->data;
     float *labelArray = (float *)label->data;
@@ -83,7 +85,8 @@ void mseLossBackwardFloat(tensor_t *modelOutput, tensor_t *label, tensor_t *resu
     }
 }
 
-void mseLossBackwardSymInt32(tensor_t *modelOutput, tensor_t *label, tensor_t *result) {
+void mseLossBackwardSymInt32(tensor_t *modelOutput, tensor_t *label, tensor_t *result,
+                             size_t batchSize, reduction_t reduction) {
     size_t numberOfElements = calcNumberOfElementsByTensor(modelOutput);
 
     tensor_t modelOutputFloat;
@@ -112,7 +115,9 @@ void mseLossBackwardSymInt32(tensor_t *modelOutput, tensor_t *label, tensor_t *r
     float *labelArray = (float *)labelFloat.data;
     float *resultArray = (float *)resultFloat.data;
 
-    float mean = 2.f / (float)numberOfElements;
+    float perSampleMean = 2.f / (float)numberOfElements;
+    float batchDivisor = (reduction == REDUCTION_MEAN) ? (float)batchSize : 1.0f;
+    float mean = perSampleMean / batchDivisor;
 
     for (size_t i = 0; i < numberOfElements; i++) {
         resultArray[i] = mulFloat32s(mean, subFloat32s(modelOutputArray[i], labelArray[i]));
@@ -121,15 +126,16 @@ void mseLossBackwardSymInt32(tensor_t *modelOutput, tensor_t *label, tensor_t *r
     convertTensor(&resultFloat, result);
 }
 
-void mseLossBackward(tensor_t *modelOutput, tensor_t *label, tensor_t *result) {
+void mseLossBackward(tensor_t *modelOutput, tensor_t *label, tensor_t *result, size_t batchSize,
+                     reduction_t reduction) {
     qtype_t modelOutputQType = modelOutput->quantization->type;
 
     switch (modelOutputQType) {
     case FLOAT32:
-        mseLossBackwardFloat(modelOutput, label, result);
+        mseLossBackwardFloat(modelOutput, label, result, batchSize, reduction);
         break;
     case SYM_INT32:
-        mseLossBackwardSymInt32(modelOutput, label, result);
+        mseLossBackwardSymInt32(modelOutput, label, result, batchSize, reduction);
         break;
     default:
         PRINT_ERROR("Unknown QType!");
