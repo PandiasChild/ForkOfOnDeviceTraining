@@ -323,7 +323,7 @@ uint8_t *getDataLike(quantization_t *quantization, size_t numberOfValues) {
     case ASYM:
         asymQConfig_t *asymQC = quantization->qConfig;
         size_t totalBits = numberOfValues * asymQC->qBits;
-        size_t totalBytes = ceilf(totalBits / 8);
+        size_t totalBytes = (totalBits + 7) / 8;
         return reserveMemory(totalBytes);
     default:
         PRINT_ERROR("Unknown QType");

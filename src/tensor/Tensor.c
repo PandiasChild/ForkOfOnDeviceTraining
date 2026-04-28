@@ -85,7 +85,7 @@ size_t calcNumberOfBytesForData(quantization_t *q, size_t numberOfElements) {
         return numberOfElements * sizeof(int32_t);
     case ASYM:
         size_t bitsPerElement = calcBitsPerElement(q);
-        return ceilf((float)(bitsPerElement * numberOfElements / 8));
+        return (bitsPerElement * numberOfElements + 7) / 8;
     default:
         PRINT_ERROR("Unknown QType!");
         exit(1);

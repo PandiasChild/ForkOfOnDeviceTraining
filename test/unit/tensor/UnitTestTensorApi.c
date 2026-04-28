@@ -456,6 +456,34 @@ void testGradInitAsym_DoesNotAliasParentShape(void) {
     freeTensor(param);
 }
 
+/* Regression for #108. calcNumberOfBytesForData on the ASYM arm did
+ * (bitsPerElement * numberOfElements / 8) with integer arithmetic, then ceilf
+ * on the already-truncated result — under-allocating by one byte whenever the
+ * total bit count was not a multiple of 8. */
+void testCalcNumberOfBytesForData_AsymSubByte_RoundsUpInsteadOfTruncating(void) {
+    quantization_t *q = quantizationInitAsym(3, HTE);
+    /* 10 elements * 3 bits = 30 bits => ceil(30/8) = 4 bytes. */
+    size_t bytes = calcNumberOfBytesForData(q, 10);
+    freeQuantization(q);
+    TEST_ASSERT_EQUAL_UINT(4, bytes);
+}
+
+/* Companion to the test above for #108: getDataLike has the same
+ * integer-div-before-ceilf shape and under-allocates the data buffer.
+ * Under ASan, writing the full 4 expected bytes into a 3-byte allocation
+ * trips heap-buffer-overflow; the value-assertion test above catches the
+ * arithmetic itself. */
+void testGetDataLike_AsymSubByte_AllocatesCeilingOfBits(void) {
+    quantization_t *q = quantizationInitAsym(3, HTE);
+    uint8_t *data = getDataLike(q, 10);
+    /* 30 bits => 4 bytes; pre-fix only 3 are allocated. */
+    for (size_t i = 0; i < 4; ++i) {
+        data[i] = 0xFF;
+    }
+    freeReservedMemory(data);
+    freeQuantization(q);
+}
+
 void testInitTensor_Int32_AllocatesFourBytesPerElement(void) {
     /* Closes the calcNumberOfBytesForData gap surfaced by code-review on Task A:
      * the INT32 arm was missing, which would have made gradInitInt32 (Task D)
@@ -520,6 +548,8 @@ int main(void) {
     RUN_TEST(testTensorInitWithDistribution_ShapeIsCorrect);
     RUN_TEST(testInitTensor_AllocatesOwnZeroDataBuffer_FreeTensorIsSafe);
     RUN_TEST(testInitTensor_Int32_AllocatesFourBytesPerElement);
+    RUN_TEST(testCalcNumberOfBytesForData_AsymSubByte_RoundsUpInsteadOfTruncating);
+    RUN_TEST(testGetDataLike_AsymSubByte_AllocatesCeilingOfBits);
     RUN_TEST(testTensorFillFromFloatBuffer_CopiesValues_SourceCanGoOutOfScope);
     RUN_TEST(testFreeParameter_NullGrad_DoesNotSegfault);
     RUN_TEST(testGradInitFloat_DoesNotAliasParentShape);
