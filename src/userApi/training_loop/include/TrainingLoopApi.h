@@ -37,7 +37,27 @@ typedef struct classificationReport {
     size_t numClasses;
 } classificationReport_t;
 
-/*! Final result of trainingRun() after the last epoch completed. */
+/*! Final result of trainingRun() after the last epoch completed.
+ *
+ * `finalTrainLoss` and `finalEvalStats.loss` share the same unit (per-sample
+ * mean of the configured loss function) but are measured over different
+ * windows:
+ *
+ *   - `finalTrainLoss`  is a during-epoch mean of batch-means: each batch's
+ *                       per-sample loss is averaged across the batch, and
+ *                       those batch-means are averaged across the epoch.
+ *                       Weights mutate across batches, so this number mixes
+ *                       early-epoch under-trained weights with late-epoch
+ *                       near-converged weights.
+ *
+ *   - `finalEvalStats.loss` is a post-epoch full-pass measurement on the
+ *                           eval dataset with the weight state frozen at the
+ *                           end of the epoch.
+ *
+ * As a consequence, the two values disagree — typically eval > train by a
+ * factor that grows with training as the model converges. This is the
+ * generalization gap × measurement-window difference, not a unit mismatch.
+ */
 typedef struct trainingRunResult {
     float finalTrainLoss;
     epochStats_t finalEvalStats;
