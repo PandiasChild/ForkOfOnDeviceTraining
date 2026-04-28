@@ -60,16 +60,29 @@ in
 			package = pkgs.bash;
 			description = "Run all Unity unit tests and print their result";
 		};
+		run_asan_tests = {
+			exec = ''
+				set -e
+				cmake --preset unit_test_asan
+				cmake --build --preset unit_test_asan
+				ctest --preset unit_test_asan
+			'';
+			package = pkgs.bash;
+			description = "Run the unit-test suite under AddressSanitizer + UBSan";
+		};
 		ci = {
 			exec = ''
 				set -e
 				cmake --preset unit_test
 				cmake --build --preset unit_test
 				ctest --preset unit_test
+				cmake --preset unit_test_asan
+				cmake --build --preset unit_test_asan
+				ctest --preset unit_test_asan
 				uv run pytest
 			'';
 			package = pkgs.bash;
-			description = "Run the full CI pipeline locally (C + Python tests)";
+			description = "Run the full CI pipeline locally (C + ASan/UBSan + Python tests)";
 		};
 
 };

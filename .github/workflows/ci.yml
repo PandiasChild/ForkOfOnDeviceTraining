@@ -49,6 +49,24 @@ jobs:
       - name: Test
         run: ctest --preset unit_test
 
+  c-asan-build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build clang
+
+      - name: Configure
+        run: CC=clang cmake --preset unit_test_asan
+
+      - name: Build
+        run: cmake --build --preset unit_test_asan
+
+      - name: Test
+        run: ctest --preset unit_test_asan
+
   python-test:
     runs-on: ubuntu-latest
 

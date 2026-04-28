@@ -14,6 +14,61 @@ the dataset. This:
 
 For flatten-to-2D, use `flattenLayerInit()` from `FlattenApi.h`.
 
+## Sanitizer-driven memory bug detection
+
+The C unit-test suite is run twice in CI: once normally (`c-build-and-test`),
+and once under AddressSanitizer + UndefinedBehaviorSanitizer
+(`c-asan-build-and-test`). The sanitizer job is a hard gate — any heap-OOB,
+use-after-free, double-free, or UB diagnoses fails the PR. LeakSanitizer is
+deliberately **off** (`detect_leaks=0`) in CI; see the opt-in recipe below.
+
+### Local reproduction
+
+The `unit_test_asan` preset is the source of truth. Same flags, same runtime
+options as CI:
+
+```bash
+cmake --preset unit_test_asan
+cmake --build --preset unit_test_asan
+ctest --preset unit_test_asan
+```
+
+Or, in the devenv shell, the composite script:
+
+```bash
+run_asan_tests
+```
+
+Sanitizer flags (`-fsanitize=address,undefined -fno-sanitize=function
+-fno-omit-frame-pointer -fno-sanitize-recover=all -g -O1`) propagate to every
+target in the link graph via the configure preset — there is no opt-in per
+target.
+
+Runtime options the test preset sets:
+
+- `ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1:strict_string_checks=1:check_initialization_order=1`
+- `UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1`
+
+`halt_on_error=1` plus `-fno-sanitize-recover=all` means the **first** finding
+aborts the test binary — earlier tests must run cleanly to surface later ones.
+When triaging multiple unrelated failures, isolate by running individual test
+binaries from `build/unit_test_asan/test/unit/...` directly.
+
+### Opt-in LeakSanitizer recipe
+
+LSan is staged separately because it requires a cleanup convention every test
+honours; see #82 for the umbrella. To run a single test or directory under LSan
+during incremental cleanup work, override `detect_leaks` at the call site:
+
+```bash
+ASAN_OPTIONS="detect_leaks=1:abort_on_error=1:halt_on_error=1" \
+  build/unit_test_asan/test/unit/<module>/UnitTest<Name>
+```
+
+For broader recon (e.g. surveying which tests currently leak), prefer the
+valgrind-based recipe in `docs/superpowers/tools/lsan-recon/` — it produces
+reproducible, fully-attributed per-test reports.
+
 ## Allocation Locality
 
 Only `src/userApi/` may call `malloc`, `calloc`, `realloc`, or `free` directly. All other code (sub-layers under `src/`, tests under `test/`) must route allocations through `reserveMemory` and `freeReservedMemory` in `src/userApi/StorageApi.{c,h}`.
