@@ -73,6 +73,8 @@ in
 		ci = {
 			exec = ''
 				set -e
+				find src test experiments \( -name '*.c' -o -name '*.h' \) -print0 \
+					| xargs -0 clang-format --dry-run -Werror
 				cmake --preset unit_test
 				cmake --build --preset unit_test
 				ctest --preset unit_test
@@ -82,7 +84,7 @@ in
 				uv run pytest
 			'';
 			package = pkgs.bash;
-			description = "Run the full CI pipeline locally (C + ASan/UBSan + Python tests)";
+			description = "Run the full CI pipeline locally (format-check + C + ASan/UBSan + Python tests)";
 		};
 
 };

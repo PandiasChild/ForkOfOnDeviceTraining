@@ -31,6 +31,24 @@ jobs:
             exit 1
           fi
 
+  c-format-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install clang-format-21
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 21
+          sudo apt-get install -y clang-format-21
+
+      - name: Check format
+        run: |
+          find src test experiments \( -name '*.c' -o -name '*.h' \) -print0 | \
+            xargs -0 clang-format-21 --dry-run -Werror
+
   c-build-and-test:
     runs-on: ubuntu-latest
 
