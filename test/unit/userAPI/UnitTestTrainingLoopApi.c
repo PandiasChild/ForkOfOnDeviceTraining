@@ -69,9 +69,15 @@ void testCalculateGradsSequential_MatchesPyTorch() {
     sgd->sizeStates = 1;
 
     for (size_t i = 0; i < 23; i++) {
-        trainingStats_t *ts0 = calculateGradsSequential(model, sizeModel, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM}, 1, input0, label0);
-        trainingStats_t *ts1 = calculateGradsSequential(model, sizeModel, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM}, 1, input1, label1);
-        trainingStats_t *ts2 = calculateGradsSequential(model, sizeModel, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM}, 1, input2, label2);
+        trainingStats_t *ts0 = calculateGradsSequential(
+            model, sizeModel, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM}, 1,
+            input0, label0);
+        trainingStats_t *ts1 = calculateGradsSequential(
+            model, sizeModel, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM}, 1,
+            input1, label1);
+        trainingStats_t *ts2 = calculateGradsSequential(
+            model, sizeModel, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM}, 1,
+            input2, label2);
 
         sgdFns.step(sgd);
         sgdFns.zero(sgd);
@@ -342,8 +348,10 @@ void testTrainingBatchDefault_ReturnsAverageLossAndAccumulatesGrads() {
     tensor_t *lb1 = buildFloatTensor2D(1, 2, (float[]){43.f, 249.f}, 2);
 
     /* Get expected losses from individual calculateGrads calls */
-    trainingStats_t *ts0 = calculateGradsSequential(model, 1, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM}, 1, in0, lb0);
-    trainingStats_t *ts1 = calculateGradsSequential(model, 1, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM}, 1, in1, lb1);
+    trainingStats_t *ts0 = calculateGradsSequential(
+        model, 1, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM}, 1, in0, lb0);
+    trainingStats_t *ts1 = calculateGradsSequential(
+        model, 1, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM}, 1, in1, lb1);
     float expectedAvg = (ts0->loss + ts1->loss) / 2.0f;
     freeTrainingStats(ts0);
     freeTrainingStats(ts1);
@@ -368,7 +376,9 @@ void testTrainingBatchDefault_ReturnsAverageLossAndAccumulatesGrads() {
     sample_t *samples[] = {s0, s1};
     batch_t batch = {.samples = samples, .size = 2};
 
-    float actualAvg = trainingBatchDefault(model, 1, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM}, &batch, calculateGradsSequential);
+    float actualAvg =
+        trainingBatchDefault(model, 1, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM},
+                             &batch, calculateGradsSequential);
 
     /* CAPTURE. */
     float capturedExpected = expectedAvg;
@@ -418,8 +428,9 @@ void testTrainingEpochDefault_DoesOptimizerStepPerBatch() {
     dataLoader_t *dl =
         dataLoaderInit(getEpochSample, getEpochDatasetSize, 1, NULL, NULL, false, 0, true);
 
-    float epochLoss =
-        trainingEpochDefault(model, sizeModel, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM}, dl, sgd, calculateGradsSequential);
+    float epochLoss = trainingEpochDefault(
+        model, sizeModel, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM}, dl, sgd,
+        calculateGradsSequential);
 
     /* CAPTURE assertion values BEFORE any free. */
     bool capturedChanged = false;
@@ -478,8 +489,9 @@ void testTrainingEpochDefault_MinibatchStepsOncePerMinibatch() {
     dataLoader_t *dl =
         dataLoaderInit(getEpochSample, getEpochDatasetSize, 2, NULL, NULL, false, 0, true);
 
-    float epochLoss =
-        trainingEpochDefault(model, sizeModel, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM}, dl, sgd, calculateGradsSequential);
+    float epochLoss = trainingEpochDefault(
+        model, sizeModel, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM}, dl, sgd,
+        calculateGradsSequential);
 
     /* CAPTURE. */
     bool capturedChanged = false;
