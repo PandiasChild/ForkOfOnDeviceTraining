@@ -17,7 +17,7 @@
 
 // Initializes buffer to match output
 static void initBufferOutput(tensor_t *buffer, layer_t *currentLayer, shape_t *inputShape,
-                             sparsity_t *inputSparsity) {
+                             sparsity_t *inputSparsity, quantization_t *inputQ) {
     layerType_t currentLayerType = currentLayer->type;
     quantization_t *currentQ = NULL;
 
@@ -30,6 +30,10 @@ static void initBufferOutput(tensor_t *buffer, layer_t *currentLayer, shape_t *i
         break;
     case SOFTMAX:
         currentQ = currentLayer->config->softmax->forwardQ;
+        break;
+    case FLATTEN:
+        // Flatten has no per-layer quantization; output dtype equals input dtype.
+        currentQ = inputQ;
         break;
     default:
         PRINT_ERROR("Unknown Layer Type!");
@@ -131,7 +135,8 @@ tensor_t *inference(layer_t **model, size_t numberOfLayers, tensor_t *input) {
         forwardFn_t forward = layerFunctions[currentLayerType].forward;
 
         tensor_t outputCurr;
-        initBufferOutput(&outputCurr, currentLayer, outputNext.shape, outputNext.sparsity);
+        initBufferOutput(&outputCurr, currentLayer, outputNext.shape, outputNext.sparsity,
+                         outputNext.quantization);
         forward(currentLayer, &outputNext, &outputCurr);
 
         deInitBuffer(&outputNext);
@@ -180,7 +185,8 @@ inferenceStats_t *inferenceWithLoss(layer_t **model, size_t numberOfLayers, tens
         forwardFn_t forward = layerFunctions[currentLayerType].forward;
 
         tensor_t outputCurr;
-        initBufferOutput(&outputCurr, currentLayer, outputNext.shape, outputNext.sparsity);
+        initBufferOutput(&outputCurr, currentLayer, outputNext.shape, outputNext.sparsity,
+                         outputNext.quantization);
         forward(currentLayer, &outputNext, &outputCurr);
         deInitBuffer(&outputNext);
         outputNext = outputCurr;

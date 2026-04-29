@@ -32,6 +32,7 @@ optimizer_t *sgdMCreateOptim(float learningRate, float momentumFactor, float wei
     optim->parameter = parameter;
     size_t statesPerParam = 1;
 
+    size_t paramSlot = 0;
     for (size_t i = 0; i < sizeModel; i++) {
         layer_t *currentLayer = model[i];
         layerConfig_t *layerConfig = currentLayer->config;
@@ -42,11 +43,11 @@ optimizer_t *sgdMCreateOptim(float learningRate, float momentumFactor, float wei
 
             parameter_t *weights = linearConfig->weights;
 
-            optim->parameter[i] = weights;
+            optim->parameter[paramSlot] = weights;
             tensor_t *weightStateBuffer = getTensorLike(weights->param);
 
             parameter_t *bias = linearConfig->bias;
-            optim->parameter[i + 1] = bias;
+            optim->parameter[paramSlot + 1] = bias;
             tensor_t *biasStateBuffer = getTensorLike(bias->param);
 
             states_t *weightStates = reserveMemory(sizeof(states_t));
@@ -59,12 +60,14 @@ optimizer_t *sgdMCreateOptim(float learningRate, float momentumFactor, float wei
             biasStates->stateBuffers = reserveMemory(sizeof(tensor_t *));
             biasStates->stateBuffers[0] = biasStateBuffer;
 
-            states[i] = weightStates;
-            states[i + 1] = biasStates;
+            states[paramSlot] = weightStates;
+            states[paramSlot + 1] = biasStates;
 
+            paramSlot += 2;
             break;
         case RELU:
         case SOFTMAX:
+        case FLATTEN:
             break;
         default:
             PRINT_ERROR("Unknown Layer Type");
