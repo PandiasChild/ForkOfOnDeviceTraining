@@ -225,7 +225,8 @@ void testInferenceWithLossLinearReluFloat() {
 
     /* Run inferenceWithLoss. inferenceStats owns its `output` tensor; its
      * matching free is freeInferenceStats. */
-    inferenceStats_t *inferenceStats = inferenceWithLoss(model, 2, input, label0, MSE);
+    inferenceStats_t *inferenceStats =
+        inferenceWithLoss(model, 2, input, label0, MSE, REDUCTION_MEAN);
 
     /* CAPTURE. */
     float capturedLoss = inferenceStats->loss;

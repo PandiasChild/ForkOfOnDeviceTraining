@@ -7,6 +7,7 @@ target_link_libraries(TrainingEpochDefault PRIVATE
         Rounding
         Layer
         Optimizer
+        OptimizerApi
         LossFunction
         InferenceApi
         DataLoader

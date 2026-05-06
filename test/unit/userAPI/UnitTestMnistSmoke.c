@@ -200,9 +200,9 @@ void testMnistSmoke_FullTrainingPipelineReducesLoss() {
     cbInvocations = 0;
     size_t numberOfEpochs = 20;
     trainingRunResult_t result = trainingRun(
-        model, MODEL_SIZE, (lossConfig_t){.funcType = CROSS_ENTROPY, .reduction = REDUCTION_MEAN},
-        trainDl, evalDl, sgd, numberOfEpochs, calculateGradsSequential, inferenceWithLoss,
-        captureEpoch);
+        model, MODEL_SIZE,
+        (lossConfig_t){.funcType = CROSS_ENTROPY, .backwardReduction = REDUCTION_MEAN}, trainDl,
+        evalDl, sgd, numberOfEpochs, calculateGradsSequential, inferenceWithLoss, captureEpoch);
 
     /* CAPTURE all assertion values into stack locals BEFORE any free. */
     size_t capturedCbInvocations = cbInvocations;
@@ -265,8 +265,9 @@ void testMnistSmoke_SnprintfGmtimeRBetweenSetupAndTrainingRun_NoSilentExit() {
 
     cbInvocations = 0;
     trainingRunResult_t result = trainingRun(
-        model, MODEL_SIZE, (lossConfig_t){.funcType = CROSS_ENTROPY, .reduction = REDUCTION_MEAN},
-        trainDl, evalDl, sgd, 1, calculateGradsSequential, inferenceWithLoss, captureEpoch);
+        model, MODEL_SIZE,
+        (lossConfig_t){.funcType = CROSS_ENTROPY, .backwardReduction = REDUCTION_MEAN}, trainDl,
+        evalDl, sgd, 1, calculateGradsSequential, inferenceWithLoss, captureEpoch);
 
     /* CAPTURE before free. */
     size_t capturedCbInvocations = cbInvocations;

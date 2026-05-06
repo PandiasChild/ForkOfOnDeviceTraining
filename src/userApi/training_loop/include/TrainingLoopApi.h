@@ -64,12 +64,14 @@ typedef struct trainingRunResult {
 } trainingRunResult_t;
 
 typedef trainingStats_t *(*calculateGradsFn_t)(layer_t **model, size_t modelSize,
-                                               lossConfig_t lossConfig, size_t batchSize,
-                                               tensor_t *input, tensor_t *label);
+                                               lossConfig_t lossConfig,
+                                               reduction_t forwardReduction, tensor_t *input,
+                                               tensor_t *label);
 
 typedef inferenceStats_t *(*inferenceWithLossFn_t)(layer_t **model, size_t numberOfLayers,
                                                    tensor_t *input, tensor_t *label,
-                                                   lossFuncType_t funcType);
+                                                   lossFuncType_t funcType,
+                                                   reduction_t forwardReduction);
 
 /*! Callback invoked once per training epoch, after evaluation completes. */
 typedef void (*epochCallbackFn_t)(size_t epoch, float trainLoss, epochStats_t evalStats);
@@ -77,19 +79,21 @@ typedef void (*epochCallbackFn_t)(size_t epoch, float trainLoss, epochStats_t ev
 void freeTrainingStats(trainingStats_t *trainingStats);
 
 float evaluationBatch(layer_t **model, size_t modelSize, lossFuncType_t funcType, batch_t *batch,
-                      inferenceWithLossFn_t inferenceFn);
+                      inferenceWithLossFn_t inferenceFn, reduction_t forwardReduction);
 
 float evaluationEpoch(layer_t **model, size_t modelSize, lossFuncType_t funcType,
-                      dataLoader_t *dataLoader, inferenceWithLossFn_t inferenceFn);
+                      dataLoader_t *dataLoader, inferenceWithLossFn_t inferenceFn,
+                      reduction_t forwardReduction);
 
 epochStats_t evaluationEpochWithMetrics(layer_t **model, size_t modelSize, lossFuncType_t funcType,
-                                        dataLoader_t *dataLoader,
-                                        inferenceWithLossFn_t inferenceFn);
+                                        dataLoader_t *dataLoader, inferenceWithLossFn_t inferenceFn,
+                                        reduction_t forwardReduction);
 
 classificationReport_t evaluationEpochWithReport(layer_t **model, size_t modelSize,
                                                  lossFuncType_t funcType, dataLoader_t *dataLoader,
                                                  inferenceWithLossFn_t inferenceFn,
-                                                 size_t *cmBuffer, size_t numClasses);
+                                                 size_t *cmBuffer, size_t numClasses,
+                                                 reduction_t forwardReduction);
 
 trainingRunResult_t trainingRun(layer_t **model, size_t modelSize, lossConfig_t lossConfig,
                                 dataLoader_t *trainDataLoader, dataLoader_t *evalDataLoader,

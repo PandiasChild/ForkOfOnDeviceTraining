@@ -17,7 +17,7 @@
 #include "TrainingLoopApiInternal.h"
 
 trainingStats_t *calculateGradsSequential(layer_t **model, size_t modelSize,
-                                          lossConfig_t lossConfig, size_t batchSize,
+                                          lossConfig_t lossConfig, reduction_t forwardReduction,
                                           tensor_t *input, tensor_t *label) {
 
     tensor_t *layerOutputs[modelSize + 1];
@@ -38,7 +38,7 @@ trainingStats_t *calculateGradsSequential(layer_t **model, size_t modelSize,
     // LOSS
 
     lossFunctions_t lossFns = lossFunctions[lossConfig.funcType];
-    float loss = lossFns.forward(layerOutputs[modelSize], label);
+    float loss = lossFns.forward(layerOutputs[modelSize], label, forwardReduction);
     trainingStats->loss = loss;
 
     // Backward pass
@@ -49,7 +49,7 @@ trainingStats_t *calculateGradsSequential(layer_t **model, size_t modelSize,
 
     tensor_t gradNext;
     initGradTensor(&gradNext, layerOutputs[modelSize]);
-    lossFns.backward(layerOutputs[modelSize], label, &gradNext, batchSize, lossConfig.reduction);
+    lossFns.backward(layerOutputs[modelSize], label, &gradNext);
 
     for (int i = (int)backwardIndex; i >= 0; i--) {
         tensor_t gradCurr;

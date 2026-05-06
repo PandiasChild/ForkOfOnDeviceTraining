@@ -100,3 +100,18 @@ target_link_libraries(UnitTestFlattenIntegration PRIVATE
         StorageApi
 )
 __register_target_as_unit_test(UnitTestFlattenIntegration)
+
+add_executable(UnitTestOptimizerScaling UnitTestOptimizerScaling.c)
+target_link_libraries(UnitTestOptimizerScaling PRIVATE
+        unity
+        OptimizerApi
+        SgdApi
+        Sgd
+        Optimizer
+        LinearApi
+        CommonLayerLibs
+        TensorApi
+        QuantizationApi
+        StorageApi
+)
+__register_target_as_unit_test(UnitTestOptimizerScaling)

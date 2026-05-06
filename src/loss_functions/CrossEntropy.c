@@ -9,7 +9,8 @@
 
 #include <math.h>
 
-float crossEntropyForwardFloat(tensor_t *softmaxOutput, tensor_t *distribution) {
+float crossEntropyForwardFloat(tensor_t *softmaxOutput, tensor_t *distribution,
+                               reduction_t reduction) {
     size_t n = calcNumberOfElementsByTensor(softmaxOutput);
     float *p = (float *)softmaxOutput->data;
     float *y = (float *)distribution->data;
@@ -26,6 +27,11 @@ float crossEntropyForwardFloat(tensor_t *softmaxOutput, tensor_t *distribution) 
 
         pi = fmaxf(pi, 1e-7f);
         loss += y[i] * -logf(pi);
+    }
+
+    if (reduction == REDUCTION_MEAN && softmaxOutput->shape->numberOfDimensions >= 2) {
+        size_t microbatch = softmaxOutput->shape->dimensions[0];
+        return loss / (float)microbatch;
     }
     return loss;
 }
@@ -53,24 +59,20 @@ float crossEntropyForwardFloat(tensor_t *softmaxOutput, tensor_t *distribution) 
 }*/
 
 static void crossEntropySoftmaxBackwardFloat(tensor_t *softmaxOutput, tensor_t *distribution,
-                                             tensor_t *loss, size_t batchSize,
-                                             reduction_t reduction) {
+                                             tensor_t *loss) {
     size_t totalInputSize = calcNumberOfElementsByTensor(softmaxOutput);
 
     float *softmaxOutputFloat = (float *)softmaxOutput->data;
     float *distributionFloat = (float *)distribution->data;
     float *lossFloat = (float *)loss->data;
 
-    float divisor = (reduction == REDUCTION_MEAN) ? (float)batchSize : 1.0f;
-
     for (size_t i = 0; i < totalInputSize; i++) {
-        lossFloat[i] = (softmaxOutputFloat[i] - distributionFloat[i]) / divisor;
+        lossFloat[i] = softmaxOutputFloat[i] - distributionFloat[i];
     }
 }
 
 static void crossEntropySoftmaxBackwardAsym(tensor_t *softmaxOutput, tensor_t *distribution,
-                                            tensor_t *loss, size_t batchSize,
-                                            reduction_t reduction) {
+                                            tensor_t *loss) {
     size_t inputSize = calcNumberOfElementsByTensor(softmaxOutput);
 
     tensor_t softmaxOutputFloat;
@@ -100,27 +102,29 @@ static void crossEntropySoftmaxBackwardAsym(tensor_t *softmaxOutput, tensor_t *d
     float *distributionFloatArr = (float *)distributionFloat.data;
     float *lossFloatArr = (float *)lossFloat.data;
 
-    float divisor = (reduction == REDUCTION_MEAN) ? (float)batchSize : 1.0f;
-
     for (size_t i = 0; i < inputSize; i++) {
-        lossFloatArr[i] = (softmaxOutputFloatArr[i] - distributionFloatArr[i]) / divisor;
+        lossFloatArr[i] = softmaxOutputFloatArr[i] - distributionFloatArr[i];
     }
 
     convertTensor(&lossFloat, loss);
 }
 
 // IMPORTANT: This implementation already takes the softmax backward into account
-void crossEntropySoftmaxBackward(tensor_t *softmaxOutput, tensor_t *distribution, tensor_t *loss,
-                                 size_t batchSize, reduction_t reduction) {
+void crossEntropySoftmaxBackward(tensor_t *softmaxOutput, tensor_t *distribution, tensor_t *loss) {
     switch (softmaxOutput->quantization->type) {
     case FLOAT32:
-        crossEntropySoftmaxBackwardFloat(softmaxOutput, distribution, loss, batchSize, reduction);
+        crossEntropySoftmaxBackwardFloat(softmaxOutput, distribution, loss);
         break;
     case ASYM:
-        crossEntropySoftmaxBackwardAsym(softmaxOutput, distribution, loss, batchSize, reduction);
+        crossEntropySoftmaxBackwardAsym(softmaxOutput, distribution, loss);
         break;
     default:
         PRINT_ERROR("Unknown QType!");
         exit(1);
     }
+}
+
+float computeMeanScaleCE(size_t totalSamples, tensor_t *modelOutput) {
+    (void)modelOutput;
+    return 1.0f / (float)totalSamples;
 }

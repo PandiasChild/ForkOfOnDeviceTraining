@@ -18,6 +18,7 @@ tensor_t *inference(layer_t **model, size_t numberOfLayers, tensor_t *input);
 tensor_t **inferenceBatched(layer_t **model, size_t numberOfLayers, batch_t *batch);
 
 inferenceStats_t *inferenceWithLoss(layer_t **model, size_t numberOfLayers, tensor_t *input,
-                                    tensor_t *label, lossFuncType_t funcType);
+                                    tensor_t *label, lossFuncType_t funcType,
+                                    reduction_t forwardReduction);
 
 #endif // INFERENCE_H

@@ -4,9 +4,18 @@
 #include "LossFunction.h"
 #include "Tensor.h"
 
-float crossEntropyForwardFloat(tensor_t *softmaxOutput, tensor_t *distribution);
+float crossEntropyForwardFloat(tensor_t *softmaxOutput, tensor_t *distribution,
+                               reduction_t reduction);
 
-void crossEntropySoftmaxBackward(tensor_t *softmaxOutput, tensor_t *distribution, tensor_t *loss,
-                                 size_t batchSize, reduction_t reduction);
+void crossEntropySoftmaxBackward(tensor_t *softmaxOutput, tensor_t *distribution, tensor_t *loss);
+
+/* Per-loss MEAN-reduction scale factor (PyTorch parity).
+ *
+ * Returns 1 / totalSamples for CE. The modelOutput tensor is accepted for
+ * vtable-uniformity with MSE but is ignored: the class axis is internal
+ * aggregation in CE, not an independent loss-term axis.
+ *
+ * Caller must check backwardReduction == REDUCTION_MEAN before invoking. */
+float computeMeanScaleCE(size_t totalSamples, tensor_t *modelOutput);
 
 #endif // CROSSENTROPY_H

@@ -114,8 +114,9 @@ void testMultiLayerBackward_WithCrossEntropy_DoesNotCrash() {
     tensorFillFromFloatBuffer(label, (float[]){1.0f, 0.0f}, 2);
 
     trainingStats_t *stats = calculateGradsSequential(
-        model, sizeModel, (lossConfig_t){.funcType = CROSS_ENTROPY, .reduction = REDUCTION_SUM},
-        /* batchSize */ 1, input, label);
+        model, sizeModel,
+        (lossConfig_t){.funcType = CROSS_ENTROPY, .backwardReduction = REDUCTION_SUM},
+        REDUCTION_SUM, input, label);
 
     /* CAPTURE. */
     bool capturedNotNull = (stats != NULL);
@@ -232,8 +233,9 @@ void testMultiLayerBackward_WithManualInit_DoesNotCrash() {
     tensorFillFromFloatBuffer(label, (float[]){1.0f, 0.0f}, 2);
 
     trainingStats_t *stats = calculateGradsSequential(
-        model, sizeModel, (lossConfig_t){.funcType = CROSS_ENTROPY, .reduction = REDUCTION_SUM},
-        /* batchSize */ 1, input, label);
+        model, sizeModel,
+        (lossConfig_t){.funcType = CROSS_ENTROPY, .backwardReduction = REDUCTION_SUM},
+        REDUCTION_SUM, input, label);
 
     /* CAPTURE. The original test checks that b1Grad has at least one nonzero
      * value AFTER the backward pass; we capture that boolean before frees so
@@ -369,8 +371,9 @@ void testMultiLayerTraining_MultipleSteps_GradsAccumulate() {
     float capturedLoss[3];
     for (size_t step = 0; step < 3; step++) {
         trainingStats_t *stats = calculateGradsSequential(
-            model, sizeModel, (lossConfig_t){.funcType = CROSS_ENTROPY, .reduction = REDUCTION_SUM},
-            /* batchSize */ 1, input, label);
+            model, sizeModel,
+            (lossConfig_t){.funcType = CROSS_ENTROPY, .backwardReduction = REDUCTION_SUM},
+            REDUCTION_SUM, input, label);
         capturedNotNull[step] = (stats != NULL);
         capturedLoss[step] = stats ? stats->loss : -1.0f;
         freeTrainingStats(stats);

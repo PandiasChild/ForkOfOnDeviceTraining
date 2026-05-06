@@ -5,5 +5,14 @@
 #include "MSE.h"
 
 lossFunctions_t lossFunctions[] = {
-    [MSE] = {mseLossForward, mseLossBackward},
-    [CROSS_ENTROPY] = {crossEntropyForwardFloat, crossEntropySoftmaxBackward}};
+    [MSE] = {mseLossForward, mseLossBackward, computeMeanScaleMSE},
+    [CROSS_ENTROPY] = {crossEntropyForwardFloat, crossEntropySoftmaxBackward, computeMeanScaleCE},
+};
+
+lossConfig_t defaultLossConfig(lossFuncType_t funcType) {
+    lossConfig_t cfg;
+    cfg.funcType = funcType;
+    cfg.backwardReduction = REDUCTION_MEAN;
+    cfg.classWeights = NULL;
+    return cfg;
+}

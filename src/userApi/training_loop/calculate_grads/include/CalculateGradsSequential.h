@@ -4,7 +4,7 @@
 #include "TrainingLoopApi.h"
 
 trainingStats_t *calculateGradsSequential(layer_t **model, size_t modelSize,
-                                          lossConfig_t lossConfig, size_t batchSize,
+                                          lossConfig_t lossConfig, reduction_t forwardReduction,
                                           tensor_t *input, tensor_t *label);
 
 #endif // CALCULATE_GRADS_SEQUENTIAL_H

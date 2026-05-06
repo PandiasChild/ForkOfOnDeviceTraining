@@ -9,6 +9,7 @@
 #include "Linear.h"
 #include "LinearApi.h"
 #include "LossFunction.h"
+#include "OptimizerApi.h"
 #include "QuantizationApi.h"
 #include "ReluApi.h"
 #include "SgdApi.h"
@@ -70,14 +71,21 @@ void testCalculateGradsSequential_MatchesPyTorch() {
 
     for (size_t i = 0; i < 23; i++) {
         trainingStats_t *ts0 = calculateGradsSequential(
-            model, sizeModel, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM}, 1,
-            input0, label0);
+            model, sizeModel, (lossConfig_t){.funcType = MSE, .backwardReduction = REDUCTION_SUM},
+            REDUCTION_SUM, input0, label0);
         trainingStats_t *ts1 = calculateGradsSequential(
-            model, sizeModel, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM}, 1,
-            input1, label1);
+            model, sizeModel, (lossConfig_t){.funcType = MSE, .backwardReduction = REDUCTION_SUM},
+            REDUCTION_SUM, input1, label1);
         trainingStats_t *ts2 = calculateGradsSequential(
-            model, sizeModel, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM}, 1,
-            input2, label2);
+            model, sizeModel, (lossConfig_t){.funcType = MSE, .backwardReduction = REDUCTION_SUM},
+            REDUCTION_SUM, input2, label2);
+
+        /* PyTorch reference is MSE-mean-of-features (`2/F * (o-l)` per element). Post-#135
+         * backward writes raw `2*(o-l)`; recover the reference trajectory via explicit
+         * 1/F = 1/2 scaling here. trainingEpochDefault does this implicitly when
+         * backwardReduction == REDUCTION_MEAN; this test exercises calculateGradsSequential
+         * directly, so the scaling must be manual. */
+        scaleOptimizerGradients(sgd, 1.0f / 2.0f);
 
         sgdFns.step(sgd);
         sgdFns.zero(sgd);
@@ -139,10 +147,12 @@ void testEvaluationBatch_ReturnsAverageLoss() {
     tensor_t *input1 = buildFloatTensor2D(1, 3, (float[]){1.f, 0.f, 0.f}, 3);
     tensor_t *label1 = buildFloatTensor2D(1, 2, (float[]){5.f, 5.f}, 2);
 
-    /* Compute expected losses via inferenceWithLoss directly */
-    inferenceStats_t *stats0 = inferenceWithLoss(model, 1, input0, label0, MSE);
-    inferenceStats_t *stats1 = inferenceWithLoss(model, 1, input1, label1, MSE);
-    float expectedAvgLoss = (stats0->loss + stats1->loss) / 2.0f;
+    /* Compute expected losses via inferenceWithLoss directly.
+     * evaluationBatch now returns a pure sum (no division); expected = sum of
+     * per-sample MEAN losses. */
+    inferenceStats_t *stats0 = inferenceWithLoss(model, 1, input0, label0, MSE, REDUCTION_MEAN);
+    inferenceStats_t *stats1 = inferenceWithLoss(model, 1, input1, label1, MSE, REDUCTION_MEAN);
+    float expectedSumLoss = stats0->loss + stats1->loss;
     freeInferenceStats(stats0);
     freeInferenceStats(stats1);
 
@@ -157,11 +167,11 @@ void testEvaluationBatch_ReturnsAverageLoss() {
     sample_t *samples[] = {s0, s1};
     batch_t batch = {.samples = samples, .size = 2};
 
-    float actualAvgLoss = evaluationBatch(model, 1, MSE, &batch, inferenceWithLoss);
+    float actualSumLoss = evaluationBatch(model, 1, MSE, &batch, inferenceWithLoss, REDUCTION_MEAN);
 
     /* CAPTURE. */
-    float capturedExpected = expectedAvgLoss;
-    float capturedActual = actualAvgLoss;
+    float capturedExpected = expectedSumLoss;
+    float capturedActual = actualSumLoss;
 
     /* FREE in reverse-init order. evaluationBatch consumed s0/s1 (freed via
      * freeSample inside the production loop). The tensors they referenced
@@ -265,7 +275,7 @@ void testEvaluationEpoch_ReturnsAverageLossAcrossBatches() {
     dataLoader_t *dl =
         dataLoaderInit(getEpochSample, getEpochDatasetSize, 1, NULL, NULL, false, 0, true);
 
-    float totalAvg = evaluationEpoch(model, 1, MSE, dl, inferenceWithLoss);
+    float totalAvg = evaluationEpoch(model, 1, MSE, dl, inferenceWithLoss, REDUCTION_MEAN);
 
     /* CAPTURE. */
     float capturedTotalAvg = totalAvg;
@@ -282,7 +292,7 @@ void testEvaluationEpoch_ReturnsAverageLossAcrossBatches() {
      * s1: MSE([1,5],[0,1]) = ((1-0)^2+(5-1)^2)/2 = 8.5
      * s2: MSE([3,1],[1,0]) = ((3-1)^2+(1-0)^2)/2 = 2.5
      * s3: MSE([1,3],[0,1]) = ((1-0)^2+(3-1)^2)/2 = 2.5
-     * 4 batches of 1, avg of per-batch avg = (8.5+8.5+2.5+2.5)/4 = 5.5 */
+     * flat aggregator: totalLoss=22, totalSamples=4, mean=22/4=5.5 */
     TEST_ASSERT_FLOAT_WITHIN(0.01f, 5.5f, capturedTotalAvg);
 }
 
@@ -305,12 +315,11 @@ void testEvaluationEpoch_MinibatchMatchesMicrobatchAverage() {
 
     /* batchSize=2 → 2 minibatches of 2 samples each
      * Per-sample losses: 8.5, 8.5, 2.5, 2.5
-     * Batch 0 avg = (8.5+8.5)/2 = 8.5; Batch 1 avg = (2.5+2.5)/2 = 2.5
-     * Epoch avg = (8.5+2.5)/2 = 5.5 — identical to microbatch result */
+     * flat aggregator: totalLoss=22, totalSamples=4, mean=22/4=5.5 */
     dataLoader_t *dl =
         dataLoaderInit(getEpochSample, getEpochDatasetSize, 2, NULL, NULL, false, 0, true);
 
-    float totalAvg = evaluationEpoch(model, 1, MSE, dl, inferenceWithLoss);
+    float totalAvg = evaluationEpoch(model, 1, MSE, dl, inferenceWithLoss, REDUCTION_MEAN);
 
     /* CAPTURE. */
     float capturedTotalAvg = totalAvg;
@@ -347,11 +356,15 @@ void testTrainingBatchDefault_ReturnsAverageLossAndAccumulatesGrads() {
     tensor_t *in1 = buildFloatTensor2D(1, 3, (float[]){5.f, -1.f, 2.f}, 3);
     tensor_t *lb1 = buildFloatTensor2D(1, 2, (float[]){43.f, 249.f}, 2);
 
-    /* Get expected losses from individual calculateGrads calls */
+    /* Get expected losses from individual calculateGrads calls.
+     * Use REDUCTION_MEAN + batchSize=2 to match what trainingBatchDefault threads
+     * through when called with forwardReduction=REDUCTION_MEAN. */
     trainingStats_t *ts0 = calculateGradsSequential(
-        model, 1, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM}, 1, in0, lb0);
+        model, 1, (lossConfig_t){.funcType = MSE, .backwardReduction = REDUCTION_SUM},
+        REDUCTION_MEAN, in0, lb0);
     trainingStats_t *ts1 = calculateGradsSequential(
-        model, 1, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM}, 1, in1, lb1);
+        model, 1, (lossConfig_t){.funcType = MSE, .backwardReduction = REDUCTION_SUM},
+        REDUCTION_MEAN, in1, lb1);
     float expectedAvg = (ts0->loss + ts1->loss) / 2.0f;
     freeTrainingStats(ts0);
     freeTrainingStats(ts1);
@@ -376,9 +389,9 @@ void testTrainingBatchDefault_ReturnsAverageLossAndAccumulatesGrads() {
     sample_t *samples[] = {s0, s1};
     batch_t batch = {.samples = samples, .size = 2};
 
-    float actualAvg =
-        trainingBatchDefault(model, 1, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM},
-                             &batch, calculateGradsSequential);
+    float actualAvg = trainingBatchDefault(
+        model, 1, (lossConfig_t){.funcType = MSE, .backwardReduction = REDUCTION_SUM}, &batch,
+        calculateGradsSequential, REDUCTION_MEAN);
 
     /* CAPTURE. */
     float capturedExpected = expectedAvg;
@@ -395,6 +408,72 @@ void testTrainingBatchDefault_ReturnsAverageLossAndAccumulatesGrads() {
 
     /* ASSERT. */
     TEST_ASSERT_FLOAT_WITHIN(1e-5f, capturedExpected, capturedActual);
+}
+
+void testTrainingBatchDefault_SumAggregatesWithoutDivision() {
+    tensor_t *wParam = buildFloatTensor2D(2, 3, (float[]){1.f, 1.f, 1.f, 1.f, 1.f, 1.f}, 6);
+    tensor_t *wGrad = gradInitFloat(wParam, NULL);
+    parameter_t *w = parameterInit(wParam, wGrad);
+
+    tensor_t *bParam = buildFloatTensor2D(1, 2, (float[]){-1.f, 3.f}, 2);
+    tensor_t *bGrad = gradInitFloat(bParam, NULL);
+    parameter_t *b = parameterInit(bParam, bGrad);
+
+    quantization_t testQ;
+    initFloat32Quantization(&testQ);
+    layer_t *linear = linearLayerInit(w, b, &testQ, &testQ, &testQ, &testQ);
+    layer_t *model[] = {linear};
+
+    tensor_t *in0 = buildFloatTensor2D(1, 3, (float[]){-4.f, 1.f, 9.f}, 3);
+    tensor_t *lb0 = buildFloatTensor2D(1, 2, (float[]){59.f, -23.f}, 2);
+    tensor_t *in1 = buildFloatTensor2D(1, 3, (float[]){5.f, -1.f, 2.f}, 3);
+    tensor_t *lb1 = buildFloatTensor2D(1, 2, (float[]){43.f, 249.f}, 2);
+
+    trainingStats_t *ts0 = calculateGradsSequential(
+        model, 1, (lossConfig_t){.funcType = MSE, .backwardReduction = REDUCTION_SUM},
+        REDUCTION_SUM, in0, lb0);
+    trainingStats_t *ts1 = calculateGradsSequential(
+        model, 1, (lossConfig_t){.funcType = MSE, .backwardReduction = REDUCTION_SUM},
+        REDUCTION_SUM, in1, lb1);
+    float expectedSum = ts0->loss + ts1->loss;
+    freeTrainingStats(ts0);
+    freeTrainingStats(ts1);
+
+    /* Reset grads. */
+    float *gArr = (float *)wGrad->data;
+    for (size_t i = 0; i < 6; i++) {
+        gArr[i] = 0.f;
+    }
+    float *bgArr = (float *)bGrad->data;
+    bgArr[0] = 0.f;
+    bgArr[1] = 0.f;
+
+    sample_t *s0 = reserveMemory(sizeof(sample_t));
+    s0->item = in0;
+    s0->label = lb0;
+    sample_t *s1 = reserveMemory(sizeof(sample_t));
+    s1->item = in1;
+    s1->label = lb1;
+    sample_t *samples[] = {s0, s1};
+    batch_t batch = {.samples = samples, .size = 2};
+
+    /* SUM forwardReduction: aggregator returns Σ stats->loss, NOT divided by batch->size. */
+    float actualSum = trainingBatchDefault(
+        model, 1, (lossConfig_t){.funcType = MSE, .backwardReduction = REDUCTION_SUM}, &batch,
+        calculateGradsSequential, REDUCTION_SUM);
+
+    float capturedExpected = expectedSum;
+    float capturedActual = actualSum;
+
+    freeTensor(lb1);
+    freeTensor(in1);
+    freeTensor(lb0);
+    freeTensor(in0);
+    freeLinearLayer(linear);
+    freeParameter(b);
+    freeParameter(w);
+
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, capturedExpected, capturedActual);
 }
 
 void testTrainingEpochDefault_DoesOptimizerStepPerBatch() {
@@ -429,8 +508,8 @@ void testTrainingEpochDefault_DoesOptimizerStepPerBatch() {
         dataLoaderInit(getEpochSample, getEpochDatasetSize, 1, NULL, NULL, false, 0, true);
 
     float epochLoss = trainingEpochDefault(
-        model, sizeModel, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM}, dl, sgd,
-        calculateGradsSequential);
+        model, sizeModel, (lossConfig_t){.funcType = MSE, .backwardReduction = REDUCTION_SUM}, dl,
+        sgd, calculateGradsSequential, REDUCTION_SUM);
 
     /* CAPTURE assertion values BEFORE any free. */
     bool capturedChanged = false;
@@ -490,8 +569,8 @@ void testTrainingEpochDefault_MinibatchStepsOncePerMinibatch() {
         dataLoaderInit(getEpochSample, getEpochDatasetSize, 2, NULL, NULL, false, 0, true);
 
     float epochLoss = trainingEpochDefault(
-        model, sizeModel, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM}, dl, sgd,
-        calculateGradsSequential);
+        model, sizeModel, (lossConfig_t){.funcType = MSE, .backwardReduction = REDUCTION_SUM}, dl,
+        sgd, calculateGradsSequential, REDUCTION_SUM);
 
     /* CAPTURE. */
     bool capturedChanged = false;
@@ -540,8 +619,8 @@ void testTrainingRun_ReturnsResult() {
         dataLoaderInit(getEpochSample, getEpochDatasetSize, 1, NULL, NULL, false, 0, true);
 
     trainingRunResult_t result =
-        trainingRun(model, 1, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM}, trainDl,
-                    evalDl, sgd, 2, calculateGradsSequential, inferenceWithLoss, NULL);
+        trainingRun(model, 1, (lossConfig_t){.funcType = MSE, .backwardReduction = REDUCTION_SUM},
+                    trainDl, evalDl, sgd, 2, calculateGradsSequential, inferenceWithLoss, NULL);
 
     /* CAPTURE. */
     float capturedFinalTrainLoss = result.finalTrainLoss;
@@ -603,8 +682,8 @@ void testTrainingRun_CallsCallbackEachEpochWithStats() {
 
     size_t numberOfEpochs = 3;
     trainingRunResult_t result = trainingRun(
-        model, 1, (lossConfig_t){.funcType = MSE, .reduction = REDUCTION_SUM}, trainDl, evalDl, sgd,
-        numberOfEpochs, calculateGradsSequential, inferenceWithLoss, captureCallback);
+        model, 1, (lossConfig_t){.funcType = MSE, .backwardReduction = REDUCTION_SUM}, trainDl,
+        evalDl, sgd, numberOfEpochs, calculateGradsSequential, inferenceWithLoss, captureCallback);
 
     /* CAPTURE. */
     size_t capturedCbCallCount = cbCallCount;
@@ -655,7 +734,8 @@ void testEvaluationEpochWithMetrics_AllCorrect() {
         dataLoaderInit(getEpochSample, getEpochDatasetSize, 1, NULL, NULL, false, 0, true);
 
     /* Identity model: all 4 samples predict correctly (same as testEvaluationEpochAccuracy) */
-    epochStats_t stats = evaluationEpochWithMetrics(model, 1, MSE, dl, inferenceWithLoss);
+    epochStats_t stats =
+        evaluationEpochWithMetrics(model, 1, MSE, dl, inferenceWithLoss, REDUCTION_MEAN);
 
     /* CAPTURE. */
     float capturedLoss = stats.loss;
@@ -677,6 +757,112 @@ void testEvaluationEpochWithMetrics_AllCorrect() {
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, capturedPrecision);
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, capturedRecall);
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, capturedF1);
+}
+
+/* Single-sample dataset for fine-grained gradient-magnitude tests. The
+ * mirror-image of epochDataset but with exactly one sample, F=4, so
+ * computeMeanScaleMSE returns 1/(N*F) = 1/4 — non-trivial scaling that
+ * the optimizer-scaling mutation breaks measurably. */
+static tensor_t *singleSampleItem;
+static tensor_t *singleSampleLabel;
+static dataset_t singleSampleDataset;
+static tensorArray_t singleSampleItemsArr;
+static tensorArray_t singleSampleLabelsArr;
+static bool singleSampleDatasetInit = false;
+
+static void initSingleSampleDataset() {
+    if (singleSampleDatasetInit) {
+        return;
+    }
+    singleSampleItem = buildFloatTensor2D(1, 4, (float[]){1.f, 1.f, 1.f, 1.f}, 4);
+    singleSampleLabel = buildFloatTensor2D(1, 4, (float[]){0.f, 0.f, 0.f, 0.f}, 4);
+    singleSampleItemsArr.array = &singleSampleItem;
+    singleSampleItemsArr.size = 1;
+    singleSampleLabelsArr.array = &singleSampleLabel;
+    singleSampleLabelsArr.size = 1;
+    singleSampleDataset.items = &singleSampleItemsArr;
+    singleSampleDataset.labels = &singleSampleLabelsArr;
+    singleSampleDatasetInit = true;
+}
+
+static void freeSingleSampleDataset() {
+    if (!singleSampleDatasetInit) {
+        return;
+    }
+    freeTensor(singleSampleItem);
+    freeTensor(singleSampleLabel);
+    singleSampleDatasetInit = false;
+}
+
+static sample_t *getSingleSample(size_t id) {
+    sample_t *s = reserveMemory(sizeof(sample_t));
+    s->item = singleSampleDataset.items->array[id];
+    s->label = singleSampleDataset.labels->array[id];
+    return s;
+}
+
+static size_t getSingleSampleDatasetSize() {
+    return 1;
+}
+
+void testTrainingEpochDefault_MeanScalesGradByOneOverNF() {
+    /* 4×4 identity-weight linear layer, single sample with input=[1,1,1,1]
+     * and label=[0,0,0,0], lr=0.01, momentum=0. F=4 (4 output features),
+     * N=1, B=1.
+     *
+     * Forward: output = W * input + b = [1, 1, 1, 1] (identity passes input).
+     * MSE backward raw: 2*(o - l) = [2, 2, 2, 2].
+     * Linear backward dL/dW[i,j] = dL/dout[i] * input[j] = 2 * 1 = 2 in
+     * every position.
+     * scaleOptimizerGradients factor = 1/(N*F) = 1/4.
+     * Scaled dL/dW = 0.5 in every position.
+     * Step with lr=0.01: each weight changes by 0.01 * 0.5 = 0.005.
+     *   Diagonal:  W[i,i] = 1.0 - 0.005 = 0.995.
+     *   Off-diag:  W[i,j] = 0.0 - 0.005 = -0.005.
+     *
+     * Mutation (no scaleOptimizerGradients call): each weight changes by
+     * 0.01 * 2.0 = 0.02 instead. W[0,0] = 0.98, W[0,1] = -0.02.
+     * Tolerance 1e-4 distinguishes 0.995 from 0.98 cleanly. */
+
+    static const float wInitData[16] = {
+        1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f,
+    };
+    tensor_t *wParam = buildFloatTensor2D(4, 4, wInitData, 16);
+    tensor_t *wGrad = gradInitFloat(wParam, NULL);
+    parameter_t *w = parameterInit(wParam, wGrad);
+
+    tensor_t *bParam = buildFloatTensor2D(1, 4, (float[]){0.f, 0.f, 0.f, 0.f}, 4);
+    tensor_t *bGrad = gradInitFloat(bParam, NULL);
+    parameter_t *b = parameterInit(bParam, bGrad);
+
+    quantization_t testQ;
+    initFloat32Quantization(&testQ);
+    layer_t *linear = linearLayerInit(w, b, &testQ, &testQ, &testQ, &testQ);
+    layer_t *model[] = {linear};
+
+    /* momentumFactor=0 makes SGD_M behave like plain SGD. */
+    optimizer_t *sgd = sgdMCreateOptim(0.01f, 0.f, 0.f, model, 1, FLOAT32);
+
+    initSingleSampleDataset();
+    dataLoader_t *dl =
+        dataLoaderInit(getSingleSample, getSingleSampleDatasetSize, 1, NULL, NULL, false, 0, true);
+
+    /* defaultLossConfig: backwardReduction = REDUCTION_MEAN. */
+    lossConfig_t cfg = defaultLossConfig(MSE);
+
+    trainingEpochDefault(model, 1, cfg, dl, sgd, calculateGradsSequential, REDUCTION_MEAN);
+
+    /* CAPTURE before any free. */
+    float capturedW00 = ((float *)wParam->data)[0];
+    float capturedW01 = ((float *)wParam->data)[1];
+
+    freeOptimSgdM(sgd);
+    freeDataLoader(dl);
+    freeLinearLayer(linear);
+    freeSingleSampleDataset();
+
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.995f, capturedW00);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, -0.005f, capturedW01);
 }
 
 /* Partially-correct dataset: 4 samples, 3 correct, 1 wrong */
@@ -760,7 +946,8 @@ void testEvaluationEpochWithMetrics_PartiallyCorrect() {
     dataLoader_t *dl =
         dataLoaderInit(getPartialSample, getPartialDatasetSize, 1, NULL, NULL, false, 0, true);
 
-    epochStats_t stats = evaluationEpochWithMetrics(model, 1, MSE, dl, inferenceWithLoss);
+    epochStats_t stats =
+        evaluationEpochWithMetrics(model, 1, MSE, dl, inferenceWithLoss, REDUCTION_MEAN);
 
     /* CAPTURE. */
     float capturedAccuracy = stats.accuracy;
@@ -867,7 +1054,8 @@ void testEvaluationEpochWithMetrics_HandlesZeroPredictionClass() {
     dataLoader_t *dl =
         dataLoaderInit(getZeroPredSample, getZeroPredDatasetSize, 1, NULL, NULL, false, 0, true);
 
-    epochStats_t stats = evaluationEpochWithMetrics(model, 1, MSE, dl, inferenceWithLoss);
+    epochStats_t stats =
+        evaluationEpochWithMetrics(model, 1, MSE, dl, inferenceWithLoss, REDUCTION_MEAN);
 
     /* CAPTURE. */
     float capturedAccuracy = stats.accuracy;
@@ -924,7 +1112,7 @@ void testEvaluationEpochWithReport_ReturnsConfusionMatrix() {
     /* Pre-fill with non-zero to verify WithReport zeroes the caller's buffer before accumulating */
     size_t cm[2 * 2] = {99, 99, 99, 99};
     classificationReport_t report =
-        evaluationEpochWithReport(model, 1, MSE, dl, inferenceWithLoss, cm, 2);
+        evaluationEpochWithReport(model, 1, MSE, dl, inferenceWithLoss, cm, 2, REDUCTION_MEAN);
 
     /* CAPTURE. */
     size_t capturedCM[4];
@@ -953,6 +1141,281 @@ void testEvaluationEpochWithReport_ReturnsConfusionMatrix() {
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.75f, capturedAccuracy);
 }
 
+void testInferenceWithLoss_PropagatesForwardReductionSum() {
+    /* Identity model: output = input. Allows the loss value to be computed
+     * independently of the forward chain — only the reduction parameter
+     * threading is exercised here. */
+    tensor_t *wParam = buildFloatTensor2D(2, 2, (float[]){1.f, 0.f, 0.f, 1.f}, 4);
+    tensor_t *wGrad = gradInitFloat(wParam, NULL);
+    parameter_t *w = parameterInit(wParam, wGrad);
+
+    tensor_t *bParam = buildFloatTensor2D(1, 2, (float[]){0.f, 0.f}, 2);
+    tensor_t *bGrad = gradInitFloat(bParam, NULL);
+    parameter_t *b = parameterInit(bParam, bGrad);
+
+    quantization_t testQ;
+    initFloat32Quantization(&testQ);
+    layer_t *linear = linearLayerInit(w, b, &testQ, &testQ, &testQ, &testQ);
+    layer_t *model[] = {linear};
+
+    tensor_t *input = buildFloatTensor2D(1, 2, (float[]){5.f, 1.f}, 2);
+    tensor_t *label = buildFloatTensor2D(1, 2, (float[]){1.f, 0.f}, 2);
+
+    /* SUM: (5-1)² + (1-0)² = 17. MEAN: 17 / 2 = 8.5. Different by construction. */
+    inferenceStats_t *sumStats = inferenceWithLoss(model, 1, input, label, MSE, REDUCTION_SUM);
+    inferenceStats_t *meanStats = inferenceWithLoss(model, 1, input, label, MSE, REDUCTION_MEAN);
+
+    float capturedSum = sumStats->loss;
+    float capturedMean = meanStats->loss;
+
+    freeInferenceStats(sumStats);
+    freeInferenceStats(meanStats);
+    freeTensor(label);
+    freeTensor(input);
+    freeLinearLayer(linear);
+    freeParameter(b);
+    freeParameter(w);
+
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 17.0f, capturedSum);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 8.5f, capturedMean);
+}
+
+void testTrainingEpochDefault_SumBackwardSkipsOptimizerScaling() {
+    /* With backwardReduction = SUM, gradients should land at the optimizer
+     * unscaled — multiple steps with SUM should produce a different weight
+     * trajectory than MEAN over the same data. */
+    static const float wInitData[4] = {1.f, 0.f, 0.f, 1.f};
+    static const float bInitData[2] = {0.f, 0.f};
+
+    tensor_t *wParam = buildFloatTensor2D(2, 2, wInitData, 4);
+    tensor_t *wGrad = gradInitFloat(wParam, NULL);
+    parameter_t *w = parameterInit(wParam, wGrad);
+    tensor_t *bParam = buildFloatTensor2D(1, 2, bInitData, 2);
+    tensor_t *bGrad = gradInitFloat(bParam, NULL);
+    parameter_t *b = parameterInit(bParam, bGrad);
+
+    quantization_t testQ;
+    initFloat32Quantization(&testQ);
+    layer_t *linear = linearLayerInit(w, b, &testQ, &testQ, &testQ, &testQ);
+    layer_t *model[] = {linear};
+
+    /* Use a very small learning rate so SUM doesn't NaN — SUM gradients are
+     * larger by N*F than MEAN gradients on the same data. */
+    optimizer_t *sgd = sgdMCreateOptim(0.001f, 0.f, 0.f, model, 1, FLOAT32);
+
+    initEpochDataset();
+    dataLoader_t *dl =
+        dataLoaderInit(getEpochSample, getEpochDatasetSize, 1, NULL, NULL, false, 0, true);
+
+    /* SUM backwardReduction skips scaleOptimizerGradients. */
+    lossConfig_t cfg = defaultLossConfig(MSE);
+    cfg.backwardReduction = REDUCTION_SUM;
+
+    float epochLoss =
+        trainingEpochDefault(model, 1, cfg, dl, sgd, calculateGradsSequential, REDUCTION_SUM);
+
+    bool capturedChanged = false;
+    {
+        float *curWeights = (float *)wParam->data;
+        for (size_t i = 0; i < 4; i++) {
+            if (curWeights[i] != wInitData[i]) {
+                capturedChanged = true;
+                break;
+            }
+        }
+    }
+    bool capturedFinite = (epochLoss == epochLoss) && (epochLoss != 1.0f / 0.0f);
+    float capturedEpochLoss = epochLoss;
+
+    freeOptimSgdM(sgd);
+    freeDataLoader(dl);
+    freeLinearLayer(linear);
+    freeEpochDataset();
+
+    TEST_ASSERT_TRUE(capturedChanged);
+    TEST_ASSERT_TRUE(capturedFinite);
+    TEST_ASSERT_TRUE(capturedEpochLoss > 0.0f);
+}
+
+void testTrainingEpochDefault_MeanForwardSumBackward_MixedCombination() {
+    /* Leo's stated use case: report per-sample MEAN losses (comparable
+     * across runs), but step the optimizer with raw SUM gradients (no
+     * scaleOptimizerGradients call). */
+    static const float wInitData[4] = {1.f, 0.f, 0.f, 1.f};
+    static const float bInitData[2] = {0.f, 0.f};
+
+    tensor_t *wParam = buildFloatTensor2D(2, 2, wInitData, 4);
+    tensor_t *wGrad = gradInitFloat(wParam, NULL);
+    parameter_t *w = parameterInit(wParam, wGrad);
+    tensor_t *bParam = buildFloatTensor2D(1, 2, bInitData, 2);
+    tensor_t *bGrad = gradInitFloat(bParam, NULL);
+    parameter_t *b = parameterInit(bParam, bGrad);
+
+    quantization_t testQ;
+    initFloat32Quantization(&testQ);
+    layer_t *linear = linearLayerInit(w, b, &testQ, &testQ, &testQ, &testQ);
+    layer_t *model[] = {linear};
+
+    optimizer_t *sgd = sgdMCreateOptim(0.001f, 0.f, 0.f, model, 1, FLOAT32);
+
+    initEpochDataset();
+    dataLoader_t *dl =
+        dataLoaderInit(getEpochSample, getEpochDatasetSize, 1, NULL, NULL, false, 0, true);
+
+    lossConfig_t cfg = defaultLossConfig(MSE);
+    cfg.backwardReduction = REDUCTION_SUM; /* SUM gradients, no optimizer scaling */
+
+    /* forwardReduction = MEAN: stats->loss is per-sample mean, comparable. */
+    float epochLoss =
+        trainingEpochDefault(model, 1, cfg, dl, sgd, calculateGradsSequential, REDUCTION_MEAN);
+
+    bool capturedChanged = false;
+    {
+        float *curWeights = (float *)wParam->data;
+        for (size_t i = 0; i < 4; i++) {
+            if (curWeights[i] != wInitData[i]) {
+                capturedChanged = true;
+                break;
+            }
+        }
+    }
+    bool capturedFinite = (epochLoss == epochLoss) && (epochLoss != 1.0f / 0.0f);
+    float capturedEpochLoss = epochLoss;
+
+    freeOptimSgdM(sgd);
+    freeDataLoader(dl);
+    freeLinearLayer(linear);
+    freeEpochDataset();
+
+    TEST_ASSERT_TRUE(capturedChanged);
+    TEST_ASSERT_TRUE(capturedFinite);
+    TEST_ASSERT_TRUE(capturedEpochLoss > 0.0f);
+    /* MEAN-reported loss should be per-sample-scale (small), not raw-SUM-scale (large). */
+    TEST_ASSERT_TRUE(capturedEpochLoss < 100.0f);
+}
+
+void testEvaluationEpoch_FlatAggregator_DivisionByTotalSamples() {
+    initEpochDataset();
+
+    tensor_t *wParam = buildFloatTensor2D(2, 2, (float[]){1.f, 0.f, 0.f, 1.f}, 4);
+    tensor_t *wGrad = gradInitFloat(wParam, NULL);
+    parameter_t *w = parameterInit(wParam, wGrad);
+    tensor_t *bParam = buildFloatTensor2D(1, 2, (float[]){0.f, 0.f}, 2);
+    tensor_t *bGrad = gradInitFloat(bParam, NULL);
+    parameter_t *b = parameterInit(bParam, bGrad);
+
+    quantization_t testQ;
+    initFloat32Quantization(&testQ);
+    layer_t *linear = linearLayerInit(w, b, &testQ, &testQ, &testQ, &testQ);
+    layer_t *model[] = {linear};
+
+    /* batchSize=2 → 2 batches of 2 samples; per-sample MSE losses are
+     * 8.5, 8.5, 2.5, 2.5 (computed by hand, as in
+     * testEvaluationEpoch_MinibatchMatchesMicrobatchAverage).
+     * Flat aggregator: totalLoss = 8.5+8.5+2.5+2.5 = 22; totalSamples = 4;
+     * mean = 22/4 = 5.5. */
+    dataLoader_t *dl =
+        dataLoaderInit(getEpochSample, getEpochDatasetSize, 2, NULL, NULL, false, 0, true);
+
+    /* MEAN: divides by totalSamples. */
+    float meanLoss = evaluationEpoch(model, 1, MSE, dl, inferenceWithLoss, REDUCTION_MEAN);
+
+    float capturedMean = meanLoss;
+
+    freeDataLoader(dl);
+    freeLinearLayer(linear);
+    freeParameter(b);
+    freeParameter(w);
+    freeEpochDataset();
+
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 5.5f, capturedMean);
+}
+
+void testEvaluationEpoch_SumPath_ReturnsRawTotal() {
+    initEpochDataset();
+
+    tensor_t *wParam = buildFloatTensor2D(2, 2, (float[]){1.f, 0.f, 0.f, 1.f}, 4);
+    tensor_t *wGrad = gradInitFloat(wParam, NULL);
+    parameter_t *w = parameterInit(wParam, wGrad);
+    tensor_t *bParam = buildFloatTensor2D(1, 2, (float[]){0.f, 0.f}, 2);
+    tensor_t *bGrad = gradInitFloat(bParam, NULL);
+    parameter_t *b = parameterInit(bParam, bGrad);
+
+    quantization_t testQ;
+    initFloat32Quantization(&testQ);
+    layer_t *linear = linearLayerInit(w, b, &testQ, &testQ, &testQ, &testQ);
+    layer_t *model[] = {linear};
+
+    dataLoader_t *dl =
+        dataLoaderInit(getEpochSample, getEpochDatasetSize, 1, NULL, NULL, false, 0, true);
+
+    /* SUM forwardReduction: returns raw totalLoss = sum of per-sample
+     * SUM losses. Per-sample SUM: 17, 17, 5, 5 (= per-sample MEAN * F=2). */
+    float sumLoss = evaluationEpoch(model, 1, MSE, dl, inferenceWithLoss, REDUCTION_SUM);
+
+    float capturedSum = sumLoss;
+
+    freeDataLoader(dl);
+    freeLinearLayer(linear);
+    freeParameter(b);
+    freeParameter(w);
+    freeEpochDataset();
+
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 17.f + 17.f + 5.f + 5.f, capturedSum);
+}
+
+void testTrainingRun_HardcodesForwardReductionMean() {
+    /* trainingRun should produce comparable train and eval losses (both
+     * per-sample MEAN) regardless of lossConfig's other fields. With
+     * backwardReduction = MEAN and a near-trivial learnable dataset,
+     * train and eval losses should both be small finite floats — and in
+     * the same ballpark, since both are MEAN-reduced over the same data
+     * shape. */
+    tensor_t *wParam = buildFloatTensor2D(2, 2, (float[]){1.f, 0.f, 0.f, 1.f}, 4);
+    tensor_t *wGrad = gradInitFloat(wParam, NULL);
+    parameter_t *w = parameterInit(wParam, wGrad);
+    tensor_t *bParam = buildFloatTensor2D(1, 2, (float[]){0.f, 0.f}, 2);
+    tensor_t *bGrad = gradInitFloat(bParam, NULL);
+    parameter_t *b = parameterInit(bParam, bGrad);
+
+    quantization_t testQ;
+    initFloat32Quantization(&testQ);
+    layer_t *linear = linearLayerInit(w, b, &testQ, &testQ, &testQ, &testQ);
+    layer_t *model[] = {linear};
+
+    optimizer_t *sgd = sgdMCreateOptim(0.01f, 0.f, 0.f, model, 1, FLOAT32);
+
+    initEpochDataset();
+    dataLoader_t *trainDl =
+        dataLoaderInit(getEpochSample, getEpochDatasetSize, 1, NULL, NULL, false, 0, true);
+    dataLoader_t *evalDl =
+        dataLoaderInit(getEpochSample, getEpochDatasetSize, 1, NULL, NULL, false, 0, true);
+
+    /* trainingRun hardcodes forwardReduction = MEAN for train/eval comparability.
+     * This test uses defaultLossConfig (backwardReduction = MEAN) to act as a
+     * regression barrier: if forwardReduction were inadvertently set to SUM,
+     * eval loss would be F× larger than train loss, failing the assertion below. */
+    lossConfig_t cfg = defaultLossConfig(MSE);
+
+    trainingRunResult_t result = trainingRun(model, 1, cfg, trainDl, evalDl, sgd, 2,
+                                             calculateGradsSequential, inferenceWithLoss, NULL);
+
+    float capturedTrain = result.finalTrainLoss;
+    float capturedEval = result.finalEvalStats.loss;
+
+    freeOptimSgdM(sgd);
+    freeDataLoader(evalDl);
+    freeDataLoader(trainDl);
+    freeLinearLayer(linear);
+    freeEpochDataset();
+
+    TEST_ASSERT_TRUE(capturedTrain > 0.0f && capturedTrain < 100.0f);
+    TEST_ASSERT_TRUE(capturedEval > 0.0f && capturedEval < 100.0f);
+    /* MEAN-vs-MEAN comparability: ratio within an order of magnitude. */
+    TEST_ASSERT_TRUE(capturedEval / capturedTrain < 10.0f);
+    TEST_ASSERT_TRUE(capturedTrain / capturedEval < 10.0f);
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -963,13 +1426,21 @@ int main(void) {
     RUN_TEST(testEvaluationEpoch_ReturnsAverageLossAcrossBatches);
     RUN_TEST(testEvaluationEpoch_MinibatchMatchesMicrobatchAverage);
     RUN_TEST(testTrainingBatchDefault_ReturnsAverageLossAndAccumulatesGrads);
+    RUN_TEST(testTrainingBatchDefault_SumAggregatesWithoutDivision);
     RUN_TEST(testTrainingEpochDefault_DoesOptimizerStepPerBatch);
     RUN_TEST(testTrainingEpochDefault_MinibatchStepsOncePerMinibatch);
+    RUN_TEST(testTrainingEpochDefault_MeanScalesGradByOneOverNF);
+    RUN_TEST(testTrainingEpochDefault_SumBackwardSkipsOptimizerScaling);
+    RUN_TEST(testTrainingEpochDefault_MeanForwardSumBackward_MixedCombination);
     RUN_TEST(testTrainingRun_ReturnsResult);
     RUN_TEST(testEvaluationEpochWithMetrics_AllCorrect);
     RUN_TEST(testEvaluationEpochWithMetrics_PartiallyCorrect);
     RUN_TEST(testEvaluationEpochWithMetrics_HandlesZeroPredictionClass);
     RUN_TEST(testEvaluationEpochWithReport_ReturnsConfusionMatrix);
     RUN_TEST(testTrainingRun_CallsCallbackEachEpochWithStats);
+    RUN_TEST(testInferenceWithLoss_PropagatesForwardReductionSum);
+    RUN_TEST(testEvaluationEpoch_FlatAggregator_DivisionByTotalSamples);
+    RUN_TEST(testEvaluationEpoch_SumPath_ReturnsRawTotal);
+    RUN_TEST(testTrainingRun_HardcodesForwardReductionMean);
     return UNITY_END();
 }

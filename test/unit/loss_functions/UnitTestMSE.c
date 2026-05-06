@@ -7,8 +7,8 @@
 #include "TensorConversion.h"
 #include "unity.h"
 
-void testMSEForward() {
-    /* Output (1D, 3 elements). */
+void testMSEForward_MeanReturnsPerSampleMean() {
+    /* Output (1D, 3 elements). Today B=1, so numFeaturesPerSample = 3. */
     size_t *outputDims = reserveMemory(1 * sizeof(size_t));
     outputDims[0] = 3;
     size_t *outputOrder = reserveMemory(1 * sizeof(size_t));
@@ -18,7 +18,6 @@ void testMSEForward() {
     tensor_t *output = initTensor(outputShape, quantizationInitFloat(), NULL);
     tensorFillFromFloatBuffer(output, (float[]){1.f, 2.f, 3.f}, 3);
 
-    /* Label (1D, 3 elements). */
     size_t *labelDims = reserveMemory(1 * sizeof(size_t));
     labelDims[0] = 3;
     size_t *labelOrder = reserveMemory(1 * sizeof(size_t));
@@ -28,26 +27,48 @@ void testMSEForward() {
     tensor_t *label = initTensor(labelShape, quantizationInitFloat(), NULL);
     tensorFillFromFloatBuffer(label, (float[]){2.f, 4.f, 6.f}, 3);
 
-    /* CAPTURE. */
-    float capturedLoss = mseLossForward(output, label);
+    float capturedLoss = mseLossForward(output, label, REDUCTION_MEAN);
 
-    /* FREE. */
     freeTensor(label);
     freeTensor(output);
 
-    /* ASSERT. */
-    float expected = 4.67f;
-    TEST_ASSERT_FLOAT_WITHIN(0.01f, expected, capturedLoss);
+    /* MEAN: ((1-2)² + (2-4)² + (3-6)²) / 3 = (1+4+9)/3 = 14/3 ≈ 4.667 */
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 14.0f / 3.0f, capturedLoss);
 }
 
-void testMSELossBackwardFloat() {
+void testMSEForward_SumReturnsRawSum() {
+    size_t *outputDims = reserveMemory(1 * sizeof(size_t));
+    outputDims[0] = 3;
+    size_t *outputOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, outputOrder);
+    shape_t *outputShape = reserveMemory(sizeof(shape_t));
+    setShape(outputShape, outputDims, 1, outputOrder);
+    tensor_t *output = initTensor(outputShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(output, (float[]){1.f, 2.f, 3.f}, 3);
 
+    size_t *labelDims = reserveMemory(1 * sizeof(size_t));
+    labelDims[0] = 3;
+    size_t *labelOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, labelOrder);
+    shape_t *labelShape = reserveMemory(sizeof(shape_t));
+    setShape(labelShape, labelDims, 1, labelOrder);
+    tensor_t *label = initTensor(labelShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(label, (float[]){2.f, 4.f, 6.f}, 3);
+
+    float capturedLoss = mseLossForward(output, label, REDUCTION_SUM);
+
+    freeTensor(label);
+    freeTensor(output);
+
+    /* SUM: 1 + 4 + 9 = 14 (no division). */
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 14.0f, capturedLoss);
+}
+
+void testMSELossBackward_FloatWritesRawPerElementGrad() {
     size_t numberOfElements = 3;
     size_t dims[] = {numberOfElements};
-    size_t numberOfDims = 1;
     size_t orderOfDims[] = {0};
-    shape_t shape = {
-        .dimensions = dims, .orderOfDimensions = orderOfDims, .numberOfDimensions = numberOfDims};
+    shape_t shape = {.dimensions = dims, .orderOfDimensions = orderOfDims, .numberOfDimensions = 1};
 
     tensor_t modelOutput;
     quantization_t modelOutputQ;
@@ -64,28 +85,26 @@ void testMSELossBackwardFloat() {
     tensor_t result;
     quantization_t resultQ;
     initFloat32Quantization(&resultQ);
-    float resultData[numberOfElements];
+    float resultData[3];
     setTensorValues(&result, (uint8_t *)resultData, &shape, &resultQ, NULL);
 
-    mseLossBackwardFloat(&modelOutput, &label, &result, /* batchSize */ 1, REDUCTION_MEAN);
+    /* Raw per-element gradient: 2*(o-l). No /F division — that lives in
+     * computeMeanScaleMSE applied at the optimizer step. */
+    mseLossBackwardFloat(&modelOutput, &label, &result);
 
-    float expected[] = {4.f, 4.f, -3.3333f};
-
+    /* delta = [6, 6, -5]; raw grad = 2*delta = [12, 12, -10] */
+    float expected[] = {12.f, 12.f, -10.f};
     float *actual = (float *)result.data;
-
     for (size_t i = 0; i < 3; i++) {
-        TEST_ASSERT_FLOAT_WITHIN(0.0001f, expected[i], actual[i]);
+        TEST_ASSERT_FLOAT_WITHIN(1e-4f, expected[i], actual[i]);
     }
 }
 
-void testMSELossBackwardSymInt32() {
+void testMSELossBackward_SymInt32WritesRawPerElementGrad() {
     size_t numberOfElements = 3;
-
     size_t dims[] = {numberOfElements};
-    size_t numberOfDims = 1;
     size_t orderOfDims[] = {0};
-    shape_t shape = {
-        .dimensions = dims, .orderOfDimensions = orderOfDims, .numberOfDimensions = numberOfDims};
+    shape_t shape = {.dimensions = dims, .orderOfDimensions = orderOfDims, .numberOfDimensions = 1};
 
     tensor_t modelOutput;
     quantization_t modelOutputQ;
@@ -133,87 +152,14 @@ void testMSELossBackwardSymInt32() {
     setTensorValuesForConversion(resultSymInt32Data, &resultSymInt32Q, &result, &resultSymInt32);
     convertTensor(&result, &resultSymInt32);
 
-    mseLossBackward(&modelOutputSymInt32, &labelSymInt32, &resultSymInt32, /* batchSize */ 1,
-                    REDUCTION_MEAN);
-
+    mseLossBackward(&modelOutputSymInt32, &labelSymInt32, &resultSymInt32);
     convertTensor(&resultSymInt32, &result);
 
-    float expected[] = {4.f, 4.f, -3.f};
-
+    /* Raw per-element gradient: same shape as float test, allow wider tolerance for fixed-point. */
+    float expected[] = {12.f, 12.f, -10.f};
     float *actual = (float *)result.data;
-
     for (size_t i = 0; i < numberOfElements; i++) {
         TEST_ASSERT_FLOAT_WITHIN(0.5f, expected[i], actual[i]);
-    }
-}
-
-void testMSELossBackward_MeanDividesByBatchSize(void) {
-    size_t numberOfElements = 3;
-    size_t dims[] = {numberOfElements};
-    size_t order[] = {0};
-    shape_t shape = {.dimensions = dims, .orderOfDimensions = order, .numberOfDimensions = 1};
-
-    tensor_t modelOutput;
-    quantization_t modelOutputQ;
-    initFloat32Quantization(&modelOutputQ);
-    float modelOutputData[] = {1.f, 2.f, -3.f};
-    setTensorValues(&modelOutput, (uint8_t *)modelOutputData, &shape, &modelOutputQ, NULL);
-
-    tensor_t label;
-    quantization_t labelQ;
-    initFloat32Quantization(&labelQ);
-    float labelData[] = {-5.f, -4.f, 2.f};
-    setTensorValues(&label, (uint8_t *)labelData, &shape, &labelQ, NULL);
-
-    tensor_t result;
-    quantization_t resultQ;
-    initFloat32Quantization(&resultQ);
-    float resultData[3];
-    setTensorValues(&result, (uint8_t *)resultData, &shape, &resultQ, NULL);
-
-    /* batchSize=2 with MEAN: per-sample-mean (2/3) divided by 2. */
-    mseLossBackwardFloat(&modelOutput, &label, &result, /* batchSize */ 2, REDUCTION_MEAN);
-
-    /* Expected = ((2/3) / 2) * (model - label) = (1/3) * [6, 6, -5] = [2, 2, -1.667] */
-    float expected[] = {2.f, 2.f, -5.f / 3.f};
-    float *actual = (float *)result.data;
-    for (size_t i = 0; i < 3; i++) {
-        TEST_ASSERT_FLOAT_WITHIN(1e-4f, expected[i], actual[i]);
-    }
-}
-
-void testMSELossBackward_SumPreservesPerSampleMean(void) {
-    size_t numberOfElements = 3;
-    size_t dims[] = {numberOfElements};
-    size_t order[] = {0};
-    shape_t shape = {.dimensions = dims, .orderOfDimensions = order, .numberOfDimensions = 1};
-
-    tensor_t modelOutput;
-    quantization_t modelOutputQ;
-    initFloat32Quantization(&modelOutputQ);
-    float modelOutputData[] = {1.f, 2.f, -3.f};
-    setTensorValues(&modelOutput, (uint8_t *)modelOutputData, &shape, &modelOutputQ, NULL);
-
-    tensor_t label;
-    quantization_t labelQ;
-    initFloat32Quantization(&labelQ);
-    float labelData[] = {-5.f, -4.f, 2.f};
-    setTensorValues(&label, (uint8_t *)labelData, &shape, &labelQ, NULL);
-
-    tensor_t result;
-    quantization_t resultQ;
-    initFloat32Quantization(&resultQ);
-    float resultData[3];
-    setTensorValues(&result, (uint8_t *)resultData, &shape, &resultQ, NULL);
-
-    /* batchSize=2 with SUM: per-sample-mean (2/3) only — no batch divisor. */
-    mseLossBackwardFloat(&modelOutput, &label, &result, /* batchSize */ 2, REDUCTION_SUM);
-
-    /* Expected = (2/3) * (model - label) = (2/3) * [6, 6, -5] = [4, 4, -10/3] */
-    float expected[] = {4.f, 4.f, -10.f / 3.f};
-    float *actual = (float *)result.data;
-    for (size_t i = 0; i < 3; i++) {
-        TEST_ASSERT_FLOAT_WITHIN(1e-4f, expected[i], actual[i]);
     }
 }
 
@@ -223,13 +169,11 @@ void tearDown() {}
 int main(void) {
     UNITY_BEGIN();
 
-    RUN_TEST(testMSEForward);
+    RUN_TEST(testMSEForward_MeanReturnsPerSampleMean);
+    RUN_TEST(testMSEForward_SumReturnsRawSum);
 
-    RUN_TEST(testMSELossBackwardFloat);
-    RUN_TEST(testMSELossBackwardSymInt32);
-
-    RUN_TEST(testMSELossBackward_MeanDividesByBatchSize);
-    RUN_TEST(testMSELossBackward_SumPreservesPerSampleMean);
+    RUN_TEST(testMSELossBackward_FloatWritesRawPerElementGrad);
+    RUN_TEST(testMSELossBackward_SymInt32WritesRawPerElementGrad);
 
     return UNITY_END();
 }

@@ -18,3 +18,15 @@ add_elastic_ai_unit_test(
         StorageApi
         QuantizationApi
 )
+
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
+        LossFunction
+        MORE_LIBS
+        CommonLayerLibs
+        MSE
+        CrossEntropy
+        TensorApi
+        QuantizationApi
+        StorageApi
+)
