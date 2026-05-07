@@ -128,5 +128,26 @@ target_link_libraries(Sum PRIVATE
         Common
 )
 
+add_library(SlidingWindow1d SlidingWindow1d.c)
+target_include_directories(SlidingWindow1d PUBLIC include)
+target_link_libraries(SlidingWindow1d PRIVATE
+        Kernel
+        Common
+)
 
+add_library(Conv1dKernel Conv1dKernel.c)
+target_include_directories(Conv1dKernel PUBLIC include)
+target_link_libraries(Conv1dKernel PRIVATE
+        Tensor
+        Kernel
+        SlidingWindow1d
+        Common
+)
 
+add_library(ConvTranspose1dKernel ConvTranspose1dKernel.c)
+target_include_directories(ConvTranspose1dKernel PUBLIC include)
+target_link_libraries(ConvTranspose1dKernel PRIVATE
+        Tensor
+        Kernel
+        Common
+)

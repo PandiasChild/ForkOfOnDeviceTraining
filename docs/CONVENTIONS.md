@@ -180,6 +180,61 @@ categories report 0 bytes in 0 blocks (or valgrind emits "All heap blocks
 were freed -- no leaks are possible"). The reproducible recipe and
 container Dockerfile live in `docs/superpowers/tools/lsan-recon/`.
 
+## Build-time gold-value generators (CMake + uv + PyTorch)
+
+Some unit tests compare C-side numerics against PyTorch reference values. The
+references are not committed: a Python script in the test directory emits a C
+header (`expected_*.h`) at build time, which the test then `#include`s.
+
+The wiring lives in `test/unit/<module>/CMakeLists.txt`:
+
+```cmake
+add_custom_command(
+        OUTPUT ${GEN_HEADER}
+        COMMAND uv run ${CMAKE_CURRENT_SOURCE_DIR}/generate_expected_<thing>.py
+                --out ${GEN_HEADER}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/generate_expected_<thing>.py
+        VERBATIM
+)
+add_custom_target(generate_expected_<thing> DEPENDS ${GEN_HEADER})
+add_dependencies(UnitTest<Name> generate_expected_<thing>)
+target_include_directories(UnitTest<Name> PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+```
+
+Reference exemplars:
+`test/unit/arithmetic/generate_expected_conv1d_kernel.py`,
+`test/unit/arithmetic/generate_expected_conv_transpose_1d_kernel.py`.
+
+### Generator-script conventions
+
+- Use `repr(v) + "f"` to format C float literals, **not** `f"{v:.9g}"`.
+  `repr` always preserves a decimal point or exponent, so `10.0f` stays valid.
+  `:.9g` produces `10` and the trailing `f` then makes it an invalid integer
+  suffix that gcc rejects.
+- Self-check fixtures with `assert torch.allclose(...)` before emitting them,
+  so generator-side numerical drift fails the build instead of silently
+  shifting expected values.
+- `torch` and `torchvision` are declared as direct dependencies in
+  `pyproject.toml`. The decoupling is intentional: generator scripts
+  import `torch` directly, so the dependency belongs at the project
+  level rather than inherited from `elasticai-creator`.
+
+### CI implication: every job that runs `cmake --build` MUST install uv
+
+The custom command above is invoked by ninja during the build phase, not by
+configure. Any CI job that produces or runs targets depending on a generated
+header must therefore have `uv` on `PATH` at build time. In
+`.github/workflows/ci.yml` this is `c-build-and-test` and
+`c-asan-build-and-test`; both install uv via `astral-sh/setup-uv@v6` and
+`uv sync` before `cmake --preset ...`.
+
+Locally this is silent: `devenv.nix` puts `uv` on `PATH` for the whole shell,
+so `cmake --build` finds it without any explicit setup. CI is stricter and
+catches drift here before merge.
+
+When introducing a new generator under a new test target, audit every CI job
+that builds the affected preset and add the uv setup steps if missing.
+
 ## Loss API: microbatch contracts
 
 Each loss function in `src/loss_functions/` exposes:

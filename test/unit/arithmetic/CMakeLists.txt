@@ -1,3 +1,29 @@
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+set(GEN_CONV1D_KERNEL_HEADER ${CMAKE_CURRENT_BINARY_DIR}/expected_conv1d_kernel.h)
+add_custom_command(
+        OUTPUT ${GEN_CONV1D_KERNEL_HEADER}
+        COMMAND uv run ${CMAKE_CURRENT_SOURCE_DIR}/generate_expected_conv1d_kernel.py
+                --out ${GEN_CONV1D_KERNEL_HEADER}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/generate_expected_conv1d_kernel.py
+        COMMENT "Generating expected_conv1d_kernel.h via PyTorch"
+        VERBATIM
+)
+add_custom_target(generate_expected_conv1d_kernel
+        DEPENDS ${GEN_CONV1D_KERNEL_HEADER})
+
+set(GEN_CONVT_1D_KERNEL_HEADER ${CMAKE_CURRENT_BINARY_DIR}/expected_conv_transpose_1d_kernel.h)
+add_custom_command(
+        OUTPUT ${GEN_CONVT_1D_KERNEL_HEADER}
+        COMMAND uv run ${CMAKE_CURRENT_SOURCE_DIR}/generate_expected_conv_transpose_1d_kernel.py
+                --out ${GEN_CONVT_1D_KERNEL_HEADER}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/generate_expected_conv_transpose_1d_kernel.py
+        COMMENT "Generating expected_conv_transpose_1d_kernel.h via PyTorch"
+        VERBATIM
+)
+add_custom_target(generate_expected_conv_transpose_1d_kernel
+        DEPENDS ${GEN_CONVT_1D_KERNEL_HEADER})
+
 add_elastic_ai_unit_test(
         LIB_UNDER_TEST
         Add
@@ -95,3 +121,37 @@ add_elastic_ai_unit_test(
         Arithmetic
         Tensor
 )
+
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
+        SlidingWindow1d
+        MORE_LIBS
+        Kernel
+)
+
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
+        Conv1dKernel
+        MORE_LIBS
+        SlidingWindow1d
+        Kernel
+        Tensor
+        TensorApi
+        QuantizationApi
+        StorageApi
+)
+add_dependencies(UnitTestConv1dKernel generate_expected_conv1d_kernel)
+target_include_directories(UnitTestConv1dKernel PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
+        ConvTranspose1dKernel
+        MORE_LIBS
+        Kernel
+        Tensor
+        TensorApi
+        QuantizationApi
+        StorageApi
+)
+add_dependencies(UnitTestConvTranspose1dKernel generate_expected_conv_transpose_1d_kernel)
+target_include_directories(UnitTestConvTranspose1dKernel PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
