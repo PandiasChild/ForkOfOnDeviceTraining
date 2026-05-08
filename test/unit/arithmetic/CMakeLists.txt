@@ -71,12 +71,6 @@ add_elastic_ai_unit_test(
 
 add_elastic_ai_unit_test(
         LIB_UNDER_TEST
-        Kernel
-        MORE_LIBS
-)
-
-add_elastic_ai_unit_test(
-        LIB_UNDER_TEST
         Log
         MORE_LIBS
         Arithmetic

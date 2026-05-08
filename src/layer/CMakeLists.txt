@@ -6,6 +6,9 @@ target_link_libraries(Conv1d PRIVATE
         Arithmetic
         Common
         Kernel
+        SlidingWindow1d
+        Conv1dKernel
+        ConvTranspose1dKernel
 )
 
 add_library(Conv1dTransposed Conv1dTransposed.c)
@@ -14,6 +17,11 @@ target_link_libraries(Conv1dTransposed PRIVATE
         DTypes
         Tensor
         Arithmetic
+        Common
+        Kernel
+        SlidingWindow1d
+        Conv1dKernel
+        ConvTranspose1dKernel
 )
 
 add_library(Layer Layer.c)
@@ -25,6 +33,7 @@ target_link_libraries(Layer PRIVATE
         Linear
         Relu
         Conv1d
+        Conv1dTransposed
         Softmax
         Flatten
 )
@@ -86,6 +95,7 @@ target_link_libraries(CommonLayerLibs INTERFACE
         Linear
         Relu
         Conv1d
+        Conv1dTransposed
         Softmax
         Flatten
         Rounding

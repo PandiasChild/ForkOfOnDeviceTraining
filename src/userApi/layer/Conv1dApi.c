@@ -15,8 +15,8 @@ layer_t *conv1dLayerInit(parameter_t *weights, parameter_t *bias, kernel_t *kern
     layerConfig_t *layerConfig = reserveMemory(sizeof(layerConfig_t));
     conv1dConfig_t *conv1dConfig = reserveMemory(sizeof(conv1dConfig_t));
 
-    initConv1dConfigWithWeightsAndBias(conv1dConfig, kernel, weights, bias, forwardQ, weightGradQ,
-                                       biasGradQ, propLossQ);
+    initConv1dConfigWithWeightsAndBias(conv1dConfig, kernel, weights, bias, 1u, forwardQ,
+                                       weightGradQ, biasGradQ, propLossQ);
 
     conv1dLayer->type = CONV1D;
     layerConfig->conv1d = conv1dConfig;

@@ -7,8 +7,17 @@ typedef struct linearConfig linearConfig_t;
 typedef struct reluConfig reluConfig_t;
 typedef struct softmaxConfig softmaxConfig_t;
 typedef struct conv1dConfig conv1dConfig_t;
+typedef struct conv1dTransposedConfig conv1dTransposedConfig_t;
 
-typedef enum layerType { LINEAR, RELU, CONV1D, SOFTMAX, FLATTEN, QUANTIZATION } layerType_t;
+typedef enum layerType {
+    LINEAR,
+    RELU,
+    CONV1D,
+    CONV1D_TRANSPOSED,
+    SOFTMAX,
+    FLATTEN,
+    QUANTIZATION
+} layerType_t;
 
 typedef enum layerQType { FLOAT_LAYER, ASYM_LAYER } layerQType_t;
 
@@ -17,6 +26,7 @@ typedef union layerConfig {
     reluConfig_t *relu;
     softmaxConfig_t *softmax;
     conv1dConfig_t *conv1d;
+    conv1dTransposedConfig_t *conv1dTransposed;
 } layerConfig_t;
 
 typedef struct layer {

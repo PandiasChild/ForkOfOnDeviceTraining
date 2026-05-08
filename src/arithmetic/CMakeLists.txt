@@ -149,5 +149,6 @@ target_include_directories(ConvTranspose1dKernel PUBLIC include)
 target_link_libraries(ConvTranspose1dKernel PRIVATE
         Tensor
         Kernel
+        SlidingWindow1d
         Common
 )

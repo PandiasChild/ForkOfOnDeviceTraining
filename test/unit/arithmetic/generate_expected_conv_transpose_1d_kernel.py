@@ -78,6 +78,25 @@ def fixture_groups():
     return ("groups", y, x, w)
 
 
+def fixture_adjoint_same_grouped():
+    """Adjoint of Conv1d(K=3, stride=1, dilation=1, SAME, groups=2) on B=2 Cin=4.
+
+    The adjoint is computed as: dL/dx of conv1d w.r.t. random lossGrad.
+    Returns lossGrad as 'input', conv1d-W as 'weight', expected dL/dx as 'expected'.
+    """
+    torch.manual_seed(50)
+    x_dummy = torch.zeros(2, 4, 6, requires_grad=True)
+    w = torch.randn(4, 2, 3)  # Conv1d weight: [Cout=4, Cin/g=2, K=3]
+    y = F.conv1d(x_dummy, w, bias=None, stride=1, padding=1, dilation=1, groups=2)
+    # gy is the lossGrad; pick a non-trivial pattern (random) so the test
+    # is sensitive to indexing bugs. Note: y.shape == [2, 4, 6] for this config.
+    gy = torch.randn_like(y)
+    y.backward(gy)
+    # ConvT-Kernel input is the forward conv1d's lossGrad (gy). Its weight is
+    # Conv1d's weight (same memory). Its output (= propLoss) is x_dummy.grad.
+    return ("adjointSameGrouped", gy.detach(), w, x_dummy.grad.detach())
+
+
 def fixture_adjoint_check():
     # Setup: a tiny Conv1d, compute dL/dx by autograd, then ensure
     # convTranspose1d(grad_output, W) reproduces it.
@@ -127,6 +146,11 @@ def main() -> int:
     parts.append(emit_float_array(f"expectedConvT1dForward_{name}", gx))
     parts.append(emit_float_array(f"inputConvT1dForward_{name}", gy))
     parts.append(emit_float_array(f"weightConvT1dForward_{name}", ww))
+
+    name, gy_sg, w_sg, exp_sg = fixture_adjoint_same_grouped()
+    parts.append(emit_float_array(f"inputConvT1d_{name}", gy_sg))
+    parts.append(emit_float_array(f"weightConvT1d_{name}", w_sg))
+    parts.append(emit_float_array(f"expectedConvT1d_{name}", exp_sg))
 
     parts.append("\n#endif // ODT_EXPECTED_CONV_TRANSPOSE_1D_KERNEL_H\n")
 

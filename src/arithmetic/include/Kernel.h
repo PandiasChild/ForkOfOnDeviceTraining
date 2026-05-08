@@ -15,20 +15,4 @@ typedef struct kernel {
 void initKernel(kernel_t *kernel, size_t size, paddingType_t paddingType, size_t dilation,
                 size_t stride);
 
-/*! Calculates indices for window slice.
- *
- * @param kernel Pointer to kernel_t
- * @param inputStartIndex Pointer to first element for current window
- * @param windowIndices Buffer for indices
- */
-void kernelGetWindowIndices1d(kernel_t *kernel, size_t inputStartIndex, size_t *windowIndices);
-
-/*! Calculates 1D padding size.
- *
- * @param inputLengthPerChannel Number of inputs per channel
- * @param kernel Pointer to kernel_t
- * @returns Total size of padding needed
- */
-size_t kernelCalculatePaddingSize1d(size_t inputLengthPerChannel, kernel_t *kernel);
-
 #endif // ODT_KERNEL_H
