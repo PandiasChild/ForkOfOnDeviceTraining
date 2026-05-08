@@ -1,10 +1,12 @@
 #define SOURCE_FILE "LAYER"
 
 #include "Layer.h"
+#include "AvgPool1d.h"
 #include "Conv1d.h"
 #include "Conv1dTransposed.h"
 #include "Flatten.h"
 #include "Linear.h"
+#include "MaxPool1d.h"
 #include "Relu.h"
 #include "Softmax.h"
 
@@ -14,6 +16,8 @@ layerFunctions_t layerFunctions[] = {
     [CONV1D] = {conv1dForward, conv1dBackward, conv1dCalcOutputShape},
     [CONV1D_TRANSPOSED] = {conv1dTransposedForward, conv1dTransposedBackward,
                            conv1dTransposedCalcOutputShape},
+    [MAXPOOL1D] = {maxPool1dForward, maxPool1dBackward, maxPool1dCalcOutputShape},
+    [AVGPOOL1D] = {avgPool1dForward, avgPool1dBackward, avgPool1dCalcOutputShape},
     [SOFTMAX] = {softmaxForward, softmaxBackward, softmaxCalcOutputShape},
     [FLATTEN] = {flattenForward, flattenBackward, flattenCalcOutputShape}};
 

@@ -24,6 +24,30 @@ add_custom_command(
 add_custom_target(generate_expected_conv1d_transposed
         DEPENDS ${GEN_CONV1D_TRANSPOSED_HEADER})
 
+set(GEN_MAX_POOL_1D_HEADER ${CMAKE_CURRENT_BINARY_DIR}/expected_max_pool_1d.h)
+add_custom_command(
+        OUTPUT ${GEN_MAX_POOL_1D_HEADER}
+        COMMAND uv run ${CMAKE_CURRENT_SOURCE_DIR}/generate_expected_max_pool_1d.py
+                --out ${GEN_MAX_POOL_1D_HEADER}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/generate_expected_max_pool_1d.py
+        COMMENT "Generating expected_max_pool_1d.h via PyTorch"
+        VERBATIM
+)
+add_custom_target(generate_expected_max_pool_1d
+        DEPENDS ${GEN_MAX_POOL_1D_HEADER})
+
+set(GEN_AVG_POOL_1D_HEADER ${CMAKE_CURRENT_BINARY_DIR}/expected_avg_pool_1d.h)
+add_custom_command(
+        OUTPUT ${GEN_AVG_POOL_1D_HEADER}
+        COMMAND uv run ${CMAKE_CURRENT_SOURCE_DIR}/generate_expected_avg_pool_1d.py
+                --out ${GEN_AVG_POOL_1D_HEADER}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/generate_expected_avg_pool_1d.py
+        COMMENT "Generating expected_avg_pool_1d.h via PyTorch"
+        VERBATIM
+)
+add_custom_target(generate_expected_avg_pool_1d
+        DEPENDS ${GEN_AVG_POOL_1D_HEADER})
+
 add_elastic_ai_unit_test(
         LIB_UNDER_TEST
         Conv1d
@@ -95,3 +119,27 @@ add_elastic_ai_unit_test(
 )
 add_dependencies(UnitTestConv1dTransposed generate_expected_conv1d_transposed)
 target_include_directories(UnitTestConv1dTransposed PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
+        MaxPool1d
+        MORE_LIBS
+        CommonLayerLibs
+        TensorApi
+        QuantizationApi
+        StorageApi
+)
+add_dependencies(UnitTestMaxPool1d generate_expected_max_pool_1d)
+target_include_directories(UnitTestMaxPool1d PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
+        AvgPool1d
+        MORE_LIBS
+        CommonLayerLibs
+        TensorApi
+        QuantizationApi
+        StorageApi
+)
+add_dependencies(UnitTestAvgPool1d generate_expected_avg_pool_1d)
+target_include_directories(UnitTestAvgPool1d PRIVATE ${CMAKE_CURRENT_BINARY_DIR})

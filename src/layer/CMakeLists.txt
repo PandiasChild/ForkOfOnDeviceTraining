@@ -24,6 +24,28 @@ target_link_libraries(Conv1dTransposed PRIVATE
         ConvTranspose1dKernel
 )
 
+add_library(MaxPool1d MaxPool1d.c)
+target_include_directories(MaxPool1d PUBLIC include)
+target_link_libraries(MaxPool1d PRIVATE
+        DTypes
+        Tensor
+        Arithmetic
+        Common
+        Kernel
+        SlidingWindow1d
+)
+
+add_library(AvgPool1d AvgPool1d.c)
+target_include_directories(AvgPool1d PUBLIC include)
+target_link_libraries(AvgPool1d PRIVATE
+        DTypes
+        Tensor
+        Arithmetic
+        Common
+        Kernel
+        SlidingWindow1d
+)
+
 add_library(Layer Layer.c)
 target_include_directories(Layer PUBLIC include)
 target_link_libraries(Layer PRIVATE
@@ -34,6 +56,8 @@ target_link_libraries(Layer PRIVATE
         Relu
         Conv1d
         Conv1dTransposed
+        MaxPool1d
+        AvgPool1d
         Softmax
         Flatten
 )
@@ -96,6 +120,8 @@ target_link_libraries(CommonLayerLibs INTERFACE
         Relu
         Conv1d
         Conv1dTransposed
+        MaxPool1d
+        AvgPool1d
         Softmax
         Flatten
         Rounding
