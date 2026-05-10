@@ -6,6 +6,7 @@
 .justfile
 **/.DS_Store
 .cache/
+.claude/
 
 ### Python
 .venv
