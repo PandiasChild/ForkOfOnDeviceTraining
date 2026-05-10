@@ -4,6 +4,8 @@
 #include <stdlib.h>
 
 #include "Common.h"
+#include "Conv1d.h"
+#include "Conv1dTransposed.h"
 #include "Layer.h"
 #include "Linear.h"
 #include "SgdApi.h"
@@ -65,9 +67,65 @@ optimizer_t *sgdMCreateOptim(float learningRate, float momentumFactor, float wei
 
             paramSlot += 2;
             break;
+        case CONV1D: {
+            conv1dConfig_t *conv1dCfg = layerConfig->conv1d;
+
+            parameter_t *cWeights = conv1dCfg->weights;
+            optim->parameter[paramSlot] = cWeights;
+            tensor_t *cWeightStateBuffer = getTensorLike(cWeights->param);
+
+            parameter_t *cBias = conv1dCfg->bias;
+            optim->parameter[paramSlot + 1] = cBias;
+            tensor_t *cBiasStateBuffer = getTensorLike(cBias->param);
+
+            states_t *cWeightStates = reserveMemory(sizeof(states_t));
+            cWeightStates->statesPerParameter = statesPerParam;
+            cWeightStates->stateBuffers = reserveMemory(sizeof(tensor_t *));
+            cWeightStates->stateBuffers[0] = cWeightStateBuffer;
+
+            states_t *cBiasStates = reserveMemory(sizeof(states_t));
+            cBiasStates->statesPerParameter = statesPerParam;
+            cBiasStates->stateBuffers = reserveMemory(sizeof(tensor_t *));
+            cBiasStates->stateBuffers[0] = cBiasStateBuffer;
+
+            states[paramSlot] = cWeightStates;
+            states[paramSlot + 1] = cBiasStates;
+
+            paramSlot += 2;
+            break;
+        }
+        case CONV1D_TRANSPOSED: {
+            conv1dTransposedConfig_t *ctCfg = layerConfig->conv1dTransposed;
+
+            parameter_t *ctWeights = ctCfg->weights;
+            optim->parameter[paramSlot] = ctWeights;
+            tensor_t *ctWeightStateBuffer = getTensorLike(ctWeights->param);
+
+            parameter_t *ctBias = ctCfg->bias;
+            optim->parameter[paramSlot + 1] = ctBias;
+            tensor_t *ctBiasStateBuffer = getTensorLike(ctBias->param);
+
+            states_t *ctWeightStates = reserveMemory(sizeof(states_t));
+            ctWeightStates->statesPerParameter = statesPerParam;
+            ctWeightStates->stateBuffers = reserveMemory(sizeof(tensor_t *));
+            ctWeightStates->stateBuffers[0] = ctWeightStateBuffer;
+
+            states_t *ctBiasStates = reserveMemory(sizeof(states_t));
+            ctBiasStates->statesPerParameter = statesPerParam;
+            ctBiasStates->stateBuffers = reserveMemory(sizeof(tensor_t *));
+            ctBiasStates->stateBuffers[0] = ctBiasStateBuffer;
+
+            states[paramSlot] = ctWeightStates;
+            states[paramSlot + 1] = ctBiasStates;
+
+            paramSlot += 2;
+            break;
+        }
         case RELU:
         case SOFTMAX:
         case FLATTEN:
+        case MAXPOOL1D:
+        case AVGPOOL1D:
             break;
         default:
             PRINT_ERROR("Unknown Layer Type");

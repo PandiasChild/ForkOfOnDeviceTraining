@@ -5,11 +5,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "AvgPool1d.h"
 #include "CalculateGradsSequential.h"
 #include "Common.h"
+#include "Conv1d.h"
+#include "Conv1dTransposed.h"
 #include "Layer.h"
 #include "Linear.h"
 #include "LossFunction.h"
+#include "MaxPool1d.h"
 #include "Relu.h"
 #include "Softmax.h"
 #include "StorageApi.h"
@@ -91,6 +95,18 @@ static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t si
         case FLATTEN:
             // Flatten has no per-layer quantization; output dtype equals input dtype.
             currentQ = layerOutputs[i]->quantization;
+            break;
+        case CONV1D:
+            currentQ = currentLayer->config->conv1d->forwardQ;
+            break;
+        case CONV1D_TRANSPOSED:
+            currentQ = currentLayer->config->conv1dTransposed->forwardQ;
+            break;
+        case MAXPOOL1D:
+            currentQ = currentLayer->config->maxPool1d->forwardQ;
+            break;
+        case AVGPOOL1D:
+            currentQ = currentLayer->config->avgPool1d->forwardQ;
             break;
         default:
             PRINT_ERROR("Unknown Layer Type!");

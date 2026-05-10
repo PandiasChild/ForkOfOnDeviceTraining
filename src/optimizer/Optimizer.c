@@ -20,6 +20,7 @@ static size_t calcNumberOfStatesByLayerType(const layerType_t type) {
     case AVGPOOL1D:
         return 0;
     case CONV1D:
+    case CONV1D_TRANSPOSED:
         return 2;
     default:
         PRINT_ERROR("Unknown Layer Type!");

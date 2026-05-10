@@ -7,6 +7,10 @@ target_link_libraries(CalculateGradsSequential PRIVATE
         Tensor
         Rounding
         Layer
+        Conv1d
+        Conv1dTransposed
+        MaxPool1d
+        AvgPool1d
         Optimizer
         LossFunction
         InferenceApi

@@ -17,6 +17,8 @@ target_link_libraries(SgdApi PRIVATE
         Tensor
         Rounding
         Layer
+        Conv1d
+        Conv1dTransposed
         Sgd
         Optimizer
         Common
