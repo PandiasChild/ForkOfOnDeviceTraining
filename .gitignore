@@ -132,3 +132,10 @@ data/
 CLAUDE.md
 claude*
 docs/superpowers/
+
+# examples — runtime artifacts
+examples/*/data/raw/
+examples/*/data/*.npy
+examples/*/logs/
+examples/*/outputs/
+examples/*/plots/

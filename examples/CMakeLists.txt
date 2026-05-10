@@ -1,0 +1,2 @@
+add_subdirectory(_shared)
+add_subdirectory(har_classifier)
