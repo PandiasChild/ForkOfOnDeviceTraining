@@ -1,6 +1,7 @@
 #ifndef ODT_TENSOR_H
 #define ODT_TENSOR_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -44,6 +45,9 @@ uint8_t readByte(uint8_t data, uint8_t startbit, uint8_t endbit);
 
 void byteConversion(uint8_t *dataIn, size_t dataInBits, uint8_t *dataOut, size_t dataOutBits,
                     size_t numValues);
+
+bool tensorBoolGet(tensor_t const *tensor, size_t flatIndex);
+void tensorBoolSet(tensor_t *tensor, size_t flatIndex, bool value);
 
 tensor_t *getParamFromParameter(parameter_t *parameter);
 tensor_t *getGradFromParameter(parameter_t *parameter);

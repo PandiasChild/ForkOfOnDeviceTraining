@@ -125,6 +125,21 @@ void tensorFillFromFloatBuffer(tensor_t *tensor, const float *source, size_t cou
     convertTensor(&srcView, tensor);
 }
 
+void tensorFillFromBoolBuffer(tensor_t *tensor, const bool *source, size_t count) {
+    size_t expected = calcNumberOfElementsByTensor(tensor);
+    if (count != expected) {
+        PRINT_ERROR("tensorFillFromBoolBuffer count mismatch (expected vs given)");
+        exit(1);
+    }
+    if (tensor->quantization->type != BOOL) {
+        PRINT_ERROR("tensorFillFromBoolBuffer requires BOOL-quantized tensor");
+        exit(1);
+    }
+    for (size_t i = 0; i < count; i++) {
+        tensorBoolSet(tensor, i, source[i]);
+    }
+}
+
 void initDistribution(tensor_t *tensor, const distribution_t *distribution) {
     if (tensor->quantization->type != FLOAT32) {
         PRINT_ERROR("initDistribution only supports FLOAT32 in this iteration");

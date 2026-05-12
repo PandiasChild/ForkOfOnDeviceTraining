@@ -31,3 +31,9 @@ quantization_t *quantizationInitAsym(uint8_t qBits, roundingMode_t roundingMode)
     initAsymQuantization(qC, q);
     return q;
 }
+
+quantization_t *quantizationInitBool(void) {
+    quantization_t *q = reserveMemory(sizeof(quantization_t));
+    initBoolQuantization(q);
+    return q;
+}

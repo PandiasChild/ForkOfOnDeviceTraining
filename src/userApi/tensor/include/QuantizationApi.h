@@ -33,4 +33,12 @@ quantization_t *quantizationInitSymInt32(roundingMode_t roundingMode);
  */
 quantization_t *quantizationInitAsym(uint8_t qBits, roundingMode_t roundingMode);
 
+/* Note: uses (void) explicitly; siblings use () for historical K&R-style; the
+ * _Static_assert in UnitTestTensorApi pattern-matches (*)(void). */
+/*! Initializes bool quantization.
+ *
+ * \returns Pointer to initialized quantization
+ */
+quantization_t *quantizationInitBool(void);
+
 #endif // QUANTIZATIONAPI_H

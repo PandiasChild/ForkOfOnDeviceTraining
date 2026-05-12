@@ -37,10 +37,16 @@ size_t calcBytesPerElement(quantization_t *quantization) {
         return sizeof(float);
     case SYM_INT32:
         return sizeof(int32_t);
+    case SYM: {
+        symQConfig_t *symQC = quantization->qConfig;
+        return (size_t)ceilf((float)symQC->qBits / 8.0f);
+    }
     case ASYM:
         asymQConfig_t *asymQConfig = quantization->qConfig;
         uint32_t qBits = asymQConfig->qBits;
         return ceil((float)qBits / (float)8);
+    case BOOL:
+        return 1;
     default:
         PRINT_ERROR("Unknown QType!");
         exit(1);
@@ -55,9 +61,15 @@ size_t calcBitsPerElement(quantization_t *quantization) {
         return sizeof(float) * 8;
     case SYM_INT32:
         return sizeof(int32_t) * 8;
+    case SYM: {
+        symQConfig_t *symQC = quantization->qConfig;
+        return symQC->qBits;
+    }
     case ASYM:
         asymQConfig_t *asymQConfig = quantization->qConfig;
         return asymQConfig->qBits;
+    case BOOL:
+        return 1;
     default:
         PRINT_ERROR("Unknown QType!");
         exit(1);
@@ -83,12 +95,40 @@ size_t calcNumberOfBytesForData(quantization_t *q, size_t numberOfElements) {
         return numberOfElements * sizeof(int32_t);
     case SYM_INT32:
         return numberOfElements * sizeof(int32_t);
+    case SYM:
+        return (calcBitsPerElement(q) * numberOfElements + 7) / 8;
     case ASYM:
         size_t bitsPerElement = calcBitsPerElement(q);
         return (bitsPerElement * numberOfElements + 7) / 8;
+    case BOOL:
+        return (numberOfElements + 7) / 8;
     default:
         PRINT_ERROR("Unknown QType!");
         exit(1);
+    }
+}
+
+bool tensorBoolGet(tensor_t const *tensor, size_t flatIndex) {
+    if (tensor->quantization->type != BOOL) {
+        PRINT_ERROR("tensorBoolGet called on non-BOOL tensor");
+        exit(1);
+    }
+    size_t byteIndex = flatIndex / 8;
+    size_t bitIndex = flatIndex % 8;
+    return ((tensor->data[byteIndex] >> bitIndex) & 1u) != 0;
+}
+
+void tensorBoolSet(tensor_t *tensor, size_t flatIndex, bool value) {
+    if (tensor->quantization->type != BOOL) {
+        PRINT_ERROR("tensorBoolSet called on non-BOOL tensor");
+        exit(1);
+    }
+    size_t byteIndex = flatIndex / 8;
+    size_t bitIndex = flatIndex % 8;
+    if (value) {
+        tensor->data[byteIndex] |= (uint8_t)(1u << bitIndex);
+    } else {
+        tensor->data[byteIndex] &= (uint8_t)~(1u << bitIndex);
     }
 }
 
@@ -318,6 +358,17 @@ void printTensor(tensor_t *t) {
             printf("%i\n", t->data[i]);
         }
         break;
+    case BOOL:
+        printf("BOOL\n");
+        printf("[");
+        for (size_t i = 0; i < numValues; i++) {
+            printf("%d", tensorBoolGet(t, i) ? 1 : 0);
+            if (i + 1 < numValues) {
+                printf(", ");
+            }
+        }
+        printf("]\n");
+        break;
     default:
         printf("WTF\n");
     }
@@ -378,6 +429,10 @@ void copyQuantization(quantization_t *dest, quantization_t *src) {
         symInt32QConfig_t *destQC = dest->qConfig;
         symInt32QConfig_t *srcQC = src->qConfig;
         memcpy(destQC, srcQC, sizeof(symInt32QConfig_t));
+        break;
+    case BOOL:
+        dest->type = BOOL;
+        dest->qConfig = NULL;
         break;
     default:
         PRINT_ERROR("Unknown QType!");

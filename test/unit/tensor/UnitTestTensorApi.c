@@ -31,6 +31,16 @@ _Static_assert(_Generic((&tensorFillFromFloatBuffer),
                    default: 0),
                "tensorFillFromFloatBuffer must take (tensor_t *, const float *, size_t)");
 
+/* Compile-time contract: quantizationInitBool returns quantization_t *. */
+_Static_assert(_Generic((&quantizationInitBool), quantization_t *(*)(void): 1, default: 0),
+               "quantizationInitBool must take () and return quantization_t *");
+
+/* Compile-time contract: tensorFillFromBoolBuffer takes (tensor_t *, const bool *, size_t). */
+_Static_assert(_Generic((&tensorFillFromBoolBuffer),
+                   void (*)(tensor_t *, const bool *, size_t): 1,
+                   default: 0),
+               "tensorFillFromBoolBuffer must take (tensor_t *, const bool *, size_t)");
+
 void setUp() {}
 void tearDown() {}
 
@@ -141,6 +151,16 @@ static tensor_t *makeFloatTensorForDistTest(size_t d0, size_t d1) {
     shape_t *shape = reserveMemory(sizeof(shape_t));
     setShape(shape, dims, 2, order);
     return initTensor(shape, quantizationInitFloat(), NULL);
+}
+
+static tensor_t *makeBoolTensorN(size_t n) {
+    size_t *dims = reserveMemory(1 * sizeof(size_t));
+    dims[0] = n;
+    size_t *order = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, 1, order);
+    return initTensor(shape, quantizationInitBool(), NULL);
 }
 
 void testInitDistribution_Zeros_AllValuesAreZero(void) {
@@ -314,6 +334,27 @@ void testInitDistribution_KaimingNormal_NotAllZero(void) {
 
     /* ASSERT. */
     TEST_ASSERT_TRUE(any_nonzero);
+}
+
+void testTensorFillFromBoolBuffer_RoundTrip_N12(void) {
+    /* N=12 → 2 bytes; mixed pattern across byte boundary. */
+    const bool source[12] = {true,  false, false, true,  true, false,
+                             false, true,  true,  false, true, true};
+
+    tensor_t *t = makeBoolTensorN(12);
+    tensorFillFromBoolBuffer(t, source, 12);
+
+    /* CAPTURE before free. */
+    bool captured[12];
+    for (size_t i = 0; i < 12; i++) {
+        captured[i] = tensorBoolGet(t, i);
+    }
+    freeTensor(t);
+
+    /* ASSERT on captured. */
+    for (size_t i = 0; i < 12; i++) {
+        TEST_ASSERT_EQUAL(source[i], captured[i]);
+    }
 }
 
 static void fillTensorFromStackArrayThatGoesOutOfScope(tensor_t *t) {
@@ -564,5 +605,6 @@ int main(void) {
     RUN_TEST(testInitDistribution_XavierNormal_NotAllZero);
     RUN_TEST(testInitDistribution_KaimingUniform_NotAllZero);
     RUN_TEST(testInitDistribution_KaimingNormal_NotAllZero);
+    RUN_TEST(testTensorFillFromBoolBuffer_RoundTrip_N12);
     return UNITY_END();
 }

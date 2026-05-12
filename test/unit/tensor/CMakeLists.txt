@@ -32,3 +32,12 @@ add_elastic_ai_unit_test(
         QuantizationApi
         StorageApi
 )
+add_executable(UnitTestTensorBool UnitTestTensorBool.c)
+target_link_libraries(UnitTestTensorBool PRIVATE
+        unity
+        Tensor
+        Rounding
+        Quantization
+        StorageApi
+)
+__register_target_as_unit_test(UnitTestTensorBool)

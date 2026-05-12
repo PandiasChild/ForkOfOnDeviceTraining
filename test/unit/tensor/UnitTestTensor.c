@@ -234,6 +234,37 @@ void testCopyTensor() {
     TEST_ASSERT_EQUAL_size_t_ARRAY(expectedOrderOfDims, dest.shape->orderOfDimensions, 2);
 }
 
+void test_calcBitsPerElement_Sym_qBits3() {
+    symQConfig_t cfg = {.scale = 1.0f, .qBits = 3, .roundingMode = HTE};
+    quantization_t q;
+    initSymQuantization(&cfg, &q);
+    TEST_ASSERT_EQUAL_size_t(3, calcBitsPerElement(&q));
+}
+
+void test_calcBytesPerElement_Sym_qBits3() {
+    symQConfig_t cfg = {.scale = 1.0f, .qBits = 3, .roundingMode = HTE};
+    quantization_t q;
+    initSymQuantization(&cfg, &q);
+    /* ceil(3/8) = 1 */
+    TEST_ASSERT_EQUAL_size_t(1, calcBytesPerElement(&q));
+}
+
+void test_calcNumberOfBytesForData_Sym_qBits3_N10() {
+    symQConfig_t cfg = {.scale = 1.0f, .qBits = 3, .roundingMode = HTE};
+    quantization_t q;
+    initSymQuantization(&cfg, &q);
+    /* ceil(3*10 / 8) = ceil(30/8) = 4 */
+    TEST_ASSERT_EQUAL_size_t(4, calcNumberOfBytesForData(&q, 10));
+}
+
+void test_calcNumberOfBytesForData_Sym_qBits5_N4() {
+    symQConfig_t cfg = {.scale = 1.0f, .qBits = 5, .roundingMode = HTE};
+    quantization_t q;
+    initSymQuantization(&cfg, &q);
+    /* ceil(5*4 / 8) = ceil(20/8) = 3 */
+    TEST_ASSERT_EQUAL_size_t(3, calcNumberOfBytesForData(&q, 4));
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -254,5 +285,10 @@ int main(void) {
     RUN_TEST(testReadByte);
 
     RUN_TEST(testCopyTensor);
+
+    RUN_TEST(test_calcBitsPerElement_Sym_qBits3);
+    RUN_TEST(test_calcBytesPerElement_Sym_qBits3);
+    RUN_TEST(test_calcNumberOfBytesForData_Sym_qBits3_N10);
+    RUN_TEST(test_calcNumberOfBytesForData_Sym_qBits5_N4);
     return UNITY_END();
 }

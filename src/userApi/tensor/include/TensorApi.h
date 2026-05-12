@@ -136,6 +136,17 @@ void initDistribution(tensor_t *tensor, const distribution_t *distribution);
  */
 void tensorFillFromFloatBuffer(tensor_t *tensor, const float *source, size_t count);
 
+/*! Copies `count` unpacked bools from a caller-owned source into a
+ *  bit-packed BOOL tensor's data buffer. Caller retains ownership
+ *  of `source`. Tensor must be BOOL-quantized and have its data buffer
+ *  already allocated (via initTensor).
+ *
+ *  \param tensor: Pre-initialized BOOL tensor.
+ *  \param source: Caller-owned bool array.
+ *  \param count: Number of bools; must equal the tensor's element count.
+ */
+void tensorFillFromBoolBuffer(tensor_t *tensor, const bool *source, size_t count);
+
 /*! Initializes int32 gradient tensor to match given param tensor.
  *
  * \param param: Pointer to param tensor

@@ -42,6 +42,11 @@ void initFloat32Quantization(quantization_t *quantization) {
     quantization->qConfig = NULL;
 }
 
+void initBoolQuantization(quantization_t *quantization) {
+    quantization->type = BOOL;
+    quantization->qConfig = NULL;
+}
+
 void initSymInt32Quantization(symInt32QConfig_t *symInt32QConfig, quantization_t *quantization) {
     quantization->type = SYM_INT32;
     quantization->qConfig = symInt32QConfig;
