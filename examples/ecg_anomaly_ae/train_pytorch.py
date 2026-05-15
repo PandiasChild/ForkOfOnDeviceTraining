@@ -188,6 +188,33 @@ def main() -> None:
     np.save(OUTPUTS / "pytorch_train_recons.npy", pt_train_recons.astype(np.float32))
     print(f"FINAL test_loss={test_loss:.6f}", flush=True)
 
+    # Save per-layer weights for the C-side BIT_PARITY mode.
+    # C-side expects: examples/ecg_anomaly_ae/weights/<name>.{weight,bias}.npy
+    # Where <name> in {e1, e2, d1, d2, d3} matches the order in v2's buildModel.
+    import os
+
+    weights_dir = HERE / "weights"
+    os.makedirs(weights_dir, exist_ok=True)
+
+    # Keys match C-side loadStateDictFromDir() names; values are actual PyTorch attrs.
+    layer_map = {
+        "e1": model.enc1,   # Conv1d(1->8, K=7, S=2)
+        "e2": model.enc2,   # Conv1d(8->16, K=5)
+        "d1": model.dec1,   # ConvTranspose1d(16->8, K=5, S=5)
+        "d2": model.dec2,   # ConvTranspose1d(8->4, K=2, S=2)
+        "d3": model.dec3,   # ConvTranspose1d(4->1, K=2, S=2)
+    }
+
+    print("Saving per-layer weights:", flush=True)
+    for name, layer in layer_map.items():
+        w = layer.weight.detach().cpu().numpy().astype(np.float32)
+        np.save(weights_dir / f"{name}.weight.npy", w)
+        if layer.bias is not None:
+            b = layer.bias.detach().cpu().numpy().astype(np.float32)
+            np.save(weights_dir / f"{name}.bias.npy", b)
+        has_bias = f" + {name}.bias.npy" if layer.bias is not None else ""
+        print(f"  wrote {name}.weight.npy shape={w.shape}{has_bias}", flush=True)
+
 
 if __name__ == "__main__":
     main()

@@ -154,6 +154,31 @@ def main() -> None:
     np.save(OUTPUTS / "pytorch_predictions.npy", preds)
     print(f"FINAL test_loss={test_loss:.4f} test_acc={test_acc:.4f}", flush=True)
 
+    # Save per-layer weights for the C-side BIT_PARITY mode.
+    # C-side expects: examples/har_classifier/weights/<name>.{weight,bias}.npy
+    # Where <name> in {conv1, conv2, conv3, fc} matches the order in v2's buildModel.
+    import os
+
+    weights_dir = HERE / "weights"
+    os.makedirs(weights_dir, exist_ok=True)
+
+    layer_map = {
+        "conv1": model.conv1,
+        "conv2": model.conv2,
+        "conv3": model.conv3,
+        "fc": model.fc,
+    }
+
+    print("Saving per-layer weights:", flush=True)
+    for name, layer in layer_map.items():
+        w = layer.weight.detach().cpu().numpy().astype(np.float32)
+        np.save(weights_dir / f"{name}.weight.npy", w)
+        if layer.bias is not None:
+            b = layer.bias.detach().cpu().numpy().astype(np.float32)
+            np.save(weights_dir / f"{name}.bias.npy", b)
+        has_bias = f" + {name}.bias.npy" if layer.bias is not None else ""
+        print(f"  wrote {name}.weight.npy shape={w.shape}{has_bias}", flush=True)
+
 
 if __name__ == "__main__":
     main()
