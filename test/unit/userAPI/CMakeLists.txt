@@ -19,13 +19,19 @@ add_elastic_ai_unit_test(
         LayerWeightsApi
         MORE_LIBS
         LinearApi
+        Conv1dApi
+        Conv1dTransposedApi
         QuantizationApi
         LayerQuant
         LayerCommon
         Quantization
         Rounding
         Linear
+        Conv1d
+        Conv1dTransposed
+        Kernel
         Tensor
+        TensorApi
 )
 
 
@@ -79,6 +85,51 @@ add_elastic_ai_unit_test(
         DataLoader
         DataLoaderApi
         StorageApi
+)
+
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
+        Conv1dApi
+        MORE_LIBS
+        LayerQuant
+        LayerCommon
+        QuantizationApi
+        Quantization
+        Rounding
+        Conv1d
+        Kernel
+        Tensor
+        TensorApi
+)
+
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
+        Conv1dTransposedApi
+        MORE_LIBS
+        LayerQuant
+        LayerCommon
+        QuantizationApi
+        Quantization
+        Rounding
+        Conv1dTransposed
+        Kernel
+        Tensor
+        TensorApi
+)
+
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
+        Pool1dApi
+        MORE_LIBS
+        LayerQuant
+        QuantizationApi
+        Quantization
+        Rounding
+        MaxPool1d
+        AvgPool1d
+        Kernel
+        Tensor
+        TensorApi
 )
 
 add_executable(UnitTestMultiLayerTraining UnitTestMultiLayerTraining.c)

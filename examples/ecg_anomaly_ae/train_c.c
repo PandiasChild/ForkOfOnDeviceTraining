@@ -271,7 +271,7 @@ static void buildModel(layer_t **model) {
     parameter_t *e1_w =
         buildParam(XAVIER_UNIFORM, e1_w_data, e1_w_dims, 3, IN_CHANNELS * E1_K, E1_OUT * E1_K);
     parameter_t *e1_b = buildParam(ZEROS, e1_b_data, e1_b_dims, 1, 1, E1_OUT);
-    model[0] = conv1dLayerInit(e1_w, e1_b, e1k, q, q, q, q);
+    model[0] = conv1dLayerInitLegacy(e1_w, e1_b, e1k, q, q, q, q);
     model[1] = reluLayerInitLegacy(quantizationInitFloat(), quantizationInitFloat());
 
     /* Block P1: MaxPool1d(K=2, S=2). 70 → 35. */
@@ -283,8 +283,9 @@ static void buildModel(layer_t **model) {
     parameter_t *e2_w =
         buildParam(XAVIER_UNIFORM, e2_w_data, e2_w_dims, 3, E1_OUT * E2_K, E2_OUT * E2_K);
     parameter_t *e2_b = buildParam(ZEROS, e2_b_data, e2_b_dims, 1, 1, E2_OUT);
-    model[3] = conv1dLayerInit(e2_w, e2_b, e2k, quantizationInitFloat(), quantizationInitFloat(),
-                               quantizationInitFloat(), quantizationInitFloat());
+    model[3] =
+        conv1dLayerInitLegacy(e2_w, e2_b, e2k, quantizationInitFloat(), quantizationInitFloat(),
+                              quantizationInitFloat(), quantizationInitFloat());
     model[4] = reluLayerInitLegacy(quantizationInitFloat(), quantizationInitFloat());
 
     /* Block P2: AvgPool1d(K=5, S=5). 35 → 7 (bottleneck). */

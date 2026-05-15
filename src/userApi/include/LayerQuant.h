@@ -22,4 +22,18 @@ typedef struct layerQuant {
  *  common all-same-quantization case.  Caller retains ownership of `q`. */
 void layerQuantInitUniform(layerQuant_t *lq, quantization_t *q);
 
+/*! Deep-copy a `quantization_t` and its `qConfig`. Returns NULL if `src` is NULL.
+ *
+ *  Caller owns the returned allocation. Free via:
+ *      freeReservedMemory(result->qConfig);
+ *      freeReservedMemory(result);
+ *
+ *  The `qConfig` size is dispatched by `src->type`; BOOL/INT32/FLOAT32 have
+ *  no qConfig (result->qConfig == NULL). Unknown types fire PRINT_ERROR +
+ *  exit(1).
+ *
+ *  Used by every `*LayerInitOwning` factory to materialize per-layer copies
+ *  of the four math quantizations referenced by `layerQuant_t`. */
+quantization_t *deepCopyQuantization(quantization_t *src);
+
 #endif /* LAYER_QUANT_H */

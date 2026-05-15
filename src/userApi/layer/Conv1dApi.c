@@ -8,15 +8,16 @@
 
 #include <stdio.h>
 
-layer_t *conv1dLayerInit(parameter_t *weights, parameter_t *bias, kernel_t *kernel,
-                         quantization_t *forwardQ, quantization_t *weightGradQ,
-                         quantization_t *biasGradQ, quantization_t *propLossQ) {
+layer_t *conv1dLayerInitLegacy(parameter_t *weights, parameter_t *bias, kernel_t *kernel,
+                               quantization_t *forwardQ, quantization_t *weightGradQ,
+                               quantization_t *biasGradQ, quantization_t *propLossQ) {
     layer_t *conv1dLayer = reserveMemory(sizeof(layer_t));
     layerConfig_t *layerConfig = reserveMemory(sizeof(layerConfig_t));
     conv1dConfig_t *conv1dConfig = reserveMemory(sizeof(conv1dConfig_t));
 
     initConv1dConfigWithWeightsAndBias(conv1dConfig, kernel, weights, bias, 1u, forwardQ,
                                        weightGradQ, biasGradQ, propLossQ);
+    conv1dConfig->ownsQuantizations = false;
 
     conv1dLayer->type = CONV1D;
     layerConfig->conv1d = conv1dConfig;
@@ -25,7 +26,7 @@ layer_t *conv1dLayerInit(parameter_t *weights, parameter_t *bias, kernel_t *kern
     return conv1dLayer;
 }
 
-void freeConv1dLayer(layer_t *conv1dLayer) {
+void freeConv1dLayerLegacy(layer_t *conv1dLayer) {
     conv1dConfig_t *conv1dConfig = conv1dLayer->config->conv1d;
 
     freeParameter(conv1dConfig->weights);

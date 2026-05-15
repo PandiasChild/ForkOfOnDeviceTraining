@@ -33,7 +33,7 @@ void unitTestCrossEntropySoftmaxBackward() {
                     &softmaxOutputQ, NULL);
 
     quantization_t *floatQ = quantizationInitFloat();
-    layer_t *softmaxLayer = softmaxLayerInit(floatQ, floatQ);
+    layer_t *softmaxLayer = softmaxLayerInitLegacy(floatQ, floatQ);
     layerFunctions_t softmaxFns = layerFunctions[SOFTMAX];
     softmaxFns.forward(softmaxLayer, &logits, &softmaxOutput);
 
@@ -70,7 +70,7 @@ void unitTestCrossEntropySoftmaxBackward() {
     }
 
     /* FREE. */
-    freeSoftmaxLayer(softmaxLayer);
+    freeSoftmaxLayerLegacy(softmaxLayer);
     freeQuantization(floatQ);
 
     /* ASSERT: raw per-element gradient (p-y), no batch divisor. */
@@ -138,7 +138,7 @@ void testCrossEntropyForward_SumReturnsRawSum() {
     setTensorValues(&softmaxOutput, (uint8_t *)outputData, &outputShape, &outputQ, NULL);
 
     quantization_t *floatQ = quantizationInitFloat();
-    layer_t *softmaxLayer = softmaxLayerInit(floatQ, floatQ);
+    layer_t *softmaxLayer = softmaxLayerInitLegacy(floatQ, floatQ);
     layerFunctions_t softmaxFns = layerFunctions[SOFTMAX];
     softmaxFns.forward(softmaxLayer, &logits, &softmaxOutput);
 
@@ -154,7 +154,7 @@ void testCrossEntropyForward_SumReturnsRawSum() {
 
     float capturedActual = crossEntropyForwardFloat(&softmaxOutput, &distribution, REDUCTION_SUM);
 
-    freeSoftmaxLayer(softmaxLayer);
+    freeSoftmaxLayerLegacy(softmaxLayer);
     freeQuantization(floatQ);
 
     /* SUM: same as the pre-existing forward value (raw -log probability sum). */

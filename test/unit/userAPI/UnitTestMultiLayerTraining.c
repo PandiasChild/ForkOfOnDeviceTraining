@@ -86,7 +86,7 @@ void testMultiLayerBackward_WithCrossEntropy_DoesNotCrash() {
     parameter_t *b1 = parameterInit(b1Param, b1Grad);
 
     layer_t *linear1 = linearLayerInitLegacy(w1, b1, q, q, q, q);
-    layer_t *softmax = softmaxLayerInit(q, q);
+    layer_t *softmax = softmaxLayerInitLegacy(q, q);
 
     layer_t *model[] = {linear0, relu, linear1, softmax};
     size_t sizeModel = 4;
@@ -126,7 +126,7 @@ void testMultiLayerBackward_WithCrossEntropy_DoesNotCrash() {
     freeTrainingStats(stats);
     freeTensor(label);
     freeTensor(input);
-    freeSoftmaxLayer(softmax);
+    freeSoftmaxLayerLegacy(softmax);
     freeLinearLayerLegacy(linear1);
     freeParameter(b1);
     freeParameter(w1);
@@ -205,7 +205,7 @@ void testMultiLayerBackward_WithManualInit_DoesNotCrash() {
     parameter_t *b1 = parameterInit(b1Param, b1Grad);
 
     layer_t *linear1 = linearLayerInitLegacy(w1, b1, q, q, q, q);
-    layer_t *softmax = softmaxLayerInit(q, q);
+    layer_t *softmax = softmaxLayerInitLegacy(q, q);
 
     layer_t *model[] = {linear0, relu, linear1, softmax};
     size_t sizeModel = 4;
@@ -257,7 +257,7 @@ void testMultiLayerBackward_WithManualInit_DoesNotCrash() {
     freeTrainingStats(stats);
     freeTensor(label);
     freeTensor(input);
-    freeSoftmaxLayer(softmax);
+    freeSoftmaxLayerLegacy(softmax);
     freeLinearLayerLegacy(linear1);
     freeParameter(b1);
     freeParameter(w1);
@@ -334,7 +334,7 @@ void testMultiLayerTraining_MultipleSteps_GradsAccumulate() {
     parameter_t *b1 = parameterInit(b1Param, b1Grad);
 
     layer_t *linear1 = linearLayerInitLegacy(w1, b1, q, q, q, q);
-    layer_t *softmax = softmaxLayerInit(q, q);
+    layer_t *softmax = softmaxLayerInitLegacy(q, q);
 
     layer_t *model[] = {linear0, relu, linear1, softmax};
     size_t sizeModel = 4;
@@ -389,7 +389,7 @@ void testMultiLayerTraining_MultipleSteps_GradsAccumulate() {
     freeTensor(label);
     freeTensor(input);
     freeOptimSgdM(sgd);
-    freeSoftmaxLayer(softmax);
+    freeSoftmaxLayerLegacy(softmax);
     freeLinearLayerLegacy(linear1);
     freeReluLayerLegacy(relu);
     freeLinearLayerLegacy(linear0);

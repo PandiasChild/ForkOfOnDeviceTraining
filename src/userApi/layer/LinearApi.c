@@ -2,7 +2,6 @@
 
 #include <stdbool.h>
 #include <stdlib.h>
-#include <string.h>
 
 #include "Common.h"
 #include "Distributions.h"
@@ -201,57 +200,6 @@ layer_t *linearLayerInit(linearInit_t *init, layerQuant_t *lq) {
     cfg->ownsQuantizations = false;
 
     return layer;
-}
-
-/*! Deep-copies a quantization_t and its qConfig.
- *
- *  Returns NULL if `src` is NULL.  Caller owns the returned allocation; free via:
- *      freeReservedMemory(result->qConfig);
- *      freeReservedMemory(result);
- *
- *  qConfig size is dispatched by `src->type`.  BOOL has no qConfig (aligned with
- *  the BOOL dtype added per the BOOL tensor spec). */
-static quantization_t *deepCopyQuantization(quantization_t *src) {
-    if (src == NULL) {
-        return NULL;
-    }
-
-    quantization_t *dst = reserveMemory(sizeof(quantization_t));
-    dst->type = src->type;
-
-    size_t cfgSize = 0;
-    switch (src->type) {
-    case FLOAT32:
-        cfgSize = 0;
-        break; /* no qConfig */
-    case INT32:
-        cfgSize = 0;
-        break;
-    case BOOL:
-        cfgSize = 0;
-        break; /* BOOL has no qConfig */
-    case SYM_INT32:
-        cfgSize = sizeof(symInt32QConfig_t);
-        break;
-    case SYM:
-        cfgSize = sizeof(symQConfig_t);
-        break;
-    case ASYM:
-        cfgSize = sizeof(asymQConfig_t);
-        break;
-    default:
-        PRINT_ERROR("linearLayerInitOwning: cannot deep-copy quantization with unknown type %d",
-                    (int)src->type);
-        exit(1);
-    }
-
-    if (cfgSize == 0) {
-        dst->qConfig = NULL;
-    } else {
-        dst->qConfig = reserveMemory(cfgSize);
-        memcpy(dst->qConfig, src->qConfig, cfgSize);
-    }
-    return dst;
 }
 
 layer_t *linearLayerInitOwning(linearInit_t *init, layerQuant_t *lq) {

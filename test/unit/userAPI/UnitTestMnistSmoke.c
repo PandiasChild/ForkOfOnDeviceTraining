@@ -162,7 +162,7 @@ static void buildModel(layer_t **model, quantization_t **q_out) {
     parameter_t *b1 = parameterInit(b1Param, b1Grad);
 
     model[2] = linearLayerInitLegacy(w1, b1, q, q, q, q);
-    model[3] = softmaxLayerInit(q, q);
+    model[3] = softmaxLayerInitLegacy(q, q);
 }
 
 static size_t cbInvocations;
@@ -215,7 +215,7 @@ void testMnistSmoke_FullTrainingPipelineReducesLoss() {
      * NOTE: freeOptimSgdM cascades to all model parameters via freeParameter.
      * Do NOT also call freeParameter on w0/b0/w1/b1 — would be a double-free. */
     freeOptimSgdM(sgd);
-    freeSoftmaxLayer(model[3]);
+    freeSoftmaxLayerLegacy(model[3]);
     freeLinearLayerLegacy(model[2]);
     freeReluLayerLegacy(model[1]);
     freeLinearLayerLegacy(model[0]);
@@ -275,7 +275,7 @@ void testMnistSmoke_SnprintfGmtimeRBetweenSetupAndTrainingRun_NoSilentExit() {
     char capturedFirstChar = buf[0];
 
     freeOptimSgdM(sgd);
-    freeSoftmaxLayer(model[3]);
+    freeSoftmaxLayerLegacy(model[3]);
     freeLinearLayerLegacy(model[2]);
     freeReluLayerLegacy(model[1]);
     freeLinearLayerLegacy(model[0]);

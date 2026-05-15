@@ -58,3 +58,38 @@ target_link_libraries(FlattenApi PRIVATE
         Common
         StorageApi
 )
+
+add_library(Conv1dTransposedApi Conv1dTransposedApi.c)
+target_include_directories(Conv1dTransposedApi PUBLIC include)
+target_link_libraries(Conv1dTransposedApi PRIVATE
+        Common
+        Conv1dTransposed
+        Distributions
+        Kernel
+        Layer
+        LayerCommon
+        LayerQuant
+        Quantization
+        QuantizationApi
+        Rounding
+        StorageApi
+        Tensor
+        TensorApi
+)
+
+add_library(Pool1dApi Pool1dApi.c)
+target_include_directories(Pool1dApi PUBLIC include)
+target_link_libraries(Pool1dApi PRIVATE
+        AvgPool1d
+        Common
+        Kernel
+        Layer
+        LayerQuant
+        MaxPool1d
+        Quantization
+        QuantizationApi
+        Rounding
+        StorageApi
+        Tensor
+        TensorApi
+)

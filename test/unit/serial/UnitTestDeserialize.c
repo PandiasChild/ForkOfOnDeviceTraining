@@ -134,7 +134,7 @@ void testSerializeAndDeserializeModel() {
 
     layer_t *serialLinear1 = linearLayerInitLegacy(serialWeight1, serialBias1, serialLayerQ,
                                                    serialLayerQ, serialLayerQ, serialLayerQ);
-    layer_t *serialSoftmax = softmaxLayerInit(serialLayerQ, serialLayerQ);
+    layer_t *serialSoftmax = softmaxLayerInitLegacy(serialLayerQ, serialLayerQ);
 
     layer_t *serialModel[] = {serialLinear0, serialRelu, serialLinear1, serialSoftmax};
     size_t sizeModel = 4;
@@ -168,7 +168,7 @@ void testSerializeAndDeserializeModel() {
     layer_t *deserialLinear1 =
         linearLayerInitLegacy(deserialWeight1, deserialBias1, deserialLayerQ, deserialLayerQ,
                               deserialLayerQ, deserialLayerQ);
-    layer_t *deserialSoftmax = softmaxLayerInit(deserialLayerQ, deserialLayerQ);
+    layer_t *deserialSoftmax = softmaxLayerInitLegacy(deserialLayerQ, deserialLayerQ);
 
     layer_t *deserialModel[] = {deserialLinear0, deserialRelu, deserialLinear1, deserialSoftmax};
 
@@ -246,7 +246,7 @@ void testSerializeAndDeserializeModel() {
     /* FREE in reverse-init order. Layer free-functions release only the
      * wrapper; parameters and the shared layerQ are caller-managed (per
      * docs/CONVENTIONS.md "Test memory discipline"). */
-    freeSoftmaxLayer(deserialSoftmax);
+    freeSoftmaxLayerLegacy(deserialSoftmax);
     freeLinearLayerLegacy(deserialLinear1);
     freeParameter(deserialBias1);
     freeParameter(deserialWeight1);
@@ -256,7 +256,7 @@ void testSerializeAndDeserializeModel() {
     freeParameter(deserialWeight0);
     freeQuantization(deserialLayerQ);
 
-    freeSoftmaxLayer(serialSoftmax);
+    freeSoftmaxLayerLegacy(serialSoftmax);
     freeLinearLayerLegacy(serialLinear1);
     freeParameter(serialBias1);
     freeParameter(serialWeight1);

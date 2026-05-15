@@ -66,7 +66,7 @@ static conv1dRunResult_t conv1dRunForward(conv1dFixtureSetup_t s, float *outputB
     r.q = quantizationInitFloat();
 
     if (s.groups == 1) {
-        r.layer = conv1dLayerInit(r.weights, r.bias, &kernelStore, r.q, r.q, r.q, r.q);
+        r.layer = conv1dLayerInitLegacy(r.weights, r.bias, &kernelStore, r.q, r.q, r.q, r.q);
     } else {
         // Phase-2 will expose groups via UserAPI; here we go around the UserAPI.
         // All statics so their addresses remain valid after this function returns.
@@ -104,7 +104,7 @@ void testConv1dForwardMultiChannelWithBias() {
     kernel_t kernel;
     initKernel(&kernel, 3, VALID, 1, 1);
     quantization_t *q = quantizationInitFloat();
-    layer_t *conv1d = conv1dLayerInit(weights, bias, &kernel, q, q, q, q);
+    layer_t *conv1d = conv1dLayerInitLegacy(weights, bias, &kernel, q, q, q, q);
 
     size_t inputDims[] = {1, 3, 5};
     tensor_t *input =
@@ -131,7 +131,7 @@ void testConv1dForwardSingleChannelSingleBatch() {
     initKernel(&kernel, 2, VALID, 1, 1);
 
     quantization_t *q = quantizationInitFloat();
-    layer_t *conv1d = conv1dLayerInit(weights, NULL, &kernel, q, q, q, q);
+    layer_t *conv1d = conv1dLayerInitLegacy(weights, NULL, &kernel, q, q, q, q);
 
     size_t inputDims[] = {1, 1, 4};
     tensor_t *input =
@@ -165,7 +165,7 @@ void testConv1dBackwardSingleChannelWithBias() {
     kernel_t kernel;
     initKernel(&kernel, 2, VALID, 1, 1);
     quantization_t *q = quantizationInitFloat();
-    layer_t *conv1d = conv1dLayerInit(weights, bias, &kernel, q, q, q, q);
+    layer_t *conv1d = conv1dLayerInitLegacy(weights, bias, &kernel, q, q, q, q);
 
     size_t inputDims[] = {1, 1, 4};
     tensor_t *input =
@@ -210,7 +210,7 @@ void testConv1dBackwardSamePaddingSymmetric() {
     kernel_t kernel;
     initKernel(&kernel, 3, SAME, 1, 1);
     quantization_t *q = quantizationInitFloat();
-    layer_t *conv1d = conv1dLayerInit(weights, NULL, &kernel, q, q, q, q);
+    layer_t *conv1d = conv1dLayerInitLegacy(weights, NULL, &kernel, q, q, q, q);
 
     size_t inputDims[] = {1, 1, 5};
     tensor_t *input =

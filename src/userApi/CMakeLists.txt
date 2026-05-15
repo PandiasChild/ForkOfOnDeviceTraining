@@ -35,14 +35,18 @@ target_link_libraries(StorageApi PRIVATE
 add_library(LayerQuant LayerQuant.c)
 target_include_directories(LayerQuant PUBLIC include)
 target_link_libraries(LayerQuant PRIVATE
+        Common
         Quantization
         Rounding
+        StorageApi
 )
 
 add_library(LayerWeightsApi LayerWeightsApi.c)
 target_include_directories(LayerWeightsApi PUBLIC include)
 target_link_libraries(LayerWeightsApi PRIVATE
         Common
+        Conv1d
+        Conv1dTransposed
         Layer
         Linear
         Rounding

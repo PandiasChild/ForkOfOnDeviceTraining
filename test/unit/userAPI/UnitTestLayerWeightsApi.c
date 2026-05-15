@@ -1,5 +1,9 @@
 #define SOURCE_FILE "UNIT_TEST_LAYER_WEIGHTS_API"
 
+#include "Conv1d.h"
+#include "Conv1dApi.h"
+#include "Conv1dTransposed.h"
+#include "Conv1dTransposedApi.h"
 #include "LayerCommon.h"
 #include "LayerQuant.h"
 #include "LayerWeightsApi.h"
@@ -7,6 +11,7 @@
 #include "LinearApi.h"
 #include "QuantizationApi.h"
 #include "Tensor.h"
+#include "TensorApi.h"
 #include "unity.h"
 
 void setUp() {}
@@ -64,9 +69,108 @@ void testLayerLoadWeightsLinearNoBiasAcceptsNullBiasData(void) {
     freeLinearLayer(layer);
 }
 
+void testLayerLoadWeightsConv1dOverwritesWeightAndBiasTensors(void) {
+    quantization_t *q = quantizationInitFloat();
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, q);
+
+    layer_t *layer = conv1dLayerInit(
+        &(conv1dInit_t){
+            .inChannels = 2,
+            .outChannels = 3,
+            .kernelSize = 4,
+            .bias = BIAS_TRUE,
+        },
+        &lq);
+
+    /* Weight tensor: [outChannels=3, inChannels/groups=2, K=4] → 24 elems
+     * Bias tensor:   [outChannels=3] → 3 elems */
+    float weightData[24] = {
+        1.f,  2.f,  3.f,  4.f,  5.f,  6.f,  7.f,  8.f,  9.f,  10.f, 11.f, 12.f,
+        13.f, 14.f, 15.f, 16.f, 17.f, 18.f, 19.f, 20.f, 21.f, 22.f, 23.f, 24.f,
+    };
+    float biasData[3] = {-1.f, -2.f, -3.f};
+
+    layerLoadWeights(layer, weightData, biasData);
+
+    conv1dConfig_t *cfg = layer->config->conv1d;
+    float *loadedWeights = (float *)cfg->weights->param->data;
+    float *loadedBias = (float *)cfg->bias->param->data;
+
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(weightData, loadedWeights, 24);
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(biasData, loadedBias, 3);
+
+    freeConv1dLayer(layer);
+    freeQuantization(q);
+}
+
+void testLayerLoadWeightsConv1dNoBiasAcceptsNullBiasData(void) {
+    quantization_t *q = quantizationInitFloat();
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, q);
+
+    layer_t *layer = conv1dLayerInit(
+        &(conv1dInit_t){
+            .inChannels = 1,
+            .outChannels = 1,
+            .kernelSize = 3,
+            .bias = BIAS_FALSE,
+        },
+        &lq);
+
+    float weightData[3] = {0.5f, 0.25f, 0.125f};
+    layerLoadWeights(layer, weightData, NULL);
+
+    conv1dConfig_t *cfg = layer->config->conv1d;
+    float *loadedWeights = (float *)cfg->weights->param->data;
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(weightData, loadedWeights, 3);
+    TEST_ASSERT_NULL(cfg->bias);
+
+    freeConv1dLayer(layer);
+    freeQuantization(q);
+}
+
+void testLayerLoadWeightsConv1dTransposedOverwritesWeightAndBiasTensors(void) {
+    quantization_t *q = quantizationInitFloat();
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, q);
+
+    layer_t *layer = conv1dTransposedLayerInit(
+        &(conv1dTransposedInit_t){
+            .inChannels = 4,
+            .outChannels = 2,
+            .kernelSize = 3,
+            .bias = BIAS_TRUE,
+        },
+        &lq);
+
+    /* Weight tensor: [inChannels=4, outChannels/groups=2, K=3] → 24 elems.
+     * NOTE the SWAP relative to Conv1d. */
+    float weightData[24] = {0};
+    for (size_t i = 0; i < 24; i++) {
+        weightData[i] = (float)(i + 100);
+    }
+    float biasData[2] = {-10.f, -20.f};
+
+    layerLoadWeights(layer, weightData, biasData);
+
+    conv1dTransposedConfig_t *cfg = layer->config->conv1dTransposed;
+    float *loadedWeights = (float *)cfg->weights->param->data;
+    float *loadedBias = (float *)cfg->bias->param->data;
+
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(weightData, loadedWeights, 24);
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(biasData, loadedBias, 2);
+
+    freeConv1dTransposedLayer(layer);
+    freeQuantization(q);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testLayerLoadWeightsLinearOverwritesWeightAndBiasTensors);
     RUN_TEST(testLayerLoadWeightsLinearNoBiasAcceptsNullBiasData);
+    RUN_TEST(testLayerLoadWeightsConv1dOverwritesWeightAndBiasTensors);
+    RUN_TEST(testLayerLoadWeightsConv1dNoBiasAcceptsNullBiasData);
+    RUN_TEST(testLayerLoadWeightsConv1dTransposedOverwritesWeightAndBiasTensors);
     return UNITY_END();
 }
