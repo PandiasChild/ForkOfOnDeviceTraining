@@ -99,6 +99,9 @@ add_elastic_ai_unit_test(
         TensorApi
         SoftmaxApi
         QuantizationApi
+        LayerQuant
+        Quantization
+        Rounding
         StorageApi
 )
 

@@ -1,6 +1,7 @@
 #ifndef ODT_AVG_POOL_1D_H
 #define ODT_AVG_POOL_1D_H
 
+#include <stdbool.h>
 #include <stdlib.h>
 
 #include "Kernel.h"
@@ -11,6 +12,7 @@ typedef struct avgPool1dConfig {
     kernel_t *kernel;
     quantization_t *forwardQ;
     quantization_t *propLossQ;
+    bool ownsQuantizations;
 } avgPool1dConfig_t;
 
 void initAvgPool1dConfig(avgPool1dConfig_t *cfg, kernel_t *kernel, quantization_t *forwardQ,

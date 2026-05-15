@@ -118,10 +118,60 @@ void testConv1dTransposedLayerInitBorrowingOutputPaddingPropagatesToConfig(void)
     freeQuantization(q);
 }
 
+void testConv1dTransposedLayerInitOwningDeepCopiesQuantizations(void) {
+    quantization_t *q = quantizationInitFloat();
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, q);
+
+    layer_t *layer = conv1dTransposedLayerInitOwning(
+        &(conv1dTransposedInit_t){
+            .inChannels = 8,
+            .outChannels = 4,
+            .kernelSize = 3,
+            .bias = BIAS_TRUE,
+        },
+        &lq);
+
+    conv1dTransposedConfig_t *cfg = layer->config->conv1dTransposed;
+
+    TEST_ASSERT_NOT_EQUAL(q, cfg->forwardQ);
+    TEST_ASSERT_NOT_EQUAL(q, cfg->weightGradQ);
+    TEST_ASSERT_NOT_EQUAL(q, cfg->biasGradQ);
+    TEST_ASSERT_NOT_EQUAL(q, cfg->propLossQ);
+    TEST_ASSERT_EQUAL_INT(q->type, cfg->forwardQ->type);
+    TEST_ASSERT_TRUE(cfg->ownsQuantizations);
+
+    freeConv1dTransposedLayer(layer);
+    freeQuantization(q);
+}
+
+void testConv1dTransposedLayerInitOwningFreesAllAllocationsWithoutLeak(void) {
+    for (int i = 0; i < 5; i++) {
+        quantization_t *q = quantizationInitFloat();
+        layerQuant_t lq;
+        layerQuantInitUniform(&lq, q);
+
+        layer_t *layer = conv1dTransposedLayerInitOwning(
+            &(conv1dTransposedInit_t){
+                .inChannels = 4,
+                .outChannels = 2,
+                .kernelSize = 3,
+                .bias = BIAS_TRUE,
+            },
+            &lq);
+
+        freeConv1dTransposedLayer(layer);
+        freeQuantization(q);
+    }
+    TEST_PASS();
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testConv1dTransposedLayerInitBorrowingBuildsLayerWithCorrectShape);
     RUN_TEST(testConv1dTransposedLayerInitBorrowingBiasFalseLeavesBiasNull);
     RUN_TEST(testConv1dTransposedLayerInitBorrowingOutputPaddingPropagatesToConfig);
+    RUN_TEST(testConv1dTransposedLayerInitOwningDeepCopiesQuantizations);
+    RUN_TEST(testConv1dTransposedLayerInitOwningFreesAllAllocationsWithoutLeak);
     return UNITY_END();
 }

@@ -1,6 +1,8 @@
 #include <stdlib.h>
 
+#include "LayerQuant.h"
 #include "QuantizationApi.h"
+#include "Softmax.h"
 #include "SoftmaxApi.h"
 #include "StorageApi.h"
 #include "Tensor.h"
@@ -280,6 +282,54 @@ void testSoftmaxLayerInitAndFreeRoundTrip(void) {
     freeQuantization(floatQ);
 }
 
+/* ============================================================================
+ * Tests for the new layerQuant_t-based Softmax factory (PR 2).
+ * ========================================================================== */
+
+void testSoftmaxLayerInitBorrowingStoresLqPointers(void) {
+    quantization_t *qFwd = quantizationInitFloat();
+    quantization_t *qBwd = quantizationInitFloat();
+    layerQuant_t lq = {
+        .forwardMath = qFwd,
+        .backwardMath = qBwd,
+    };
+
+    layer_t *layer = softmaxLayerInit(&lq);
+
+    TEST_ASSERT_NOT_NULL(layer);
+    TEST_ASSERT_EQUAL_INT(SOFTMAX, layer->type);
+
+    softmaxConfig_t *cfg = layer->config->softmax;
+    TEST_ASSERT_EQUAL_PTR(qFwd, cfg->forwardQ);
+    TEST_ASSERT_EQUAL_PTR(qBwd, cfg->backwardQ);
+    TEST_ASSERT_FALSE(cfg->ownsQuantizations);
+
+    freeSoftmaxLayer(layer);
+    freeQuantization(qFwd);
+    freeQuantization(qBwd);
+}
+
+void testSoftmaxLayerInitOwningDeepCopiesLqPointers(void) {
+    quantization_t *qFwd = quantizationInitFloat();
+    quantization_t *qBwd = quantizationInitFloat();
+    layerQuant_t lq = {
+        .forwardMath = qFwd,
+        .backwardMath = qBwd,
+    };
+
+    layer_t *layer = softmaxLayerInitOwning(&lq);
+
+    softmaxConfig_t *cfg = layer->config->softmax;
+    TEST_ASSERT_NOT_EQUAL(qFwd, cfg->forwardQ);
+    TEST_ASSERT_NOT_EQUAL(qBwd, cfg->backwardQ);
+    TEST_ASSERT_EQUAL_INT(qFwd->type, cfg->forwardQ->type);
+    TEST_ASSERT_TRUE(cfg->ownsQuantizations);
+
+    freeSoftmaxLayer(layer);
+    freeQuantization(qFwd);
+    freeQuantization(qBwd);
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -292,5 +342,7 @@ int main() {
     RUN_TEST(unitTestSoftmaxBackwardSymInt32);
 
     RUN_TEST(testSoftmaxLayerInitAndFreeRoundTrip);
+    RUN_TEST(testSoftmaxLayerInitBorrowingStoresLqPointers);
+    RUN_TEST(testSoftmaxLayerInitOwningDeepCopiesLqPointers);
     return UNITY_END();
 }

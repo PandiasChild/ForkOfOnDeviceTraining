@@ -1,6 +1,7 @@
 #ifndef ODT_MAX_POOL_1D_H
 #define ODT_MAX_POOL_1D_H
 
+#include <stdbool.h>
 #include <stdlib.h>
 
 #include "Kernel.h"
@@ -12,6 +13,7 @@ typedef struct maxPool1dConfig {
     tensor_t *argmaxIndices; // INT32, shape == output shape; pre-allocated by caller
     quantization_t *forwardQ;
     quantization_t *propLossQ;
+    bool ownsQuantizations;
 } maxPool1dConfig_t;
 
 void initMaxPool1dConfig(maxPool1dConfig_t *cfg, kernel_t *kernel, tensor_t *argmaxIndices,

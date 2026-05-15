@@ -1,12 +1,18 @@
 add_library(Conv1dApi Conv1dApi.c)
 target_include_directories(Conv1dApi PUBLIC include)
 target_link_libraries(Conv1dApi PRIVATE
-        Tensor
-        Rounding
-        Layer
-        Conv1d
         Common
+        Conv1d
+        Distributions
+        Kernel
+        Layer
+        LayerCommon
+        LayerQuant
+        Quantization
+        QuantizationApi
+        Rounding
         StorageApi
+        Tensor
         TensorApi
 )
 
@@ -42,11 +48,14 @@ target_link_libraries(ReluApi PRIVATE
 add_library(SoftmaxApi SoftmaxApi.c)
 target_include_directories(SoftmaxApi PUBLIC include)
 target_link_libraries(SoftmaxApi PRIVATE
-        Layer
-        Tensor
-        Rounding
         Common
+        Layer
+        LayerQuant
+        Quantization
+        Rounding
+        Softmax
         StorageApi
+        Tensor
 )
 
 add_library(FlattenApi FlattenApi.c)

@@ -8,6 +8,7 @@
 #include "LayerQuant.h"
 #include "QuantizationApi.h"
 #include "Tensor.h"
+#include "TensorApi.h"
 #include "unity.h"
 
 void setUp() {}
@@ -71,6 +72,7 @@ void testConv1dLayerInitBorrowingBuildsLayerWithCorrectShape(void) {
     TEST_ASSERT_EQUAL_UINT(1, cfg->groups);
 
     freeConv1dLayer(layer);
+    freeQuantization(q);
 }
 
 void testConv1dLayerInitBorrowingBiasDefaultResolvesToTrue(void) {
@@ -91,6 +93,7 @@ void testConv1dLayerInitBorrowingBiasDefaultResolvesToTrue(void) {
     TEST_ASSERT_NOT_NULL(cfg->bias);
 
     freeConv1dLayer(layer);
+    freeQuantization(q);
 }
 
 void testConv1dLayerInitBorrowingBiasFalseLeavesBiasNull(void) {
@@ -111,6 +114,7 @@ void testConv1dLayerInitBorrowingBiasFalseLeavesBiasNull(void) {
     TEST_ASSERT_NULL(cfg->bias);
 
     freeConv1dLayer(layer);
+    freeQuantization(q);
 }
 
 void testConv1dLayerInitBorrowingPaddingDefaultIsValid(void) {
@@ -135,6 +139,61 @@ void testConv1dLayerInitBorrowingPaddingDefaultIsValid(void) {
     TEST_ASSERT_EQUAL_UINT(1, cfg->groups);
 
     freeConv1dLayer(layer);
+    freeQuantization(q);
+}
+
+void testConv1dLayerInitOwningDeepCopiesQuantizations(void) {
+    quantization_t *q = quantizationInitFloat();
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, q);
+
+    layer_t *layer = conv1dLayerInitOwning(
+        &(conv1dInit_t){
+            .inChannels = 3,
+            .outChannels = 4,
+            .kernelSize = 5,
+            .bias = BIAS_TRUE,
+        },
+        &lq);
+
+    conv1dConfig_t *cfg = layer->config->conv1d;
+
+    /* Owning variant: cfg->forwardQ is a fresh allocation, NOT the original q */
+    TEST_ASSERT_NOT_EQUAL(q, cfg->forwardQ);
+    TEST_ASSERT_NOT_EQUAL(q, cfg->weightGradQ);
+    TEST_ASSERT_NOT_EQUAL(q, cfg->biasGradQ);
+    TEST_ASSERT_NOT_EQUAL(q, cfg->propLossQ);
+
+    /* But the copy has equal type to the original */
+    TEST_ASSERT_EQUAL_INT(q->type, cfg->forwardQ->type);
+
+    /* ownsQuantizations flag is set */
+    TEST_ASSERT_TRUE(cfg->ownsQuantizations);
+
+    freeConv1dLayer(layer);
+    freeQuantization(q);
+}
+
+void testConv1dLayerInitOwningFreesAllAllocationsWithoutLeak(void) {
+    /* Build + free 5 layers — if anything leaks, LSan catches it in CI. */
+    for (int i = 0; i < 5; i++) {
+        quantization_t *q = quantizationInitFloat();
+        layerQuant_t lq;
+        layerQuantInitUniform(&lq, q);
+
+        layer_t *layer = conv1dLayerInitOwning(
+            &(conv1dInit_t){
+                .inChannels = 8,
+                .outChannels = 4,
+                .kernelSize = 3,
+                .bias = BIAS_TRUE,
+            },
+            &lq);
+
+        freeConv1dLayer(layer);
+        freeQuantization(q);
+    }
+    TEST_PASS();
 }
 
 int main(void) {
@@ -143,5 +202,7 @@ int main(void) {
     RUN_TEST(testConv1dLayerInitBorrowingBiasDefaultResolvesToTrue);
     RUN_TEST(testConv1dLayerInitBorrowingBiasFalseLeavesBiasNull);
     RUN_TEST(testConv1dLayerInitBorrowingPaddingDefaultIsValid);
+    RUN_TEST(testConv1dLayerInitOwningDeepCopiesQuantizations);
+    RUN_TEST(testConv1dLayerInitOwningFreesAllAllocationsWithoutLeak);
     return UNITY_END();
 }

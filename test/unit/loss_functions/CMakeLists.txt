@@ -6,6 +6,7 @@ add_elastic_ai_unit_test(
         Log
         SoftmaxApi
         QuantizationApi
+        LayerQuant
         TensorApi
 )
 

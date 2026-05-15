@@ -1,11 +1,14 @@
 #ifndef ENV5_RUNTIME_SOFTMAX_H
 #define ENV5_RUNTIME_SOFTMAX_H
 
+#include <stdbool.h>
+
 #include "Layer.h"
 
 typedef struct softmaxConfig {
     quantization_t *forwardQ;
     quantization_t *backwardQ;
+    bool ownsQuantizations;
 } softmaxConfig_t;
 
 void softmaxInitConfig(softmaxConfig_t *softmaxConfig, quantization_t *forwardQ,

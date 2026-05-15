@@ -1,6 +1,7 @@
 #ifndef ODT_CONV1D_TRANSPOSED_H
 #define ODT_CONV1D_TRANSPOSED_H
 
+#include <stdbool.h>
 #include <stdlib.h>
 
 #include "Kernel.h"
@@ -17,6 +18,7 @@ typedef struct conv1dTransposedConfig {
     quantization_t *weightGradQ;
     quantization_t *biasGradQ;
     quantization_t *propLossQ;
+    bool ownsQuantizations;
 } conv1dTransposedConfig_t;
 
 void initConv1dTransposedConfigWithWeightsAndBias(
