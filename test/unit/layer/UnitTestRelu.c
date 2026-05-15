@@ -36,7 +36,7 @@ void testReluForwardFloat() {
 
     /* 3. Build shared float quantization for the layer. */
     quantization_t *floatQ = quantizationInitFloat();
-    layer_t *reluLayer = reluLayerInit(floatQ, floatQ);
+    layer_t *reluLayer = reluLayerInitLegacy(floatQ, floatQ);
 
     /* 4. Exercise. */
     reluForward(reluLayer, input, output);
@@ -47,7 +47,7 @@ void testReluForwardFloat() {
 
     /* 6. FREE in reverse-init order. freeReluLayer releases only the layer
      *    config wrapper; the shared floatQ is freed exactly once at the end. */
-    freeReluLayer(reluLayer);
+    freeReluLayerLegacy(reluLayer);
     freeTensor(output);
     freeTensor(input);
     freeQuantization(floatQ);
@@ -83,7 +83,7 @@ void testReluForwardSymInt32() {
 
     /* 3. Shared SymInt32 quantization for the layer. */
     quantization_t *symIntQ = quantizationInitSymInt32(HTE);
-    layer_t *reluLayer = reluLayerInit(symIntQ, symIntQ);
+    layer_t *reluLayer = reluLayerInitLegacy(symIntQ, symIntQ);
     layerFunctions_t reluFns = layerFunctions[RELU];
     reluFns.forward(reluLayer, input, output);
 
@@ -107,7 +107,7 @@ void testReluForwardSymInt32() {
 
     /* 6. FREE. */
     freeTensor(outputFloat);
-    freeReluLayer(reluLayer);
+    freeReluLayerLegacy(reluLayer);
     freeTensor(output);
     freeTensor(input);
     freeQuantization(symIntQ);
@@ -153,7 +153,7 @@ void testReluBackwardFloat() {
 
     /* 4. Build the layer with shared float quantization. */
     quantization_t *floatQ = quantizationInitFloat();
-    layer_t *reluLayer = reluLayerInit(floatQ, floatQ);
+    layer_t *reluLayer = reluLayerInitLegacy(floatQ, floatQ);
     layerFunctions_t reluFns = layerFunctions[RELU];
     reluFns.backward(reluLayer, forwardInput, loss, propLoss);
 
@@ -164,7 +164,7 @@ void testReluBackwardFloat() {
     }
 
     /* 6. FREE. */
-    freeReluLayer(reluLayer);
+    freeReluLayerLegacy(reluLayer);
     freeTensor(propLoss);
     freeTensor(loss);
     freeTensor(forwardInput);
@@ -209,7 +209,7 @@ void testReluBackwardSymInt32() {
 
     /* 4. Build layer with shared SymInt32 quantization. */
     quantization_t *symIntQ = quantizationInitSymInt32(HTE);
-    layer_t *reluLayer = reluLayerInit(symIntQ, symIntQ);
+    layer_t *reluLayer = reluLayerInitLegacy(symIntQ, symIntQ);
     layerFunctions_t reluFns = layerFunctions[RELU];
     reluFns.backward(reluLayer, forwardInput, loss, propLoss);
 
@@ -231,7 +231,7 @@ void testReluBackwardSymInt32() {
 
     /* 7. FREE. */
     freeTensor(propLossFloat);
-    freeReluLayer(reluLayer);
+    freeReluLayerLegacy(reluLayer);
     freeTensor(propLoss);
     freeTensor(loss);
     freeTensor(forwardInput);
@@ -251,13 +251,13 @@ void testReluLayerInitAndFreeRoundTrip(void) {
      * the inner reluConfig; post-fix it is leak-clean (verified via the
      * LSan sweep). NULL is acceptable for the quantization arguments —
      * reluLayerInit only stores them, freeReluLayer doesn't touch them. */
-    layer_t *reluLayer = reluLayerInit(NULL, NULL);
+    layer_t *reluLayer = reluLayerInitLegacy(NULL, NULL);
     TEST_ASSERT_NOT_NULL(reluLayer);
     TEST_ASSERT_EQUAL_INT(RELU, reluLayer->type);
     TEST_ASSERT_NOT_NULL(reluLayer->config);
     TEST_ASSERT_NOT_NULL(reluLayer->config->relu);
 
-    freeReluLayer(reluLayer);
+    freeReluLayerLegacy(reluLayer);
 }
 
 /* ============================================================================

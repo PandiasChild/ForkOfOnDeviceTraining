@@ -50,7 +50,7 @@ void testCalculateGradsSequential_WithFlattenFirst_DoesNotCrash(void) {
     parameter_t *b0 = parameterInit(b0Param, b0Grad);
 
     layer_t *flatten = flattenLayerInit();
-    layer_t *linear = linearLayerInit(w0, b0, q, q, q, q);
+    layer_t *linear = linearLayerInitLegacy(w0, b0, q, q, q, q);
     layer_t *softmax = softmaxLayerInit(q, q);
     layer_t *model[3] = {flatten, linear, softmax};
 
@@ -94,7 +94,7 @@ void testCalculateGradsSequential_WithFlattenFirst_DoesNotCrash(void) {
     freeTensor(label);
     freeTensor(input);
     freeSoftmaxLayer(softmax);
-    freeLinearLayer(linear);
+    freeLinearLayerLegacy(linear);
     freeFlattenLayer(flatten);
     freeParameter(b0);
     freeParameter(w0);

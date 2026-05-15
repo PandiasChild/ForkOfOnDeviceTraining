@@ -80,9 +80,9 @@ void testSgdMCreateOptim() {
     tensorFillFromFloatBuffer(b1Grad, (float[]){0.f}, 1);
     parameter_t *bias1 = parameterInit(b1Param, b1Grad);
 
-    layer_t *linear0 = linearLayerInit(weights0, bias0, layerQ, layerQ, layerQ, layerQ);
-    layer_t *relu0 = reluLayerInit(layerQ, layerQ);
-    layer_t *linear1 = linearLayerInit(weights1, bias1, layerQ, layerQ, layerQ, layerQ);
+    layer_t *linear0 = linearLayerInitLegacy(weights0, bias0, layerQ, layerQ, layerQ, layerQ);
+    layer_t *relu0 = reluLayerInitLegacy(layerQ, layerQ);
+    layer_t *linear1 = linearLayerInitLegacy(weights1, bias1, layerQ, layerQ, layerQ, layerQ);
 
     layer_t *model[] = {linear0, relu0, linear1};
     size_t sizeModel = sizeof(model) / sizeof(model[0]);
@@ -150,9 +150,9 @@ void testSgdMCreateOptim() {
      * (and their grads) registered with the optimizer (per SgdApi.c:85-93,
      * mirroring the post-#110 ownership contract). */
     freeOptimSgdM(optim);
-    freeLinearLayer(linear1);
-    freeReluLayer(relu0);
-    freeLinearLayer(linear0);
+    freeLinearLayerLegacy(linear1);
+    freeReluLayerLegacy(relu0);
+    freeLinearLayerLegacy(linear0);
     freeQuantization(layerQ);
 
     /* ASSERT. */
@@ -204,7 +204,7 @@ void testSGDStep() {
     tensorFillFromFloatBuffer(biasGrad, (float[]){1.f, 3.f}, 2);
     parameter_t *bias = parameterInit(biasParam, biasGrad);
 
-    layer_t *linear = linearLayerInit(weights, bias, layerQ, layerQ, layerQ, layerQ);
+    layer_t *linear = linearLayerInitLegacy(weights, bias, layerQ, layerQ, layerQ, layerQ);
 
     layer_t *model[] = {linear};
     size_t modelSize = 1;
@@ -241,7 +241,7 @@ void testSGDStep() {
 
     /* FREE in reverse-init order. */
     freeOptimSgdM(sgd);
-    freeLinearLayer(linear);
+    freeLinearLayerLegacy(linear);
     freeQuantization(layerQ);
 
     /* ASSERT. */
@@ -290,7 +290,7 @@ void testSGDZeroGrad() {
     tensorFillFromFloatBuffer(biasGrad, (float[]){1.f, 3.f}, 2);
     parameter_t *bias = parameterInit(biasParam, biasGrad);
 
-    layer_t *linear = linearLayerInit(weights, bias, layerQ, layerQ, layerQ, layerQ);
+    layer_t *linear = linearLayerInitLegacy(weights, bias, layerQ, layerQ, layerQ, layerQ);
 
     layer_t *model[] = {linear};
     size_t modelSize = 1;
@@ -314,7 +314,7 @@ void testSGDZeroGrad() {
 
     /* FREE in reverse-init order. */
     freeOptimSgdM(sgd);
-    freeLinearLayer(linear);
+    freeLinearLayerLegacy(linear);
     freeQuantization(layerQ);
 
     /* ASSERT. */

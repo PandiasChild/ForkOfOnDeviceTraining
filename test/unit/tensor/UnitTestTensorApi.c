@@ -393,7 +393,7 @@ void testTensorFillFromFloatBuffer_CopiesValues_SourceCanGoOutOfScope(void) {
 }
 
 void testFreeParameter_NullGrad_DoesNotSegfault(void) {
-    /* H3 regression: linearLayerInitNonTrainable passes NULL for grad into
+    /* H3 regression: linearLayerInitNonTrainableLegacy passes NULL for grad into
      * parameterInit; today freeParameter dereferences it and crashes. */
     size_t *dims = reserveMemory(2 * sizeof(size_t));
     dims[0] = 1;

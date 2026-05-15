@@ -24,6 +24,22 @@ quantization_t *quantizationInitSymInt32(roundingMode_t roundingMode) {
     return q;
 }
 
+quantization_t *quantizationInitSymInt32WithBits(roundingMode_t roundingMode, uint8_t qMaxBits) {
+    quantization_t *q = reserveMemory(sizeof(quantization_t));
+    symInt32QConfig_t *qC = reserveMemory(sizeof(symInt32QConfig_t));
+    initSymInt32QConfigWithQMaxBits(roundingMode, qC, qMaxBits);
+    initSymInt32Quantization(qC, q);
+    return q;
+}
+
+quantization_t *quantizationInitSym(uint8_t qBits, roundingMode_t roundingMode) {
+    quantization_t *q = reserveMemory(sizeof(quantization_t));
+    symQConfig_t *qC = reserveMemory(sizeof(symQConfig_t));
+    initSymQConfig(qBits, roundingMode, qC);
+    initSymQuantization(qC, q);
+    return q;
+}
+
 quantization_t *quantizationInitAsym(uint8_t qBits, roundingMode_t roundingMode) {
     quantization_t *q = reserveMemory(sizeof(quantization_t));
     asymQConfig_t *qC = reserveMemory(sizeof(asymQConfig_t));

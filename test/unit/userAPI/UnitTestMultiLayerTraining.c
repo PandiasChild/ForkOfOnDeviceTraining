@@ -56,8 +56,8 @@ void testMultiLayerBackward_WithCrossEntropy_DoesNotCrash() {
     tensor_t *b0Grad = gradInitFloat(b0Param, NULL);
     parameter_t *b0 = parameterInit(b0Param, b0Grad);
 
-    layer_t *linear0 = linearLayerInit(w0, b0, q, q, q, q);
-    layer_t *relu = reluLayerInit(q, q);
+    layer_t *linear0 = linearLayerInitLegacy(w0, b0, q, q, q, q);
+    layer_t *relu = reluLayerInitLegacy(q, q);
 
     /* Layer 1 weights w1 (2x4, ZEROS). */
     size_t *w1Dims = reserveMemory(2 * sizeof(size_t));
@@ -85,7 +85,7 @@ void testMultiLayerBackward_WithCrossEntropy_DoesNotCrash() {
     tensor_t *b1Grad = gradInitFloat(b1Param, NULL);
     parameter_t *b1 = parameterInit(b1Param, b1Grad);
 
-    layer_t *linear1 = linearLayerInit(w1, b1, q, q, q, q);
+    layer_t *linear1 = linearLayerInitLegacy(w1, b1, q, q, q, q);
     layer_t *softmax = softmaxLayerInit(q, q);
 
     layer_t *model[] = {linear0, relu, linear1, softmax};
@@ -127,11 +127,11 @@ void testMultiLayerBackward_WithCrossEntropy_DoesNotCrash() {
     freeTensor(label);
     freeTensor(input);
     freeSoftmaxLayer(softmax);
-    freeLinearLayer(linear1);
+    freeLinearLayerLegacy(linear1);
     freeParameter(b1);
     freeParameter(w1);
-    freeReluLayer(relu);
-    freeLinearLayer(linear0);
+    freeReluLayerLegacy(relu);
+    freeLinearLayerLegacy(linear0);
     freeParameter(b0);
     freeParameter(w0);
     freeQuantization(q);
@@ -175,8 +175,8 @@ void testMultiLayerBackward_WithManualInit_DoesNotCrash() {
     tensor_t *b0Grad = gradInitFloat(b0Param, NULL);
     parameter_t *b0 = parameterInit(b0Param, b0Grad);
 
-    layer_t *linear0 = linearLayerInit(w0, b0, q, q, q, q);
-    layer_t *relu = reluLayerInit(q, q);
+    layer_t *linear0 = linearLayerInitLegacy(w0, b0, q, q, q, q);
+    layer_t *relu = reluLayerInitLegacy(q, q);
 
     /* Layer 1 weights w1 (2x4, manual). */
     size_t *w1Dims = reserveMemory(2 * sizeof(size_t));
@@ -204,7 +204,7 @@ void testMultiLayerBackward_WithManualInit_DoesNotCrash() {
     tensor_t *b1Grad = gradInitFloat(b1Param, NULL);
     parameter_t *b1 = parameterInit(b1Param, b1Grad);
 
-    layer_t *linear1 = linearLayerInit(w1, b1, q, q, q, q);
+    layer_t *linear1 = linearLayerInitLegacy(w1, b1, q, q, q, q);
     layer_t *softmax = softmaxLayerInit(q, q);
 
     layer_t *model[] = {linear0, relu, linear1, softmax};
@@ -258,11 +258,11 @@ void testMultiLayerBackward_WithManualInit_DoesNotCrash() {
     freeTensor(label);
     freeTensor(input);
     freeSoftmaxLayer(softmax);
-    freeLinearLayer(linear1);
+    freeLinearLayerLegacy(linear1);
     freeParameter(b1);
     freeParameter(w1);
-    freeReluLayer(relu);
-    freeLinearLayer(linear0);
+    freeReluLayerLegacy(relu);
+    freeLinearLayerLegacy(linear0);
     freeParameter(b0);
     freeParameter(w0);
     freeQuantization(q);
@@ -304,8 +304,8 @@ void testMultiLayerTraining_MultipleSteps_GradsAccumulate() {
     tensor_t *b0Grad = gradInitFloat(b0Param, NULL);
     parameter_t *b0 = parameterInit(b0Param, b0Grad);
 
-    layer_t *linear0 = linearLayerInit(w0, b0, q, q, q, q);
-    layer_t *relu = reluLayerInit(q, q);
+    layer_t *linear0 = linearLayerInitLegacy(w0, b0, q, q, q, q);
+    layer_t *relu = reluLayerInitLegacy(q, q);
 
     /* Layer 1 weights w1 (2x4). */
     size_t *w1Dims = reserveMemory(2 * sizeof(size_t));
@@ -333,7 +333,7 @@ void testMultiLayerTraining_MultipleSteps_GradsAccumulate() {
     tensor_t *b1Grad = gradInitFloat(b1Param, NULL);
     parameter_t *b1 = parameterInit(b1Param, b1Grad);
 
-    layer_t *linear1 = linearLayerInit(w1, b1, q, q, q, q);
+    layer_t *linear1 = linearLayerInitLegacy(w1, b1, q, q, q, q);
     layer_t *softmax = softmaxLayerInit(q, q);
 
     layer_t *model[] = {linear0, relu, linear1, softmax};
@@ -390,9 +390,9 @@ void testMultiLayerTraining_MultipleSteps_GradsAccumulate() {
     freeTensor(input);
     freeOptimSgdM(sgd);
     freeSoftmaxLayer(softmax);
-    freeLinearLayer(linear1);
-    freeReluLayer(relu);
-    freeLinearLayer(linear0);
+    freeLinearLayerLegacy(linear1);
+    freeReluLayerLegacy(relu);
+    freeLinearLayerLegacy(linear0);
     freeQuantization(q);
 
     /* ASSERT on captured. */

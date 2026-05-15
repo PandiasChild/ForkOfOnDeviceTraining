@@ -63,7 +63,7 @@ void testLinearForwardFloat() {
 
     /* 5. Build the layer with shared float quantization. */
     quantization_t *testQ = quantizationInitFloat();
-    layer_t *linearLayer = linearLayerInit(weights, bias, testQ, testQ, testQ, testQ);
+    layer_t *linearLayer = linearLayerInitLegacy(weights, bias, testQ, testQ, testQ, testQ);
 
     linearForward(linearLayer, input, output);
 
@@ -73,7 +73,7 @@ void testLinearForwardFloat() {
     captured[1] = ((float *)output->data)[1];
 
     /* 7. FREE. freeLinearLayer releases only the layer config wrapper. */
-    freeLinearLayer(linearLayer);
+    freeLinearLayerLegacy(linearLayer);
     freeTensor(output);
     freeTensor(input);
     freeParameter(bias);
@@ -146,7 +146,7 @@ void testLinearBackwardFloat() {
 
     /* 6. Build the layer. */
     quantization_t *testQ = quantizationInitFloat();
-    layer_t *linearLayer = linearLayerInit(weights, bias, testQ, testQ, testQ, testQ);
+    layer_t *linearLayer = linearLayerInitLegacy(weights, bias, testQ, testQ, testQ, testQ);
 
     linearBackward(linearLayer, forwardInput, loss, propLoss);
 
@@ -169,7 +169,7 @@ void testLinearBackwardFloat() {
     }
 
     /* 8. FREE. */
-    freeLinearLayer(linearLayer);
+    freeLinearLayerLegacy(linearLayer);
     freeTensor(propLoss);
     freeTensor(loss);
     freeTensor(forwardInput);
@@ -239,7 +239,7 @@ void testLinearForwardSymInt32() {
 
     /* 5. Build layer (shared SymInt32 quantization). */
     quantization_t *test = quantizationInitSymInt32(HTE);
-    layer_t *linearLayer = linearLayerInit(weights, bias, test, test, test, test);
+    layer_t *linearLayer = linearLayerInitLegacy(weights, bias, test, test, test, test);
 
     linearForward(linearLayer, input, output);
 
@@ -262,7 +262,7 @@ void testLinearForwardSymInt32() {
 
     /* 8. FREE. */
     freeTensor(outputFloat);
-    freeLinearLayer(linearLayer);
+    freeLinearLayerLegacy(linearLayer);
     freeTensor(output);
     freeTensor(input);
     freeParameter(bias);
@@ -340,7 +340,7 @@ void testLinearBackwardSymInt32() {
 
     /* 6. Build layer (shared SymInt32 quantization). */
     quantization_t *test = quantizationInitSymInt32(HTE);
-    layer_t *linearLayer = linearLayerInit(weights, bias, test, test, test, test);
+    layer_t *linearLayer = linearLayerInitLegacy(weights, bias, test, test, test, test);
 
     linearBackward(linearLayer, forwardInput, loss, propLoss);
 
@@ -393,7 +393,7 @@ void testLinearBackwardSymInt32() {
     freeTensor(propLossFloat);
     freeTensor(biasGradFloat);
     freeTensor(weightGradFloat);
-    freeLinearLayer(linearLayer);
+    freeLinearLayerLegacy(linearLayer);
     freeTensor(propLoss);
     freeTensor(loss);
     freeTensor(forwardInput);
@@ -490,7 +490,7 @@ void testLinearBackwardFloatWithMismatchedQuantizations() {
 
     /* 6. Build the layer with shared float quantization. */
     quantization_t *testQ = quantizationInitFloat();
-    layer_t *linearLayer = linearLayerInit(weights, bias, testQ, testQ, testQ, testQ);
+    layer_t *linearLayer = linearLayerInitLegacy(weights, bias, testQ, testQ, testQ, testQ);
 
     linearBackward(linearLayer, forwardInput, lossAsym, propLoss);
 
@@ -513,7 +513,7 @@ void testLinearBackwardFloatWithMismatchedQuantizations() {
     }
 
     /* 8. FREE. */
-    freeLinearLayer(linearLayer);
+    freeLinearLayerLegacy(linearLayer);
     freeTensor(propLoss);
     freeTensor(lossAsym);
     freeTensor(forwardInput);
@@ -565,7 +565,7 @@ void testLinearLayerInitNonTrainable(void) {
 
     /* 3. Build the non-trainable layer. */
     quantization_t *forwardQ = quantizationInitFloat();
-    layer_t *layer = linearLayerInitNonTrainable(weights, bias, forwardQ);
+    layer_t *layer = linearLayerInitNonTrainableLegacy(weights, bias, forwardQ);
 
     /* Wiring asserts (read into stack locals before any free). */
     int capturedLayerNotNull = (layer != NULL);
@@ -608,7 +608,7 @@ void testLinearLayerInitNonTrainable(void) {
      *    freeParameter is NULL-grad-safe (post-#106, H3). */
     parameter_t *weightsParam = config->weights;
     parameter_t *biasParam = config->bias;
-    freeLinearLayer(layer);
+    freeLinearLayerLegacy(layer);
     freeTensor(output);
     freeTensor(input);
     freeParameter(biasParam);
@@ -636,13 +636,13 @@ void testLinearLayerInitAndFreeRoundTrip(void) {
      * parameters/quantization (those are externally owned). So NULL is a
      * valid stand-in here — keeps the test focused on the StorageApi
      * lifecycle, not on tensor ownership. */
-    layer_t *linearLayer = linearLayerInit(NULL, NULL, NULL, NULL, NULL, NULL);
+    layer_t *linearLayer = linearLayerInitLegacy(NULL, NULL, NULL, NULL, NULL, NULL);
     TEST_ASSERT_NOT_NULL(linearLayer);
     TEST_ASSERT_EQUAL_INT(LINEAR, linearLayer->type);
     TEST_ASSERT_NOT_NULL(linearLayer->config);
     TEST_ASSERT_NOT_NULL(linearLayer->config->linear);
 
-    freeLinearLayer(linearLayer);
+    freeLinearLayerLegacy(linearLayer);
 }
 
 /* ============================================================================

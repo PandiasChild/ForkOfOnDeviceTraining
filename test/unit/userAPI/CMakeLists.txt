@@ -6,6 +6,49 @@ add_elastic_ai_unit_test(
 
 add_elastic_ai_unit_test(
         LIB_UNDER_TEST
+        LayerQuant
+        MORE_LIBS
+        QuantizationApi
+        Quantization
+        Rounding
+)
+
+
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
+        LayerWeightsApi
+        MORE_LIBS
+        LinearApi
+        QuantizationApi
+        LayerQuant
+        LayerCommon
+        Quantization
+        Rounding
+        Linear
+        Tensor
+)
+
+
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
+        StateDictApi
+        MORE_LIBS
+        LinearApi
+        ReluApi
+        LayerQuant
+        QuantizationApi
+        LayerWeightsApi
+        LayerCommon
+        Quantization
+        Rounding
+        Linear
+        Relu
+        Tensor
+)
+
+
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
         InferenceApi
         MORE_LIBS
         CommonLayerLibs
@@ -115,3 +158,12 @@ target_link_libraries(UnitTestOptimizerScaling PRIVATE
         StorageApi
 )
 __register_target_as_unit_test(UnitTestOptimizerScaling)
+
+add_executable(UnitTestQuantizationApiBitsControl UnitTestQuantizationApiBitsControl.c)
+target_link_libraries(UnitTestQuantizationApiBitsControl PRIVATE
+        unity
+        QuantizationApi
+        Quantization
+        Rounding
+)
+__register_target_as_unit_test(UnitTestQuantizationApiBitsControl)

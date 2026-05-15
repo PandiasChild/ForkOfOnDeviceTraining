@@ -265,7 +265,7 @@ static void buildModel(layer_t **model) {
         buildParam(XAVIER_UNIFORM, c1_w_data, c1_w_dims, 3, IN_CHANNELS * C1_K, C1_OUT * C1_K);
     parameter_t *c1_b = buildParam(ZEROS, c1_b_data, c1_b_dims, 1, 1, C1_OUT);
     model[0] = conv1dLayerInit(c1_w, c1_b, k1, q1, q2, q3, q4);
-    model[1] = reluLayerInit(quantizationInitFloat(), quantizationInitFloat());
+    model[1] = reluLayerInitLegacy(quantizationInitFloat(), quantizationInitFloat());
     model[2] = buildMaxPool1dLayer(2, 2, C1_OUT, LEN_INPUT / 2);
 
     /* Block 2: Conv1d(16->32, K=5, padding=SAME), ReLU, MaxPool(K=2,S=2). */
@@ -276,7 +276,7 @@ static void buildModel(layer_t **model) {
     parameter_t *c2_b = buildParam(ZEROS, c2_b_data, c2_b_dims, 1, 1, C2_OUT);
     model[3] = conv1dLayerInit(c2_w, c2_b, k2, quantizationInitFloat(), quantizationInitFloat(),
                                quantizationInitFloat(), quantizationInitFloat());
-    model[4] = reluLayerInit(quantizationInitFloat(), quantizationInitFloat());
+    model[4] = reluLayerInitLegacy(quantizationInitFloat(), quantizationInitFloat());
     model[5] = buildMaxPool1dLayer(2, 2, C2_OUT, LEN_INPUT / 4);
 
     /* Block 3: Conv1d(32->64, K=3, padding=SAME), ReLU, AvgPool(K=32,S=32). */
@@ -287,15 +287,15 @@ static void buildModel(layer_t **model) {
     parameter_t *c3_b = buildParam(ZEROS, c3_b_data, c3_b_dims, 1, 1, C3_OUT);
     model[6] = conv1dLayerInit(c3_w, c3_b, k3, quantizationInitFloat(), quantizationInitFloat(),
                                quantizationInitFloat(), quantizationInitFloat());
-    model[7] = reluLayerInit(quantizationInitFloat(), quantizationInitFloat());
+    model[7] = reluLayerInitLegacy(quantizationInitFloat(), quantizationInitFloat());
     model[8] = buildAvgPool1dLayer(LEN_INPUT / 4, LEN_INPUT / 4);
 
     /* Head: Flatten, Linear(64 -> 6), Softmax. */
     model[9] = flattenLayerInit();
     parameter_t *fc_w = buildParam(XAVIER_UNIFORM, fc_w_data, fc_w_dims, 2, C3_OUT, NUM_CLASSES);
     parameter_t *fc_b = buildParam(ZEROS, fc_b_data, fc_b_dims, 2, 1, NUM_CLASSES);
-    model[10] = linearLayerInit(fc_w, fc_b, quantizationInitFloat(), quantizationInitFloat(),
-                                quantizationInitFloat(), quantizationInitFloat());
+    model[10] = linearLayerInitLegacy(fc_w, fc_b, quantizationInitFloat(), quantizationInitFloat(),
+                                      quantizationInitFloat(), quantizationInitFloat());
     model[11] = softmaxLayerInit(quantizationInitFloat(), quantizationInitFloat());
 }
 

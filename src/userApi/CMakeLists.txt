@@ -5,6 +5,9 @@ add_subdirectory(tensor)
 add_subdirectory(training_loop)
 
 
+add_library(LayerCommon INTERFACE)
+target_include_directories(LayerCommon INTERFACE include)
+
 add_library(InferenceApi InferenceApi.c)
 target_include_directories(InferenceApi PUBLIC include)
 target_link_libraries(InferenceApi PRIVATE
@@ -27,5 +30,33 @@ target_link_libraries(StorageApi PRIVATE
         Tensor
         Rounding
         Common
+)
+
+add_library(LayerQuant LayerQuant.c)
+target_include_directories(LayerQuant PUBLIC include)
+target_link_libraries(LayerQuant PRIVATE
+        Quantization
+        Rounding
+)
+
+add_library(LayerWeightsApi LayerWeightsApi.c)
+target_include_directories(LayerWeightsApi PUBLIC include)
+target_link_libraries(LayerWeightsApi PRIVATE
+        Common
+        Layer
+        Linear
+        Rounding
+        Tensor
+)
+
+add_library(StateDictApi StateDictApi.c)
+target_include_directories(StateDictApi PUBLIC include)
+target_link_libraries(StateDictApi PRIVATE
+        Common
+        Layer
+        LayerWeightsApi
+        StorageApi
+        Tensor
+        Rounding
 )
 

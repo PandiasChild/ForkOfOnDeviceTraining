@@ -61,7 +61,7 @@ static optimizer_t *buildOneLayerOptimWithGrads(layer_t **modelOut, parameter_t 
 
     quantization_t testQ;
     initFloat32Quantization(&testQ);
-    layer_t *linear = linearLayerInit(w, b, &testQ, &testQ, &testQ, &testQ);
+    layer_t *linear = linearLayerInitLegacy(w, b, &testQ, &testQ, &testQ, &testQ);
     modelOut[0] = linear;
     *wOut = w;
     *bOut = b;
@@ -98,7 +98,7 @@ void testScaleOptimizerGradients_DoublesGradients() {
 
     /* FREE. freeOptimSgdM cascades to both parameters. */
     freeOptimSgdM(sgd);
-    freeLinearLayer(model[0]);
+    freeLinearLayerLegacy(model[0]);
 
     /* ASSERT — every grad doubled. */
     for (size_t i = 0; i < 6; i++) {
@@ -129,7 +129,7 @@ void testScaleOptimizerGradients_FactorZero_DoesNotAbort() {
     float capturedFirst = ((float *)w->grad->data)[0];
 
     freeOptimSgdM(sgd);
-    freeLinearLayer(model[0]);
+    freeLinearLayerLegacy(model[0]);
 
     TEST_ASSERT_EQUAL_FLOAT(0.0f, capturedFirst);
 }
@@ -150,7 +150,7 @@ void testScaleOptimizerGradients_FactorNaN_DoesNotAbort() {
     float captured = ((float *)w->grad->data)[0];
 
     freeOptimSgdM(sgd);
-    freeLinearLayer(model[0]);
+    freeLinearLayerLegacy(model[0]);
 
     /* NaN != NaN by IEEE 754. */
     TEST_ASSERT_TRUE(captured != captured);
@@ -212,7 +212,7 @@ static optimizer_t *buildSymInt32OneLayerOptim(layer_t **modelOut, parameter_t *
     parameter_t *b = parameterInit(bParam, bGrad);
 
     quantization_t *layerQ = quantizationInitSymInt32(HTE);
-    layer_t *linear = linearLayerInit(w, b, layerQ, layerQ, layerQ, layerQ);
+    layer_t *linear = linearLayerInitLegacy(w, b, layerQ, layerQ, layerQ, layerQ);
     modelOut[0] = linear;
     *wOut = w;
     *bOut = b;
@@ -244,7 +244,7 @@ void testScaleOptimizerGradients_SymInt32_ScalesScaleOnly() {
     float capturedBScale = ((symInt32QConfig_t *)b->grad->quantization->qConfig)->scale;
 
     freeOptimSgdM(sgd);
-    freeLinearLayer(model[0]);
+    freeLinearLayerLegacy(model[0]);
 
     /* int32 storage is byte-for-byte unchanged. */
     for (size_t i = 0; i < 6; i++) {
@@ -304,7 +304,7 @@ void testScaleOptimizerGradients_SymInt32_DequantEquivalence() {
     }
 
     freeOptimSgdM(sgd);
-    freeLinearLayer(model[0]);
+    freeLinearLayerLegacy(model[0]);
 
     for (size_t i = 0; i < 6; i++) {
         TEST_ASSERT_FLOAT_WITHIN(1e-6f, wDequantBeforeTimesFactor[i], wDequantAfter[i]);
@@ -367,7 +367,7 @@ void testScaleOptimizerGradients_SymInt32_MomentumSgdAppliesScaledGradient() {
     }
 
     freeOptimSgdM(sgd);
-    freeLinearLayer(model[0]);
+    freeLinearLayerLegacy(model[0]);
 
     /* Tolerance accounts for the int32 round-trip in sgdStepSymInt32 — the
      * intermediate float value gets requantized through wScale0 (post-step

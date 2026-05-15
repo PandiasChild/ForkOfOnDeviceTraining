@@ -128,8 +128,8 @@ static void buildModel(layer_t **model, quantization_t **q_out) {
     tensor_t *b0Grad = gradInitFloat(b0Param, NULL);
     parameter_t *b0 = parameterInit(b0Param, b0Grad);
 
-    model[0] = linearLayerInit(w0, b0, q, q, q, q);
-    model[1] = reluLayerInit(q, q);
+    model[0] = linearLayerInitLegacy(w0, b0, q, q, q, q);
+    model[1] = reluLayerInitLegacy(q, q);
 
     distribution_t xavier1 = {
         .type = XAVIER_UNIFORM,
@@ -161,7 +161,7 @@ static void buildModel(layer_t **model, quantization_t **q_out) {
     tensor_t *b1Grad = gradInitFloat(b1Param, NULL);
     parameter_t *b1 = parameterInit(b1Param, b1Grad);
 
-    model[2] = linearLayerInit(w1, b1, q, q, q, q);
+    model[2] = linearLayerInitLegacy(w1, b1, q, q, q, q);
     model[3] = softmaxLayerInit(q, q);
 }
 
@@ -216,9 +216,9 @@ void testMnistSmoke_FullTrainingPipelineReducesLoss() {
      * Do NOT also call freeParameter on w0/b0/w1/b1 — would be a double-free. */
     freeOptimSgdM(sgd);
     freeSoftmaxLayer(model[3]);
-    freeLinearLayer(model[2]);
-    freeReluLayer(model[1]);
-    freeLinearLayer(model[0]);
+    freeLinearLayerLegacy(model[2]);
+    freeReluLayerLegacy(model[1]);
+    freeLinearLayerLegacy(model[0]);
     freeDataLoader(evalDl);
     freeDataLoader(trainDl);
     freeQuantization(q);
@@ -276,9 +276,9 @@ void testMnistSmoke_SnprintfGmtimeRBetweenSetupAndTrainingRun_NoSilentExit() {
 
     freeOptimSgdM(sgd);
     freeSoftmaxLayer(model[3]);
-    freeLinearLayer(model[2]);
-    freeReluLayer(model[1]);
-    freeLinearLayer(model[0]);
+    freeLinearLayerLegacy(model[2]);
+    freeReluLayerLegacy(model[1]);
+    freeLinearLayerLegacy(model[0]);
     freeDataLoader(evalDl);
     freeDataLoader(trainDl);
     freeQuantization(q);

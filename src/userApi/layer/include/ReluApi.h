@@ -4,9 +4,9 @@
 #include "Layer.h"
 #include "LayerQuant.h"
 
-layer_t *reluLayerInit(quantization_t *forwardQ, quantization_t *backwardQ);
-
-void freeReluLayer(layer_t *reluLayer);
+/* Legacy (pre-2026-05-15 factory API) — retained during PR 1/2 coexistence window. */
+layer_t *reluLayerInitLegacy(quantization_t *forwardQ, quantization_t *backwardQ);
+void freeReluLayerLegacy(layer_t *reluLayer);
 
 /*! Borrowing variant — stores lq->forwardMath and lq->backwardMath as the
  *  layer's forwardQ / backwardQ pointers. Caller retains ownership of lq. */

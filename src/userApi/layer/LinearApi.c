@@ -16,9 +16,9 @@
 #include "Tensor.h"
 #include "TensorApi.h"
 
-layer_t *linearLayerInit(parameter_t *weights, parameter_t *bias, quantization_t *forwardQ,
-                         quantization_t *weightGradsQ, quantization_t *biasGradsQ,
-                         quantization_t *propLossQ) {
+layer_t *linearLayerInitLegacy(parameter_t *weights, parameter_t *bias, quantization_t *forwardQ,
+                               quantization_t *weightGradsQ, quantization_t *biasGradsQ,
+                               quantization_t *propLossQ) {
     layer_t *linearLayer = reserveMemory(sizeof(layer_t));
 
     linearLayer->type = LINEAR;
@@ -40,7 +40,8 @@ layer_t *linearLayerInit(parameter_t *weights, parameter_t *bias, quantization_t
     return linearLayer;
 }
 
-layer_t *linearLayerInitNonTrainable(tensor_t *weights, tensor_t *bias, quantization_t *forwardQ) {
+layer_t *linearLayerInitNonTrainableLegacy(tensor_t *weights, tensor_t *bias,
+                                           quantization_t *forwardQ) {
     layer_t *linearLayer = reserveMemory(sizeof(layer_t));
 
     linearLayer->type = LINEAR;
@@ -59,7 +60,7 @@ layer_t *linearLayerInitNonTrainable(tensor_t *weights, tensor_t *bias, quantiza
     return linearLayer;
 }
 
-void freeLinearLayer(layer_t *linearLayer) {
+void freeLinearLayerLegacy(layer_t *linearLayer) {
     freeReservedMemory(linearLayer->config->linear);
     freeReservedMemory(linearLayer->config);
     freeReservedMemory(linearLayer);

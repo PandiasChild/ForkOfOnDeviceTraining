@@ -51,8 +51,8 @@ void testInferenceLinearReluFloat() {
     tensorFillFromFloatBuffer(input, (float[]){0.f, 1.f, 2.f}, 3);
 
     /* 5. Build layers; both layers share the same q (no ownership transfer). */
-    layer_t *linear = linearLayerInit(weights, bias, q, q, q, q);
-    layer_t *relu = reluLayerInit(q, q);
+    layer_t *linear = linearLayerInitLegacy(weights, bias, q, q, q, q);
+    layer_t *relu = reluLayerInitLegacy(q, q);
     layer_t *model[] = {linear, relu};
 
     /* 6. Exercise the system. */
@@ -70,8 +70,8 @@ void testInferenceLinearReluFloat() {
      *    - freeParameter cascades to param + grad via freeTensor (TensorApi.c:389).
      *    - The shared q is freed exactly once at the end. */
     freeTensor(output);
-    freeReluLayer(relu);
-    freeLinearLayer(linear);
+    freeReluLayerLegacy(relu);
+    freeLinearLayerLegacy(linear);
     freeTensor(input);
     freeParameter(bias);
     freeParameter(weights);
@@ -126,8 +126,8 @@ void testInferenceLinearReluSymInt32() {
     tensorFillFromFloatBuffer(input, (float[]){0.f, 1.f, 2.f}, 3);
 
     /* Layers. */
-    layer_t *linear = linearLayerInit(weights, bias, q, q, q, q);
-    layer_t *relu = reluLayerInit(q, q);
+    layer_t *linear = linearLayerInitLegacy(weights, bias, q, q, q, q);
+    layer_t *relu = reluLayerInitLegacy(q, q);
     layer_t *model[] = {linear, relu};
 
     /* Run inference (returns a heap tensor in SymInt32 form). */
@@ -153,8 +153,8 @@ void testInferenceLinearReluSymInt32() {
     /* FREE in reverse-init order. */
     freeTensor(outputFloat);
     freeTensor(outputSymInt32);
-    freeReluLayer(relu);
-    freeLinearLayer(linear);
+    freeReluLayerLegacy(relu);
+    freeLinearLayerLegacy(linear);
     freeTensor(input);
     freeParameter(bias);
     freeParameter(weights);
@@ -219,8 +219,8 @@ void testInferenceWithLossLinearReluFloat() {
     tensorFillFromFloatBuffer(label0, (float[]){59.f, -23.f}, 2);
 
     /* Layers. */
-    layer_t *linear = linearLayerInit(weights, bias, q, q, q, q);
-    layer_t *relu = reluLayerInit(q, q);
+    layer_t *linear = linearLayerInitLegacy(weights, bias, q, q, q, q);
+    layer_t *relu = reluLayerInitLegacy(q, q);
     layer_t *model[] = {linear, relu};
 
     /* Run inferenceWithLoss. inferenceStats owns its `output` tensor; its
@@ -236,8 +236,8 @@ void testInferenceWithLossLinearReluFloat() {
 
     /* FREE in reverse-init order. */
     freeInferenceStats(inferenceStats);
-    freeReluLayer(relu);
-    freeLinearLayer(linear);
+    freeReluLayerLegacy(relu);
+    freeLinearLayerLegacy(linear);
     freeTensor(label0);
     freeTensor(input);
     freeParameter(bias);

@@ -272,7 +272,7 @@ static void buildModel(layer_t **model) {
         buildParam(XAVIER_UNIFORM, e1_w_data, e1_w_dims, 3, IN_CHANNELS * E1_K, E1_OUT * E1_K);
     parameter_t *e1_b = buildParam(ZEROS, e1_b_data, e1_b_dims, 1, 1, E1_OUT);
     model[0] = conv1dLayerInit(e1_w, e1_b, e1k, q, q, q, q);
-    model[1] = reluLayerInit(quantizationInitFloat(), quantizationInitFloat());
+    model[1] = reluLayerInitLegacy(quantizationInitFloat(), quantizationInitFloat());
 
     /* Block P1: MaxPool1d(K=2, S=2). 70 → 35. */
     model[2] = buildMaxPool1dLayer(/*K*/ 2, /*S*/ 2, /*outC*/ E1_OUT, /*outLen*/ 35);
@@ -285,7 +285,7 @@ static void buildModel(layer_t **model) {
     parameter_t *e2_b = buildParam(ZEROS, e2_b_data, e2_b_dims, 1, 1, E2_OUT);
     model[3] = conv1dLayerInit(e2_w, e2_b, e2k, quantizationInitFloat(), quantizationInitFloat(),
                                quantizationInitFloat(), quantizationInitFloat());
-    model[4] = reluLayerInit(quantizationInitFloat(), quantizationInitFloat());
+    model[4] = reluLayerInitLegacy(quantizationInitFloat(), quantizationInitFloat());
 
     /* Block P2: AvgPool1d(K=5, S=5). 35 → 7 (bottleneck). */
     model[5] = buildAvgPool1dLayer(/*K*/ 5, /*S*/ 5);
@@ -298,7 +298,7 @@ static void buildModel(layer_t **model) {
     parameter_t *d1_b = buildParam(ZEROS, d1_b_data, d1_b_dims, 1, 1, D1_OUT);
     model[6] = buildConv1dTransposedLayer(d1_w, d1_b, /*K*/ D1_K, /*S*/ D1_S,
                                           /*outputPadding*/ 0, /*groups*/ 1);
-    model[7] = reluLayerInit(quantizationInitFloat(), quantizationInitFloat());
+    model[7] = reluLayerInitLegacy(quantizationInitFloat(), quantizationInitFloat());
 
     /* Block D2: Conv1dTransposed(8→4, K=2, S=2, op=0). 35 → 70. ReLU. */
     parameter_t *d2_w =
@@ -306,7 +306,7 @@ static void buildModel(layer_t **model) {
     parameter_t *d2_b = buildParam(ZEROS, d2_b_data, d2_b_dims, 1, 1, D2_OUT);
     model[8] = buildConv1dTransposedLayer(d2_w, d2_b, /*K*/ D2_K, /*S*/ D2_S,
                                           /*outputPadding*/ 0, /*groups*/ 1);
-    model[9] = reluLayerInit(quantizationInitFloat(), quantizationInitFloat());
+    model[9] = reluLayerInitLegacy(quantizationInitFloat(), quantizationInitFloat());
 
     /* Block D3: Conv1dTransposed(4→1, K=2, S=2, op=0). 70 → 140. NO ReLU on final. */
     parameter_t *d3_w =
