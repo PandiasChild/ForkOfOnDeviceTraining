@@ -1,6 +1,8 @@
 #ifndef ENV5_RUNTIME_RELU_H
 #define ENV5_RUNTIME_RELU_H
 
+#include <stdbool.h>
+
 #include "Tensor.h"
 
 typedef struct layer layer_t;
@@ -8,6 +10,7 @@ typedef struct layer layer_t;
 typedef struct reluConfig {
     quantization_t *forwardQ;
     quantization_t *backwardQ;
+    bool ownsQuantizations;
 } reluConfig_t;
 
 void reluInit(reluConfig_t *reluConfig, quantization_t *forwardQ, quantization_t *backwardQ);

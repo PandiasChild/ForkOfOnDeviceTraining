@@ -15,9 +15,13 @@ target_include_directories(LinearApi PUBLIC include)
 target_link_libraries(LinearApi PRIVATE
         Tensor
         TensorApi
+        QuantizationApi
         Rounding
         Layer
         Linear
+        LayerCommon
+        LayerQuant
+        Distributions
         Common
         StorageApi
 )
@@ -29,6 +33,8 @@ target_link_libraries(ReluApi PRIVATE
         Rounding
         Layer
         Relu
+        LayerQuant
+        Quantization
         Common
         StorageApi
 )

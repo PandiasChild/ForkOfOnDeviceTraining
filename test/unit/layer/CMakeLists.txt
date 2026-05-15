@@ -71,6 +71,9 @@ add_elastic_ai_unit_test(
         TensorApi
         QuantizationApi
         LinearApi
+        LayerQuant
+        Quantization
+        Rounding
         StorageApi
 )
 
@@ -82,6 +85,9 @@ add_elastic_ai_unit_test(
         ReluApi
         TensorApi
         QuantizationApi
+        LayerQuant
+        Quantization
+        Rounding
         StorageApi
 )
 

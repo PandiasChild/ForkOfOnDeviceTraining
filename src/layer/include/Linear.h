@@ -1,5 +1,7 @@
 #ifndef ENV5_RUNTIME_LINEAR_H
 #define ENV5_RUNTIME_LINEAR_H
+#include <stdbool.h>
+
 #include "Tensor.h"
 
 typedef struct layer layer_t;
@@ -12,6 +14,9 @@ typedef struct linearConfig {
     quantization_t *weightGradQ;
     quantization_t *biasGradQ;
     quantization_t *propLossQ;
+
+    bool ownsQuantizations; /* true → free* will tear down forwardQ/weightGradQ/biasGradQ/propLossQ
+                               and their qConfigs */
 } linearConfig_t;
 
 void linearInitConfig(linearConfig_t *linearConfig, parameter_t *weights, parameter_t *bias,

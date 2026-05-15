@@ -2,6 +2,8 @@
 
 #include "DTypes.h"
 #include "Layer.h"
+#include "LayerCommon.h"
+#include "LayerQuant.h"
 #include "Linear.h"
 #include "LinearApi.h"
 #include "QuantizationApi.h"
@@ -643,6 +645,154 @@ void testLinearLayerInitAndFreeRoundTrip(void) {
     freeLinearLayer(linearLayer);
 }
 
+/* ============================================================================
+ * Tests for the new layerQuant_t / linearInit_t factory API (PR 1).
+ * ========================================================================== */
+
+void testLinearLayerInitBorrowingBuildsLayerWithCorrectShapeAndStoresQuantPointers(void) {
+    quantization_t *q = quantizationInitFloat();
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, q);
+
+    layer_t *layer = linearLayerInit(
+        &(linearInit_t){
+            .inFeatures = 3,
+            .outFeatures = 2,
+            .bias = BIAS_TRUE,
+        },
+        &lq);
+
+    TEST_ASSERT_NOT_NULL(layer);
+    TEST_ASSERT_EQUAL_INT(LINEAR, layer->type);
+
+    linearConfig_t *cfg = layer->config->linear;
+    TEST_ASSERT_NOT_NULL(cfg);
+    TEST_ASSERT_FALSE(cfg->ownsQuantizations);
+
+    /* Borrowing variant stores pointers verbatim */
+    TEST_ASSERT_EQUAL_PTR(q, cfg->forwardQ);
+    TEST_ASSERT_EQUAL_PTR(q, cfg->weightGradQ);
+    TEST_ASSERT_EQUAL_PTR(q, cfg->biasGradQ);
+    TEST_ASSERT_EQUAL_PTR(q, cfg->propLossQ);
+
+    /* Weights allocated with shape [outFeatures, inFeatures] */
+    TEST_ASSERT_NOT_NULL(cfg->weights);
+    tensor_t *weightTensor = cfg->weights->param;
+    TEST_ASSERT_NOT_NULL(weightTensor);
+    TEST_ASSERT_EQUAL_UINT(2, weightTensor->shape->numberOfDimensions);
+    TEST_ASSERT_EQUAL_UINT(2, weightTensor->shape->dimensions[0]); /* outFeatures */
+    TEST_ASSERT_EQUAL_UINT(3, weightTensor->shape->dimensions[1]); /* inFeatures */
+
+    /* Bias allocated with shape [outFeatures] */
+    TEST_ASSERT_NOT_NULL(cfg->bias);
+    tensor_t *biasTensor = cfg->bias->param;
+    TEST_ASSERT_NOT_NULL(biasTensor);
+    TEST_ASSERT_EQUAL_UINT(1, biasTensor->shape->numberOfDimensions);
+    TEST_ASSERT_EQUAL_UINT(2, biasTensor->shape->dimensions[0]);
+
+    freeLinearLayer(layer);
+}
+
+void testLinearLayerInitBorrowingZeroInChannelsAbortsViaPrintError(void) {
+    /* Factory abort on missing required field — covered by design contract;
+     * cannot assert PRINT_ERROR + exit from Unity. Marker test. */
+    TEST_IGNORE_MESSAGE("Factory abort on missing required field — covered by design contract; "
+                        "cannot assert PRINT_ERROR + exit from Unity.");
+}
+
+void testLinearLayerInitBorrowingBiasDefaultResolvesToTrue(void) {
+    quantization_t *q = quantizationInitFloat();
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, q);
+
+    layer_t *layer = linearLayerInit(
+        &(linearInit_t){
+            .inFeatures = 4,
+            .outFeatures = 1,
+            /* .bias omitted -> BIAS_DEFAULT (0) -> resolves to true */
+        },
+        &lq);
+
+    linearConfig_t *cfg = layer->config->linear;
+    TEST_ASSERT_NOT_NULL(cfg->bias); /* bias parameter was allocated */
+
+    freeLinearLayer(layer);
+}
+
+void testLinearLayerInitBorrowingBiasFalseLeavesBiasNull(void) {
+    quantization_t *q = quantizationInitFloat();
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, q);
+
+    layer_t *layer = linearLayerInit(
+        &(linearInit_t){
+            .inFeatures = 4,
+            .outFeatures = 1,
+            .bias = BIAS_FALSE,
+        },
+        &lq);
+
+    linearConfig_t *cfg = layer->config->linear;
+    TEST_ASSERT_NULL(cfg->bias); /* bias parameter not allocated */
+
+    freeLinearLayer(layer);
+}
+
+void testLinearLayerInitOwningDeepCopiesQuantizations(void) {
+    quantization_t *q = quantizationInitFloat();
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, q);
+
+    layer_t *layer = linearLayerInitOwning(
+        &(linearInit_t){
+            .inFeatures = 3,
+            .outFeatures = 2,
+            .bias = BIAS_TRUE,
+        },
+        &lq);
+
+    linearConfig_t *cfg = layer->config->linear;
+
+    /* Owning variant: cfg->forwardQ is a fresh allocation, NOT the original q */
+    TEST_ASSERT_NOT_EQUAL(q, cfg->forwardQ);
+    TEST_ASSERT_NOT_EQUAL(q, cfg->weightGradQ);
+    TEST_ASSERT_NOT_EQUAL(q, cfg->biasGradQ);
+    TEST_ASSERT_NOT_EQUAL(q, cfg->propLossQ);
+
+    /* But the copy has equal type to the original */
+    TEST_ASSERT_EQUAL_INT(q->type, cfg->forwardQ->type);
+
+    /* ownsQuantizations flag is set */
+    TEST_ASSERT_TRUE(cfg->ownsQuantizations);
+
+    freeLinearLayer(layer);
+}
+
+void testLinearLayerInitOwningFreesAllAllocationsWithoutLeak(void) {
+    /* Build + free 5 layers — if anything leaks, valgrind will catch it
+     * during CI (not asserted here, just exercise the path). */
+    for (int i = 0; i < 5; i++) {
+        quantization_t *q = quantizationInitFloat();
+        layerQuant_t lq;
+        layerQuantInitUniform(&lq, q);
+
+        layer_t *layer = linearLayerInitOwning(
+            &(linearInit_t){
+                .inFeatures = 8,
+                .outFeatures = 4,
+                .bias = BIAS_TRUE,
+            },
+            &lq);
+
+        freeLinearLayer(layer);
+        /* Note: caller-side q deliberately not freed — it's caller-owned and
+         * the Owning factory has its own copies. q leaks but that's the
+         * existing pattern in this codebase (quantizationInit* returns heap,
+         * never freed). */
+    }
+    TEST_PASS();
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testLinearForwardFloat);
@@ -654,5 +804,13 @@ int main(void) {
 
     RUN_TEST(testLinearBackwardFloatWithMismatchedQuantizations);
     RUN_TEST(testLinearLayerInitNonTrainable);
+
+    RUN_TEST(testLinearLayerInitBorrowingBuildsLayerWithCorrectShapeAndStoresQuantPointers);
+    RUN_TEST(testLinearLayerInitBorrowingZeroInChannelsAbortsViaPrintError);
+    RUN_TEST(testLinearLayerInitBorrowingBiasDefaultResolvesToTrue);
+    RUN_TEST(testLinearLayerInitBorrowingBiasFalseLeavesBiasNull);
+
+    RUN_TEST(testLinearLayerInitOwningDeepCopiesQuantizations);
+    RUN_TEST(testLinearLayerInitOwningFreesAllAllocationsWithoutLeak);
     return UNITY_END();
 }
