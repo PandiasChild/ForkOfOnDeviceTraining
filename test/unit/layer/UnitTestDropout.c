@@ -5,6 +5,7 @@
 
 #include "Bernoulli.h"
 #include "Dropout.h"
+#include "DropoutApi.h"
 #include "Layer.h"
 #include "Quantization.h"
 #include "QuantizationApi.h"
@@ -402,6 +403,39 @@ void testCalcOutputShapeIsIdentity(void) {
     TEST_ASSERT_EQUAL_UINT(5, d1);
 }
 
+void testFactoryBuildsAndForwards(void) {
+    size_t n = 3;
+    float in[] = {4.f, 5.f, 6.f};
+    tensor_t *input = buildFloatTensor(n, in);
+    tensor_t *output = buildFloatTensor(n, NULL);
+    tensor_t *mask = buildBoolMask(n);
+    quantization_t *fq = quantizationInitFloat();
+    quantization_t *bq = quantizationInitFloat();
+
+    layer_t *layer = dropoutLayerInit(0.5f, mask, fq, bq);
+    bool typeOk = (layer->type == DROPOUT);
+    float pOk = layer->config->dropout->p;
+    bool trainingDefaultFalse = (layer->config->dropout->training == false);
+
+    layerFunctions[DROPOUT].forward(layer, input, output); // eval → identity
+    float captured[3];
+    for (size_t i = 0; i < n; i++) {
+        captured[i] = ((float *)output->data)[i];
+    }
+
+    freeDropoutLayer(layer);
+    freeQuantization(bq);
+    freeQuantization(fq);
+    freeTensor(mask);
+    freeTensor(output);
+    freeTensor(input);
+
+    TEST_ASSERT_TRUE(typeOk);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.5f, pOk);
+    TEST_ASSERT_TRUE(trainingDefaultFalse);
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(in, captured, n);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testForwardEvalIdentityFloat);
@@ -412,5 +446,6 @@ int main(void) {
     RUN_TEST(testBackwardSymInt32UsesMaskAndScaleFold);
     RUN_TEST(testVtableForwardIdentityFloat);
     RUN_TEST(testCalcOutputShapeIsIdentity);
+    RUN_TEST(testFactoryBuildsAndForwards);
     return UNITY_END();
 }

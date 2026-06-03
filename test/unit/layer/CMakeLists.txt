@@ -190,4 +190,5 @@ add_elastic_ai_unit_test(
         Quantization
         Rounding
         StorageApi
+        DropoutApi
 )

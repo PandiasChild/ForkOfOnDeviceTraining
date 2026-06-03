@@ -115,3 +115,14 @@ target_link_libraries(AdaptivePool1dApi PRIVATE
         Rounding
         StorageApi
 )
+
+add_library(DropoutApi DropoutApi.c)
+target_include_directories(DropoutApi PUBLIC include)
+target_link_libraries(DropoutApi PRIVATE
+        Tensor
+        Layer
+        Dropout
+        Common
+        Rounding
+        StorageApi
+)
