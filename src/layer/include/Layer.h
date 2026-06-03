@@ -21,7 +21,8 @@ typedef enum layerType {
     AVGPOOL1D,
     SOFTMAX,
     FLATTEN,
-    QUANTIZATION
+    QUANTIZATION,
+    ADAPTIVE_AVGPOOL1D
 } layerType_t;
 
 typedef enum layerQType { FLOAT_LAYER, ASYM_LAYER } layerQType_t;

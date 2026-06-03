@@ -132,6 +132,18 @@ add_elastic_ai_unit_test(
         TensorApi
 )
 
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
+        AdaptivePool1dApi
+        MORE_LIBS
+        LayerQuant
+        QuantizationApi
+        Quantization
+        Rounding
+        AdaptiveAvgPool1d
+        TensorApi
+)
+
 add_executable(UnitTestMultiLayerTraining UnitTestMultiLayerTraining.c)
 target_link_libraries(UnitTestMultiLayerTraining PRIVATE
         unity

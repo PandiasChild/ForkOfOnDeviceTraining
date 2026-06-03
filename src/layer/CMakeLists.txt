@@ -67,6 +67,7 @@ target_link_libraries(Layer PRIVATE
         Conv1dTransposed
         MaxPool1d
         AvgPool1d
+        AdaptiveAvgPool1d
         Softmax
         Flatten
 )
@@ -131,6 +132,7 @@ target_link_libraries(CommonLayerLibs INTERFACE
         Conv1dTransposed
         MaxPool1d
         AvgPool1d
+        AdaptiveAvgPool1d
         Softmax
         Flatten
         Rounding

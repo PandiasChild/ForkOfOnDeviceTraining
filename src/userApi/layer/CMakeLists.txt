@@ -102,3 +102,16 @@ target_link_libraries(Pool1dApi PRIVATE
         Tensor
         TensorApi
 )
+
+add_library(AdaptivePool1dApi AdaptivePool1dApi.c)
+target_include_directories(AdaptivePool1dApi PUBLIC include)
+target_link_libraries(AdaptivePool1dApi PRIVATE
+        AdaptiveAvgPool1d
+        Common
+        Layer
+        LayerQuant
+        Quantization
+        QuantizationApi
+        Rounding
+        StorageApi
+)
