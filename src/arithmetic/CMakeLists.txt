@@ -135,6 +135,12 @@ target_link_libraries(SlidingWindow1d PRIVATE
         Common
 )
 
+add_library(AdaptiveWindow1d AdaptiveWindow1d.c)
+target_include_directories(AdaptiveWindow1d PUBLIC include)
+target_link_libraries(AdaptiveWindow1d PRIVATE
+        Common
+)
+
 add_library(Conv1dKernel Conv1dKernel.c)
 target_include_directories(Conv1dKernel PUBLIC include)
 target_link_libraries(Conv1dKernel PRIVATE

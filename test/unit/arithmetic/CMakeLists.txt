@@ -125,6 +125,11 @@ add_elastic_ai_unit_test(
 
 add_elastic_ai_unit_test(
         LIB_UNDER_TEST
+        AdaptiveWindow1d
+)
+
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
         Conv1dKernel
         MORE_LIBS
         SlidingWindow1d
