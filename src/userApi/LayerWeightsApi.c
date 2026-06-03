@@ -73,6 +73,7 @@ void layerLoadWeights(layer_t *layer, float *weightData, float *biasData) {
     case FLATTEN:
     case MAXPOOL1D:
     case AVGPOOL1D:
+    case ADAPTIVE_AVGPOOL1D:
         PRINT_ERROR("layerLoadWeights: layer type %d has no parameters to load", (int)layer->type);
         exit(1);
     case CONV1D_TRANSPOSED: {

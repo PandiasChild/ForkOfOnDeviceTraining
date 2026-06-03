@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "AdaptiveAvgPool1d.h"
 #include "AvgPool1d.h"
 #include "Common.h"
 #include "Conv1d.h"
@@ -50,6 +51,9 @@ static void initBufferOutput(tensor_t *buffer, layer_t *currentLayer, shape_t *i
         break;
     case AVGPOOL1D:
         currentQ = currentLayer->config->avgPool1d->forwardQ;
+        break;
+    case ADAPTIVE_AVGPOOL1D:
+        currentQ = currentLayer->config->adaptiveAvgPool1d->forwardQ;
         break;
     default:
         PRINT_ERROR("Unknown Layer Type!");

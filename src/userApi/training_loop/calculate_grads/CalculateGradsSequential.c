@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "AdaptiveAvgPool1d.h"
 #include "AvgPool1d.h"
 #include "CalculateGradsSequential.h"
 #include "Common.h"
@@ -107,6 +108,9 @@ static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t si
             break;
         case AVGPOOL1D:
             currentQ = currentLayer->config->avgPool1d->forwardQ;
+            break;
+        case ADAPTIVE_AVGPOOL1D:
+            currentQ = currentLayer->config->adaptiveAvgPool1d->forwardQ;
             break;
         default:
             PRINT_ERROR("Unknown Layer Type!");

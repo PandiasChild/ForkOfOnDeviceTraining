@@ -17,6 +17,7 @@ static bool layerHasParameters(layer_t *layer) {
     case FLATTEN:
     case MAXPOOL1D:
     case AVGPOOL1D:
+    case ADAPTIVE_AVGPOOL1D:
     case QUANTIZATION:
         return false;
     default:

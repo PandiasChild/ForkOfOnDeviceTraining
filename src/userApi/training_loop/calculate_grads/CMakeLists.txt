@@ -11,6 +11,7 @@ target_link_libraries(CalculateGradsSequential PRIVATE
         Conv1dTransposed
         MaxPool1d
         AvgPool1d
+        AdaptiveAvgPool1d
         Optimizer
         LossFunction
         InferenceApi

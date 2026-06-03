@@ -144,6 +144,27 @@ add_elastic_ai_unit_test(
         TensorApi
 )
 
+add_executable(UnitTestAdaptiveAvgPool1dIntegration UnitTestAdaptiveAvgPool1dIntegration.c)
+target_link_libraries(UnitTestAdaptiveAvgPool1dIntegration PRIVATE
+        unity
+        TrainingLoopApi
+        CalculateGradsSequential
+        CommonLayerLibs
+        AdaptivePool1dApi
+        SgdApi
+        Sgd
+        Optimizer
+        StateDictApi
+        LayerQuant
+        TensorApi
+        QuantizationApi
+        LossFunction
+        InferenceApi
+        DataLoader
+        StorageApi
+)
+__register_target_as_unit_test(UnitTestAdaptiveAvgPool1dIntegration)
+
 add_executable(UnitTestMultiLayerTraining UnitTestMultiLayerTraining.c)
 target_link_libraries(UnitTestMultiLayerTraining PRIVATE
         unity

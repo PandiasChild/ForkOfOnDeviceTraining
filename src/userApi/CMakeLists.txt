@@ -19,6 +19,7 @@ target_link_libraries(InferenceApi PRIVATE
         Conv1dTransposed
         MaxPool1d
         AvgPool1d
+        AdaptiveAvgPool1d
         LossFunction
         Common
         DataLoader
