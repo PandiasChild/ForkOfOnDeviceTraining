@@ -269,6 +269,72 @@ void testMatmulSymInt32Tensors() {
     TEST_ASSERT_EQUAL_FLOAT_ARRAY(expected, actual.data, 4);
 }
 
+void testMatmulFloat32TensorsWithBiasBroadcastsOverRows() {
+    /* a = [[1,2,3],[4,5,6]] (2x3), b = [[1,4],[2,5],[3,6]] (3x2). */
+    float aData[] = {1.f, 2.f, 3.f, 4.f, 5.f, 6.f};
+    size_t aDims[] = {2, 3};
+    size_t aOrder[] = {0, 1};
+    shape_t aShape = {.dimensions = aDims, .orderOfDimensions = aOrder, .numberOfDimensions = 2};
+    quantization_t aQ = {.type = FLOAT32};
+    tensor_t aTensor = {.data = (uint8_t *)aData, .shape = &aShape, .quantization = &aQ, .sparsity = NULL};
+
+    float bData[] = {1.f, 4.f, 2.f, 5.f, 3.f, 6.f};
+    size_t bDims[] = {3, 2};
+    size_t bOrder[] = {0, 1};
+    shape_t bShape = {.dimensions = bDims, .orderOfDimensions = bOrder, .numberOfDimensions = 2};
+    quantization_t bQ = {.type = FLOAT32};
+    tensor_t bTensor = {.data = (uint8_t *)bData, .shape = &bShape, .quantization = &bQ, .sparsity = NULL};
+
+    /* bias = [10, 20] (rank-1, length == output columns == 2). */
+    float biasData[] = {10.f, 20.f};
+    size_t biasDims[] = {2};
+    size_t biasOrder[] = {0};
+    shape_t biasShape = {.dimensions = biasDims, .orderOfDimensions = biasOrder, .numberOfDimensions = 1};
+    quantization_t biasQ = {.type = FLOAT32};
+    tensor_t biasTensor = {.data = (uint8_t *)biasData, .shape = &biasShape, .quantization = &biasQ, .sparsity = NULL};
+
+    float outputData[] = {0, 0, 0, 0};
+    size_t outputDims[] = {2, 2};
+    size_t outputOrder[] = {0, 1};
+    shape_t outputShape = {.dimensions = outputDims, .orderOfDimensions = outputOrder, .numberOfDimensions = 2};
+    quantization_t outputQ = {.type = FLOAT32};
+    tensor_t outputTensor = {.data = (uint8_t *)outputData, .shape = &outputShape, .quantization = &outputQ, .sparsity = NULL};
+
+    matmulFloat32TensorsWithBias(&aTensor, &bTensor, &outputTensor, &biasTensor);
+
+    /* plain matmul = [[14,32],[32,77]]; + bias [10,20] per row = [[24,52],[42,97]]. */
+    float expected[] = {24.f, 52.f, 42.f, 97.f};
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(expected, outputTensor.data, 4);
+}
+
+void testMatmulFloat32TensorsWithBiasNullEqualsPlain() {
+    float aData[] = {1.1f, 2.4f, 3.9f};
+    size_t aDims[] = {3};
+    size_t aOrder[] = {0};
+    shape_t aShape = {.dimensions = aDims, .orderOfDimensions = aOrder, .numberOfDimensions = 1};
+    quantization_t aQ = {.type = FLOAT32};
+    tensor_t aTensor = {.data = (uint8_t *)aData, .shape = &aShape, .quantization = &aQ, .sparsity = NULL};
+
+    float bData[] = {1.5f, 2.9f, 3.3f};
+    size_t bDims[] = {3};
+    size_t bOrder[] = {0};
+    shape_t bShape = {.dimensions = bDims, .orderOfDimensions = bOrder, .numberOfDimensions = 1};
+    quantization_t bQ = {.type = FLOAT32};
+    tensor_t bTensor = {.data = (uint8_t *)bData, .shape = &bShape, .quantization = &bQ, .sparsity = NULL};
+
+    float outputData[] = {0};
+    size_t outputDims[] = {1};
+    size_t outputOrder[] = {0};
+    shape_t outputShape = {.dimensions = outputDims, .orderOfDimensions = outputOrder, .numberOfDimensions = 1};
+    quantization_t outputQ = {.type = FLOAT32};
+    tensor_t outputTensor = {.data = (uint8_t *)outputData, .shape = &outputShape, .quantization = &outputQ, .sparsity = NULL};
+
+    matmulFloat32TensorsWithBias(&aTensor, &bTensor, &outputTensor, NULL);
+
+    float expected[] = {21.48f};
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(expected, outputTensor.data, 1);
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -279,6 +345,8 @@ int main(void) {
     RUN_TEST(testMatmulInt32WithVector);
     RUN_TEST(testMatmulFloatVectors);
     RUN_TEST(testMatmulSymInt32Tensors);
+    RUN_TEST(testMatmulFloat32TensorsWithBiasBroadcastsOverRows);
+    RUN_TEST(testMatmulFloat32TensorsWithBiasNullEqualsPlain);
 
     return UNITY_END();
 }
