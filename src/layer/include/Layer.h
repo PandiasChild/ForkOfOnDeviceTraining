@@ -10,6 +10,7 @@ typedef struct conv1dConfig conv1dConfig_t;
 typedef struct conv1dTransposedConfig conv1dTransposedConfig_t;
 typedef struct maxPool1dConfig maxPool1dConfig_t;
 typedef struct avgPool1dConfig avgPool1dConfig_t;
+typedef struct adaptiveAvgPool1dConfig adaptiveAvgPool1dConfig_t;
 
 typedef enum layerType {
     LINEAR,
@@ -33,6 +34,7 @@ typedef union layerConfig {
     conv1dTransposedConfig_t *conv1dTransposed;
     maxPool1dConfig_t *maxPool1d;
     avgPool1dConfig_t *avgPool1d;
+    adaptiveAvgPool1dConfig_t *adaptiveAvgPool1d;
 } layerConfig_t;
 
 typedef struct layer {

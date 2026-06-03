@@ -46,6 +46,15 @@ target_link_libraries(AvgPool1d PRIVATE
         SlidingWindow1d
 )
 
+add_library(AdaptiveAvgPool1d AdaptiveAvgPool1d.c)
+target_include_directories(AdaptiveAvgPool1d PUBLIC include)
+target_link_libraries(AdaptiveAvgPool1d PRIVATE
+        DTypes
+        Tensor
+        Common
+        AdaptiveWindow1d
+)
+
 add_library(Layer Layer.c)
 target_include_directories(Layer PUBLIC include)
 target_link_libraries(Layer PRIVATE

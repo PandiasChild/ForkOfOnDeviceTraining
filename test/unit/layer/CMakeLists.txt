@@ -152,3 +152,27 @@ add_elastic_ai_unit_test(
 )
 add_dependencies(UnitTestAvgPool1d generate_expected_avg_pool_1d)
 target_include_directories(UnitTestAvgPool1d PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+
+set(GEN_ADAPTIVE_AVG_POOL_1D_HEADER ${CMAKE_CURRENT_BINARY_DIR}/expected_adaptive_avg_pool_1d.h)
+add_custom_command(
+        OUTPUT ${GEN_ADAPTIVE_AVG_POOL_1D_HEADER}
+        COMMAND uv run ${CMAKE_CURRENT_SOURCE_DIR}/generate_expected_adaptive_avg_pool_1d.py
+                --out ${GEN_ADAPTIVE_AVG_POOL_1D_HEADER}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/generate_expected_adaptive_avg_pool_1d.py
+        COMMENT "Generating expected_adaptive_avg_pool_1d.h via PyTorch"
+        VERBATIM
+)
+add_custom_target(generate_expected_adaptive_avg_pool_1d
+        DEPENDS ${GEN_ADAPTIVE_AVG_POOL_1D_HEADER})
+
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
+        AdaptiveAvgPool1d
+        MORE_LIBS
+        CommonLayerLibs
+        TensorApi
+        QuantizationApi
+        StorageApi
+)
+add_dependencies(UnitTestAdaptiveAvgPool1d generate_expected_adaptive_avg_pool_1d)
+target_include_directories(UnitTestAdaptiveAvgPool1d PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
