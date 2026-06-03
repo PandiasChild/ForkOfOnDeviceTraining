@@ -176,6 +176,39 @@ def fixture_same_padding_with_groups():
                         stride=1, padding=1, dilation=1, groups=2)
 
 
+def fixture_pointwise():
+    # B=2, Cin=3, Cout=4, L=5, K=1, groups=1 -> true pointwise (1x1) convolution.
+    # Pointwise conv performs pure cross-channel mixing with no spatial extent:
+    #   y[b, oc, t] = sum_ic x[b, ic, t] * w[oc, ic, 0] + bias[oc]
+    # so outputLength == inputLength (K=1, stride=1, VALID).
+    #
+    # The backward pass deliberately uses a NON-UNIFORM lossGrad (random, not the
+    # torch.ones_like used by every other fixture). Reason: with lossGrad == ones,
+    #   dL/dW[oc, ic, 0] = sum_{b,t} x[b, ic, t]
+    # is independent of oc, so every output-channel row of the gold weight gradient
+    # would be identical and a bug that mis-assigns the output channel in backward
+    # would pass undetected. A random lossGrad makes oc appear in dL/dW, dL/db and
+    # dL/dx, pinning the channel-mixing that is the entire purpose of a pointwise conv.
+    torch.manual_seed(5)
+    x = torch.randn(2, 3, 5).clone().detach().requires_grad_(True)
+    w = torch.randn(4, 3, 1).clone().detach().requires_grad_(True)  # [Cout, Cin/groups=Cin, K=1]
+    b = torch.randn(4).clone().detach().requires_grad_(True)
+    loss_grad = torch.randn(2, 4, 5)
+    y = F.conv1d(x, w, bias=b, stride=1, padding=0, dilation=1, groups=1)
+    y.backward(loss_grad)
+    return {
+        "name": "pointwise",
+        "x": x.detach(),
+        "w": w.detach(),
+        "b": b.detach(),
+        "y": y.detach(),
+        "dx": x.grad.detach(),
+        "dw": w.grad.detach(),
+        "db": b.grad.detach(),
+        "lossGrad": loss_grad.detach(),
+    }
+
+
 def emit_fixture(parts, fx):
     pre = f"conv1d_{fx['name']}"
     parts.append(emit_float_array(f"input_{pre}", fx["x"]))
@@ -187,6 +220,9 @@ def emit_fixture(parts, fx):
     parts.append(emit_float_array(f"expectedWeightGrad_{pre}", fx["dw"]))
     if fx["db"] is not None:
         parts.append(emit_float_array(f"expectedBiasGrad_{pre}", fx["db"]))
+    # Emitted only for fixtures that supply an explicit (non-ones) lossGrad.
+    if fx.get("lossGrad") is not None:
+        parts.append(emit_float_array(f"lossGrad_{pre}", fx["lossGrad"]))
 
 
 def main() -> int:
@@ -212,6 +248,7 @@ def main() -> int:
         fixture_same_padding_symmetric(),
         fixture_same_padding_asymmetric(),
         fixture_same_padding_with_groups(),
+        fixture_pointwise(),
     ]
     for fx in fixtures:
         emit_fixture(parts, fx)

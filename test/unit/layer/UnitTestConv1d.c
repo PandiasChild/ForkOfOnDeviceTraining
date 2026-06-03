@@ -593,6 +593,82 @@ void testConv1dBackwardSamePaddingWithGroups() {
     }
 }
 
+void testConv1dForwardPointwise() {
+    size_t weightDims[3] = {4, 3, 1};
+    size_t biasDims[1] = {4};
+    size_t inputDims[3] = {2, 3, 5};
+    size_t outputDims[3] = {2, 4, 5};
+    float outputData[2 * 4 * 5] = {0};
+    conv1dFixtureSetup_t s = {
+        .weightDims = weightDims,
+        .biasDims = biasDims,
+        .inputDims = inputDims,
+        .outputDims = outputDims,
+        .hasBias = 1,
+        .kSize = 1,
+        .padding = VALID,
+        .dilation = 1,
+        .stride = 1,
+        .groups = 1,
+        .weightData = weight_conv1d_pointwise,
+        .biasData = bias_conv1d_pointwise,
+        .inputData = input_conv1d_pointwise,
+    };
+    conv1dRunResult_t r = conv1dRunForward(s, outputData);
+
+    for (size_t i = 0; i < expectedForward_conv1d_pointwise_len; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(1e-4f, expectedForward_conv1d_pointwise[i],
+                                 ((float *)r.output->data)[i]);
+    }
+}
+
+void testConv1dBackwardPointwise() {
+    size_t weightDims[3] = {4, 3, 1};
+    size_t biasDims[1] = {4};
+    size_t inputDims[3] = {2, 3, 5};
+    size_t outputDims[3] = {2, 4, 5};
+    float outputData[2 * 4 * 5] = {0};
+    conv1dFixtureSetup_t s = {
+        .weightDims = weightDims,
+        .biasDims = biasDims,
+        .inputDims = inputDims,
+        .outputDims = outputDims,
+        .hasBias = 1,
+        .kSize = 1,
+        .padding = VALID,
+        .dilation = 1,
+        .stride = 1,
+        .groups = 1,
+        .weightData = weight_conv1d_pointwise,
+        .biasData = bias_conv1d_pointwise,
+        .inputData = input_conv1d_pointwise,
+    };
+    conv1dRunResult_t r = conv1dRunForward(s, outputData);
+
+    // Non-uniform lossGrad (from the generator), NOT all-ones: pins output-channel
+    // dependence in the weight/bias/input gradients — the channel-mixing that defines
+    // a pointwise (1x1) conv. See generate_expected_conv1d.py::fixture_pointwise.
+    tensor_t *lossGrad = tensorInitFloat((float *)lossGrad_conv1d_pointwise, outputDims, 3, NULL);
+
+    float propLossData[2 * 3 * 5] = {0};
+    tensor_t *propLoss = tensorInitFloat(propLossData, inputDims, 3, NULL);
+
+    conv1dBackward(r.layer, r.input, lossGrad, propLoss);
+
+    for (size_t i = 0; i < expectedPropLoss_conv1d_pointwise_len; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(1e-4f, expectedPropLoss_conv1d_pointwise[i],
+                                 ((float *)propLoss->data)[i]);
+    }
+    for (size_t i = 0; i < expectedWeightGrad_conv1d_pointwise_len; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(1e-4f, expectedWeightGrad_conv1d_pointwise[i],
+                                 ((float *)r.weights->grad->data)[i]);
+    }
+    for (size_t i = 0; i < expectedBiasGrad_conv1d_pointwise_len; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(1e-4f, expectedBiasGrad_conv1d_pointwise[i],
+                                 ((float *)r.bias->grad->data)[i]);
+    }
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -612,5 +688,7 @@ int main() {
     RUN_TEST(testConv1dBackwardSamePaddingAsymmetric);
     RUN_TEST(testConv1dForwardSamePaddingWithGroups);
     RUN_TEST(testConv1dBackwardSamePaddingWithGroups);
+    RUN_TEST(testConv1dForwardPointwise);
+    RUN_TEST(testConv1dBackwardPointwise);
     return UNITY_END();
 }
