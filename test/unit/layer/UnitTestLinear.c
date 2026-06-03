@@ -14,6 +14,145 @@
 #include "TensorConversion.h"
 #include "unity.h"
 
+void testLinearForwardFloatRank1BiasRank2Output() {
+    size_t *weightDims = reserveMemory(2 * sizeof(size_t));
+    weightDims[0] = 2;
+    weightDims[1] = 3;
+    size_t *weightOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, weightOrder);
+    shape_t *weightShape = reserveMemory(sizeof(shape_t));
+    setShape(weightShape, weightDims, 2, weightOrder);
+    tensor_t *weightsParam = initTensor(weightShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(weightsParam, (float[]){-1.f, 2.f, -3.f, 4.f, 5.f, -6.f}, 6);
+    parameter_t *weights = parameterInit(weightsParam, NULL);
+
+    size_t *biasDims = reserveMemory(1 * sizeof(size_t));
+    biasDims[0] = 2;
+    size_t *biasOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, biasOrder);
+    shape_t *biasShape = reserveMemory(sizeof(shape_t));
+    setShape(biasShape, biasDims, 1, biasOrder);
+    tensor_t *biasParam = initTensor(biasShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(biasParam, (float[]){-1.f, 3.f}, 2);
+    parameter_t *bias = parameterInit(biasParam, NULL);
+
+    size_t *inputDims = reserveMemory(2 * sizeof(size_t));
+    inputDims[0] = 1;
+    inputDims[1] = 3;
+    size_t *inputOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, inputOrder);
+    shape_t *inputShape = reserveMemory(sizeof(shape_t));
+    setShape(inputShape, inputDims, 2, inputOrder);
+    tensor_t *input = initTensor(inputShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(input, (float[]){0.f, 1.f, 2.f}, 3);
+
+    size_t *outputDims = reserveMemory(2 * sizeof(size_t));
+    outputDims[0] = 1;
+    outputDims[1] = 2;
+    size_t *outputOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, outputOrder);
+    shape_t *outputShape = reserveMemory(sizeof(shape_t));
+    setShape(outputShape, outputDims, 2, outputOrder);
+    tensor_t *output = initTensor(outputShape, quantizationInitFloat(), NULL);
+
+    quantization_t *testQ = quantizationInitFloat();
+    layer_t *linearLayer = linearLayerInitLegacy(weights, bias, testQ, testQ, testQ, testQ);
+
+    linearForward(linearLayer, input, output);
+
+    float captured[2];
+    captured[0] = ((float *)output->data)[0];
+    captured[1] = ((float *)output->data)[1];
+
+    freeLinearLayerLegacy(linearLayer);
+    freeTensor(output);
+    freeTensor(input);
+    freeParameter(bias);
+    freeParameter(weights);
+    freeQuantization(testQ);
+
+    float expected[] = {-5.f, -4.f};
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(expected, captured, 2);
+}
+
+void testLinearForwardSymInt32Rank1BiasRank2Output() {
+    size_t numberOfOutputs = 2;
+
+    size_t *weightDims = reserveMemory(2 * sizeof(size_t));
+    weightDims[0] = 2;
+    weightDims[1] = 3;
+    size_t *weightOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, weightOrder);
+    shape_t *weightShape = reserveMemory(sizeof(shape_t));
+    setShape(weightShape, weightDims, 2, weightOrder);
+    tensor_t *weightsParam = initTensor(weightShape, quantizationInitSymInt32(HTE), NULL);
+    tensorFillFromFloatBuffer(weightsParam, (float[]){-1.f, 2.f, -3.f, 4.f, 5.f, -6.f}, 6);
+    parameter_t *weights = parameterInit(weightsParam, NULL);
+
+    /* RANK-1 sym bias [2]. */
+    size_t *biasDims = reserveMemory(1 * sizeof(size_t));
+    biasDims[0] = 2;
+    size_t *biasOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, biasOrder);
+    shape_t *biasShape = reserveMemory(sizeof(shape_t));
+    setShape(biasShape, biasDims, 1, biasOrder);
+    tensor_t *biasParam = initTensor(biasShape, quantizationInitSymInt32(HTE), NULL);
+    tensorFillFromFloatBuffer(biasParam, (float[]){-1.f, 3.f}, 2);
+    parameter_t *bias = parameterInit(biasParam, NULL);
+
+    size_t *inputDims = reserveMemory(2 * sizeof(size_t));
+    inputDims[0] = 1;
+    inputDims[1] = 3;
+    size_t *inputOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, inputOrder);
+    shape_t *inputShape = reserveMemory(sizeof(shape_t));
+    setShape(inputShape, inputDims, 2, inputOrder);
+    tensor_t *input = initTensor(inputShape, quantizationInitSymInt32(HTE), NULL);
+    tensorFillFromFloatBuffer(input, (float[]){0.f, 1.f, 2.f}, 3);
+
+    size_t *outputDims = reserveMemory(2 * sizeof(size_t));
+    outputDims[0] = 1;
+    outputDims[1] = 2;
+    size_t *outputOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, outputOrder);
+    shape_t *outputShape = reserveMemory(sizeof(shape_t));
+    setShape(outputShape, outputDims, 2, outputOrder);
+    tensor_t *output = initTensor(outputShape, quantizationInitSymInt32(HTE), NULL);
+
+    quantization_t *test = quantizationInitSymInt32(HTE);
+    layer_t *linearLayer = linearLayerInitLegacy(weights, bias, test, test, test, test);
+
+    linearForward(linearLayer, input, output);
+
+    size_t *outFloatDims = reserveMemory(2 * sizeof(size_t));
+    outFloatDims[0] = 1;
+    outFloatDims[1] = 2;
+    size_t *outFloatOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, outFloatOrder);
+    shape_t *outFloatShape = reserveMemory(sizeof(shape_t));
+    setShape(outFloatShape, outFloatDims, 2, outFloatOrder);
+    tensor_t *outputFloat = initTensor(outFloatShape, quantizationInitFloat(), NULL);
+    convertTensor(output, outputFloat);
+
+    float captured[2];
+    for (size_t i = 0; i < numberOfOutputs; i++) {
+        captured[i] = ((float *)outputFloat->data)[i];
+    }
+
+    freeTensor(outputFloat);
+    freeLinearLayerLegacy(linearLayer);
+    freeTensor(output);
+    freeTensor(input);
+    freeParameter(bias);
+    freeParameter(weights);
+    freeQuantization(test);
+
+    float expected[] = {-5.f, -4.f};
+    for (size_t i = 0; i < numberOfOutputs; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(0.1f, expected[i], captured[i]);
+    }
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -796,9 +935,11 @@ void testLinearLayerInitOwningFreesAllAllocationsWithoutLeak(void) {
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testLinearForwardFloat);
+    RUN_TEST(testLinearForwardFloatRank1BiasRank2Output);
     RUN_TEST(testLinearBackwardFloat);
 
     RUN_TEST(testLinearForwardSymInt32);
+    RUN_TEST(testLinearForwardSymInt32Rank1BiasRank2Output);
     RUN_TEST(testLinearBackwardSymInt32);
     RUN_TEST(testLinearLayerInitAndFreeRoundTrip);
 

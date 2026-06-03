@@ -196,12 +196,8 @@ void matmulFloat32TensorsWithBias(tensor_t *aTensor, tensor_t *bTensor, tensor_t
     if (bias != NULL) {
         size_t bColumns =
             (bTensor->shape->numberOfDimensions < 2) ? 1 : getDimensionsByIndex(bTensor, 1);
-        if (bias->shape->numberOfDimensions != 1) {
-            PRINT_ERROR("matmulFloat32TensorsWithBias: bias must be rank-1");
-            exit(1);
-        }
-        if (getDimensionsByIndex(bias, 0) != bColumns) {
-            PRINT_ERROR("matmulFloat32TensorsWithBias: bias length != output columns");
+        if (calcNumberOfElementsByTensor(bias) != bColumns) {
+            PRINT_ERROR("matmulFloat32TensorsWithBias: bias element count != output columns");
             exit(1);
         }
         seed = bias->data;
@@ -246,12 +242,8 @@ void matmulSymInt32TensorsWithBias(tensor_t *aTensor, tensor_t *bTensor, tensor_
     } else {
         size_t bColumns =
             (bTensor->shape->numberOfDimensions < 2) ? 1 : getDimensionsByIndex(bTensor, 1);
-        if (bias->shape->numberOfDimensions != 1) {
-            PRINT_ERROR("matmulSymInt32TensorsWithBias: bias must be rank-1");
-            exit(1);
-        }
-        if (getDimensionsByIndex(bias, 0) != bColumns) {
-            PRINT_ERROR("matmulSymInt32TensorsWithBias: bias length != output columns");
+        if (calcNumberOfElementsByTensor(bias) != bColumns) {
+            PRINT_ERROR("matmulSymInt32TensorsWithBias: bias element count != output columns");
             exit(1);
         }
 
