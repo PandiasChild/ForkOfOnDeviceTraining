@@ -19,6 +19,7 @@ static size_t calcNumberOfStatesByLayerType(const layerType_t type) {
     case MAXPOOL1D:
     case AVGPOOL1D:
     case ADAPTIVE_AVGPOOL1D:
+    case DROPOUT:
         return 0;
     case CONV1D:
     case CONV1D_TRANSPOSED:

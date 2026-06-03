@@ -26,7 +26,18 @@ void freeDropoutLayer(layer_t *dropoutLayer) {
     if (dropoutLayer == NULL) {
         return;
     }
-    freeReservedMemory(dropoutLayer->config->dropout);
+    dropoutConfig_t *cfg = dropoutLayer->config->dropout;
+    if (cfg->ownsQuantizations) {
+        if (cfg->forwardQ != NULL) {
+            freeReservedMemory(cfg->forwardQ->qConfig);
+            freeReservedMemory(cfg->forwardQ);
+        }
+        if (cfg->backwardQ != NULL && cfg->backwardQ != cfg->forwardQ) {
+            freeReservedMemory(cfg->backwardQ->qConfig);
+            freeReservedMemory(cfg->backwardQ);
+        }
+    }
+    freeReservedMemory(cfg);
     freeReservedMemory(dropoutLayer->config);
     freeReservedMemory(dropoutLayer);
 }

@@ -144,6 +144,32 @@ add_elastic_ai_unit_test(
         TensorApi
 )
 
+add_executable(UnitTestDropoutIntegration UnitTestDropoutIntegration.c)
+target_link_libraries(UnitTestDropoutIntegration PRIVATE
+        unity
+        TrainingLoopApi
+        CalculateGradsSequential
+        CommonLayerLibs
+        DropoutApi
+        Dropout
+        Bernoulli
+        RNG
+        SgdApi
+        Sgd
+        Optimizer
+        StateDictApi
+        LayerQuant
+        LayerCommon
+        LinearApi
+        TensorApi
+        QuantizationApi
+        LossFunction
+        InferenceApi
+        DataLoader
+        StorageApi
+)
+__register_target_as_unit_test(UnitTestDropoutIntegration)
+
 add_executable(UnitTestAdaptiveAvgPool1dIntegration UnitTestAdaptiveAvgPool1dIntegration.c)
 target_link_libraries(UnitTestAdaptiveAvgPool1dIntegration PRIVATE
         unity

@@ -436,6 +436,77 @@ void testFactoryBuildsAndForwards(void) {
     TEST_ASSERT_EQUAL_FLOAT_ARRAY(in, captured, n);
 }
 
+void testForwardTrainingP0KeepsAllNoScale(void) {
+    size_t n = 4;
+    float in[] = {1.f, 2.f, 3.f, 4.f};
+    tensor_t *input = buildFloatTensor(n, in);
+    tensor_t *output = buildFloatTensor(n, NULL);
+    tensor_t *mask = buildBoolMask(n);
+
+    quantization_t *fq = quantizationInitFloat();
+    quantization_t *bq = quantizationInitFloat();
+    dropoutConfig_t dcfg;
+    initDropoutConfig(&dcfg, 0.0f, mask, fq, bq);
+    dcfg.training = true;
+    layerConfig_t lcfg;
+    layer_t layer = makeDropoutLayer(&dcfg, &lcfg);
+
+    // p=0 → reference sampler fills probTrue=1.0 → all keep; scale=1/(1-0)=1 → identity.
+    bernoulliFillMaskFn_t saved = bernoulliGetFillMaskFn();
+    bernoulliSetFillMaskFn(bernoulliFillMaskReference);
+    dropoutForward(&layer, input, output);
+    bernoulliSetFillMaskFn(saved);
+
+    float captured[4];
+    for (size_t i = 0; i < n; i++) {
+        captured[i] = ((float *)output->data)[i];
+    }
+    freeQuantization(bq);
+    freeQuantization(fq);
+    freeTensor(mask);
+    freeTensor(output);
+    freeTensor(input);
+
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(in, captured, n);
+}
+
+void testForwardTrainingFloatP025Scale(void) {
+    size_t n = 4;
+    float in[] = {4.f, 8.f, 12.f, 16.f};
+    tensor_t *input = buildFloatTensor(n, in);
+    tensor_t *output = buildFloatTensor(n, NULL);
+    tensor_t *mask = buildBoolMask(n);
+
+    quantization_t *fq = quantizationInitFloat();
+    quantization_t *bq = quantizationInitFloat();
+    dropoutConfig_t dcfg;
+    initDropoutConfig(&dcfg, 0.25f, mask, fq, bq);
+    dcfg.training = true;
+    layerConfig_t lcfg;
+    layer_t layer = makeDropoutLayer(&dcfg, &lcfg);
+
+    bernoulliFillMaskFn_t saved = bernoulliGetFillMaskFn();
+    bernoulliSetFillMaskFn(stubKeepEven);
+    dropoutForward(&layer, input, output);
+    bernoulliSetFillMaskFn(saved);
+
+    float captured[4];
+    for (size_t i = 0; i < n; i++) {
+        captured[i] = ((float *)output->data)[i];
+    }
+    freeQuantization(bq);
+    freeQuantization(fq);
+    freeTensor(mask);
+    freeTensor(output);
+    freeTensor(input);
+
+    // s = 1/(1-0.25) = 1.33333; keep even idx (×s), drop odd → 0.
+    float expected[] = {5.33333f, 0.f, 16.0f, 0.f};
+    for (size_t i = 0; i < n; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(1e-3f, expected[i], captured[i]);
+    }
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testForwardEvalIdentityFloat);
@@ -447,5 +518,7 @@ int main(void) {
     RUN_TEST(testVtableForwardIdentityFloat);
     RUN_TEST(testCalcOutputShapeIsIdentity);
     RUN_TEST(testFactoryBuildsAndForwards);
+    RUN_TEST(testForwardTrainingP0KeepsAllNoScale);
+    RUN_TEST(testForwardTrainingFloatP025Scale);
     return UNITY_END();
 }

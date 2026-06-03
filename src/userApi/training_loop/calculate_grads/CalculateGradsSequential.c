@@ -11,6 +11,7 @@
 #include "Common.h"
 #include "Conv1d.h"
 #include "Conv1dTransposed.h"
+#include "Dropout.h"
 #include "Layer.h"
 #include "Linear.h"
 #include "LossFunction.h"
@@ -21,12 +22,21 @@
 #include "TensorApi.h"
 #include "TrainingLoopApiInternal.h"
 
+static void setDropoutLayersTraining(layer_t **model, size_t modelSize, bool training) {
+    for (size_t i = 0; i < modelSize; i++) {
+        if (model[i]->type == DROPOUT) {
+            model[i]->config->dropout->training = training;
+        }
+    }
+}
+
 trainingStats_t *calculateGradsSequential(layer_t **model, size_t modelSize,
                                           lossConfig_t lossConfig, reduction_t forwardReduction,
                                           tensor_t *input, tensor_t *label) {
 
     tensor_t *layerOutputs[modelSize + 1];
     layerOutputs[0] = input;
+    setDropoutLayersTraining(model, modelSize, true);
     initLayerOutputs(layerOutputs, model, modelSize);
 
     // Forward pass
@@ -72,6 +82,7 @@ trainingStats_t *calculateGradsSequential(layer_t **model, size_t modelSize,
     deInitGradTensor(&gradNext);
     deInitLayerOutputs(layerOutputs, modelSize);
 
+    setDropoutLayersTraining(model, modelSize, false);
     return trainingStats;
 }
 
@@ -111,6 +122,9 @@ static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t si
             break;
         case ADAPTIVE_AVGPOOL1D:
             currentQ = currentLayer->config->adaptiveAvgPool1d->forwardQ;
+            break;
+        case DROPOUT:
+            currentQ = currentLayer->config->dropout->forwardQ;
             break;
         default:
             PRINT_ERROR("Unknown Layer Type!");

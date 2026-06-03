@@ -9,6 +9,7 @@
 #include "Common.h"
 #include "Conv1d.h"
 #include "Conv1dTransposed.h"
+#include "Dropout.h"
 #include "InferenceApi.h"
 #include "Layer.h"
 #include "Linear.h"
@@ -54,6 +55,9 @@ static void initBufferOutput(tensor_t *buffer, layer_t *currentLayer, shape_t *i
         break;
     case ADAPTIVE_AVGPOOL1D:
         currentQ = currentLayer->config->adaptiveAvgPool1d->forwardQ;
+        break;
+    case DROPOUT:
+        currentQ = currentLayer->config->dropout->forwardQ;
         break;
     default:
         PRINT_ERROR("Unknown Layer Type!");

@@ -77,6 +77,13 @@ static void dropoutForwardSymInt32(dropoutConfig_t *cfg, tensor_t *input, tensor
 void dropoutForward(layer_t *dropoutLayer, tensor_t *input, tensor_t *output) {
     dropoutConfig_t *cfg = dropoutLayer->config->dropout;
     if (cfg->training) {
+        size_t maskElements = calcNumberOfElementsByTensor(cfg->mask);
+        size_t inputElements = calcNumberOfElementsByTensor(input);
+        if (maskElements != inputElements) {
+            PRINT_ERROR("Dropout forward: mask element count (%zu) does not match input (%zu)",
+                        maskElements, inputElements);
+            exit(1);
+        }
         bernoulliFillMask(cfg->mask, 1.0f - cfg->p); // §6.0.5: fill once before dtype apply
     }
     switch (cfg->forwardQ->type) {
@@ -122,6 +129,13 @@ void dropoutBackward(layer_t *dropoutLayer, tensor_t *forwardInput, tensor_t *lo
                      tensor_t *propLoss) {
     (void)forwardInput; // not needed: the stored mask + p fully determine the gradient.
     dropoutConfig_t *cfg = dropoutLayer->config->dropout;
+    size_t maskElements = calcNumberOfElementsByTensor(cfg->mask);
+    size_t lossElements = calcNumberOfElementsByTensor(loss);
+    if (maskElements != lossElements) {
+        PRINT_ERROR("Dropout backward: mask element count (%zu) does not match loss (%zu)",
+                    maskElements, lossElements);
+        exit(1);
+    }
     switch (cfg->backwardQ->type) {
     case FLOAT32:
         dropoutBackwardFloat(cfg, loss, propLoss);
