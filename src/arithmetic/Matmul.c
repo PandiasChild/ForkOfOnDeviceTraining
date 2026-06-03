@@ -10,6 +10,7 @@
 #define MATMUL_FUNC_SYM_INT32 matmulSymIntTensors
 #endif
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -22,7 +23,8 @@
 
 size_t matmulInstructionCounter = 0;
 
-void matmulIntTensors(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTensor) {
+static void matmulIntCore(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTensor,
+                          const int32_t *biasSeed) {
     if (aTensor->shape->numberOfDimensions > 2 || bTensor->shape->numberOfDimensions > 2) {
         PRINT_ERROR("Matmul only supports up to 2D Tensors");
         exit(1);
@@ -30,7 +32,6 @@ void matmulIntTensors(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTens
 
     size_t aNumberOfDims = aTensor->shape->numberOfDimensions;
     size_t *aDims = aTensor->shape->dimensions;
-
     size_t bNumberOfDims = bTensor->shape->numberOfDimensions;
     size_t *bDims = bTensor->shape->dimensions;
 
@@ -44,12 +45,7 @@ void matmulIntTensors(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTens
     }
 
     size_t bRows = getDimensionsByIndex(bTensor, 0);
-    size_t bColumns = 0;
-    if (bNumberOfDims < 2) {
-        bColumns = 1;
-    } else {
-        bColumns = getDimensionsByIndex(bTensor, 1);
-    }
+    size_t bColumns = (bNumberOfDims < 2) ? 1 : getDimensionsByIndex(bTensor, 1);
 
     size_t resultCounter = 0;
 
@@ -60,9 +56,8 @@ void matmulIntTensors(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTens
     }
 
     for (size_t rowIndex = 0; rowIndex < aRows; rowIndex++) {
-
         for (size_t columnIndex = 0; columnIndex < bColumns; columnIndex++) {
-            int32_t result = 0;
+            int32_t result = biasSeed ? biasSeed[columnIndex] : 0;
             for (size_t i = 0; i < aColumns; i++) {
                 size_t aByteIndex = 0;
                 if (aNumberOfDims == 1) {
@@ -73,7 +68,6 @@ void matmulIntTensors(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTens
                         aNumberOfDims, aDims, aIndices, aTensor->shape->orderOfDimensions);
                     aByteIndex = aValueIndex * sizeof(int32_t);
                 }
-
                 int32_t aValue = readBytesAsInt32(&aTensor->data[aByteIndex]);
 
                 size_t bByteIndex = 0;
@@ -85,96 +79,25 @@ void matmulIntTensors(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTens
                         bNumberOfDims, bDims, bIndices, bTensor->shape->orderOfDimensions);
                     bByteIndex = bValueIndex * sizeof(int32_t);
                 }
-
                 int32_t bValue = readBytesAsInt32(&bTensor->data[bByteIndex]);
 
                 result += mulInt32s(aValue, bValue);
             }
 
             size_t outputByteIndex = resultCounter * sizeof(int32_t);
-
             writeInt32ToByteArray(result, &outputTensor->data[outputByteIndex]);
             resultCounter++;
         }
     }
 }
 
+void matmulIntTensors(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTensor) {
+    matmulIntCore(aTensor, bTensor, outputTensor, NULL);
+}
+
 void matmulIntTensorsWithInstructionCounter(tensor_t *aTensor, tensor_t *bTensor,
                                             tensor_t *outputTensor) {
-    if (aTensor->shape->numberOfDimensions > 2 || bTensor->shape->numberOfDimensions > 2) {
-        PRINT_ERROR("Matmul only supports up to 2D Tensors");
-        exit(1);
-    }
-
-    size_t aNumberOfDims = aTensor->shape->numberOfDimensions;
-    size_t *aDims = aTensor->shape->dimensions;
-
-    size_t bNumberOfDims = bTensor->shape->numberOfDimensions;
-    size_t *bDims = bTensor->shape->dimensions;
-
-    size_t aRows, aColumns;
-    if (aNumberOfDims < 2) {
-        aRows = 1;
-        aColumns = getDimensionsByIndex(aTensor, 0);
-    } else {
-        aRows = getDimensionsByIndex(aTensor, 0);
-        aColumns = getDimensionsByIndex(aTensor, 1);
-    }
-
-    size_t bRows = getDimensionsByIndex(bTensor, 0);
-    size_t bColumns = 0;
-    if (bNumberOfDims < 2) {
-        bColumns = 1;
-    } else {
-        bColumns = getDimensionsByIndex(bTensor, 1);
-    }
-
-    size_t resultCounter = 0;
-
-    if (aColumns != bRows) {
-        PRINT_ERROR("Rows dont match Columns");
-        PRINT_DEBUG("aColumns: %lu, bRows: %lu\n", aColumns, bRows);
-        exit(1);
-    }
-
-    for (size_t rowIndex = 0; rowIndex < aRows; rowIndex++) {
-
-        for (size_t columnIndex = 0; columnIndex < bColumns; columnIndex++) {
-            int32_t result = 0;
-            for (size_t i = 0; i < aColumns; i++) {
-                size_t aByteIndex = 0;
-                if (aNumberOfDims == 1) {
-                    aByteIndex = i * sizeof(int32_t);
-                } else {
-                    size_t aIndices[] = {rowIndex, i};
-                    size_t aValueIndex = calcElementIndexByIndices(
-                        aNumberOfDims, aDims, aIndices, aTensor->shape->orderOfDimensions);
-                    aByteIndex = aValueIndex * sizeof(int32_t);
-                }
-
-                int32_t aValue = readBytesAsInt32(&aTensor->data[aByteIndex]);
-
-                size_t bByteIndex = 0;
-                if (bNumberOfDims == 1) {
-                    bByteIndex = i * sizeof(int32_t);
-                } else {
-                    size_t bIndices[] = {i, columnIndex};
-                    size_t bValueIndex = calcElementIndexByIndices(
-                        bNumberOfDims, bDims, bIndices, bTensor->shape->orderOfDimensions);
-                    bByteIndex = bValueIndex * sizeof(int32_t);
-                }
-
-                int32_t bValue = readBytesAsInt32(&bTensor->data[bByteIndex]);
-
-                result += mulInt32s(aValue, bValue);
-            }
-
-            size_t outputByteIndex = resultCounter * sizeof(int32_t);
-
-            writeInt32ToByteArray(result, &outputTensor->data[outputByteIndex]);
-            resultCounter++;
-        }
-    }
+    matmulIntCore(aTensor, bTensor, outputTensor, NULL);
     ++matmulInstructionCounter;
 }
 
@@ -314,6 +237,43 @@ void matmulSymIntTensorsWithInstructionCounter(tensor_t *aTensor, tensor_t *bTen
 
 void matmulSymInt32Tensors(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTensor) {
     MATMUL_FUNC_SYM_INT32(aTensor, bTensor, outputTensor);
+}
+
+void matmulSymInt32TensorsWithBias(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTensor,
+                                   tensor_t *bias) {
+    if (bias == NULL) {
+        matmulIntCore(aTensor, bTensor, outputTensor, NULL);
+    } else {
+        size_t bColumns =
+            (bTensor->shape->numberOfDimensions < 2) ? 1 : getDimensionsByIndex(bTensor, 1);
+        if (bias->shape->numberOfDimensions != 1) {
+            PRINT_ERROR("matmulSymInt32TensorsWithBias: bias must be rank-1");
+            exit(1);
+        }
+        if (getDimensionsByIndex(bias, 0) != bColumns) {
+            PRINT_ERROR("matmulSymInt32TensorsWithBias: bias length != output columns");
+            exit(1);
+        }
+
+        float aScale = ((symInt32QConfig_t *)aTensor->quantization->qConfig)->scale;
+        float bScale = ((symInt32QConfig_t *)bTensor->quantization->qConfig)->scale;
+        float biasScale = ((symInt32QConfig_t *)bias->quantization->qConfig)->scale;
+        float outputScale = aScale * bScale;
+
+        /* Rescale the bias into the accumulator's scale: one fixed-point op per
+         * output column (small: == outFeatures), outside the MAC loop. */
+        int32_t seed[bColumns];
+        for (size_t c = 0; c < bColumns; c++) {
+            int32_t biasIntC = readBytesAsInt32(&bias->data[c * sizeof(int32_t)]);
+            seed[c] = (int32_t)roundf((float)biasIntC * biasScale / outputScale);
+        }
+        matmulIntCore(aTensor, bTensor, outputTensor, seed);
+    }
+
+    symInt32QConfig_t *aQC = aTensor->quantization->qConfig;
+    symInt32QConfig_t *bQC = bTensor->quantization->qConfig;
+    symInt32QConfig_t *outputQC = outputTensor->quantization->qConfig;
+    outputQC->scale = aQC->scale * bQC->scale;
 }
 
 size_t getMatmulInstructionCounter() {

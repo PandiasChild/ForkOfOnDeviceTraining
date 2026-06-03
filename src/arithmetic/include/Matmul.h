@@ -16,6 +16,9 @@ void matmulSymInt32Tensors(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outpu
 void matmulFloat32TensorsWithBias(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTensor,
                                   tensor_t *bias);
 
+void matmulSymInt32TensorsWithBias(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTensor,
+                                   tensor_t *bias);
+
 size_t getMatmulInstructionCounter();
 
 #endif // ENV5_RUNTIME_MATMUL_H
