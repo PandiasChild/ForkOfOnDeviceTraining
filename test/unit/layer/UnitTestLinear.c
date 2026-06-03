@@ -153,6 +153,239 @@ void testLinearForwardSymInt32Rank1BiasRank2Output() {
     }
 }
 
+void testLinearBackwardFloatRank1Bias() {
+    size_t *weightDims = reserveMemory(2 * sizeof(size_t));
+    weightDims[0] = 2;
+    weightDims[1] = 3;
+    size_t *weightOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, weightOrder);
+    shape_t *weightShape = reserveMemory(sizeof(shape_t));
+    setShape(weightShape, weightDims, 2, weightOrder);
+    tensor_t *weightsParam = initTensor(weightShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(weightsParam, (float[]){-1.f, 2.f, -3.f, 4.f, 5.f, -6.f}, 6);
+    tensor_t *weightsGrad = gradInitFloat(weightsParam, NULL);
+    parameter_t *weights = parameterInit(weightsParam, weightsGrad);
+
+    /* RANK-1 bias [2] -> rank-1 bias grad. */
+    size_t *biasDims = reserveMemory(1 * sizeof(size_t));
+    biasDims[0] = 2;
+    size_t *biasOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, biasOrder);
+    shape_t *biasShape = reserveMemory(sizeof(shape_t));
+    setShape(biasShape, biasDims, 1, biasOrder);
+    tensor_t *biasParam = initTensor(biasShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(biasParam, (float[]){-1.f, 3.f}, 2);
+    tensor_t *biasGrad = gradInitFloat(biasParam, NULL);
+    parameter_t *bias = parameterInit(biasParam, biasGrad);
+
+    size_t *fwdDims = reserveMemory(2 * sizeof(size_t));
+    fwdDims[0] = 1;
+    fwdDims[1] = 3;
+    size_t *fwdOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, fwdOrder);
+    shape_t *fwdShape = reserveMemory(sizeof(shape_t));
+    setShape(fwdShape, fwdDims, 2, fwdOrder);
+    tensor_t *forwardInput = initTensor(fwdShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(forwardInput, (float[]){0.f, 1.f, 2.f}, 3);
+
+    size_t *lossDims = reserveMemory(2 * sizeof(size_t));
+    lossDims[0] = 1;
+    lossDims[1] = 2;
+    size_t *lossOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, lossOrder);
+    shape_t *lossShape = reserveMemory(sizeof(shape_t));
+    setShape(lossShape, lossDims, 2, lossOrder);
+    tensor_t *loss = initTensor(lossShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(loss, (float[]){-4.f, -3.f}, 2);
+
+    size_t *propLossDims = reserveMemory(2 * sizeof(size_t));
+    propLossDims[0] = 1;
+    propLossDims[1] = 3;
+    size_t *propLossOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, propLossOrder);
+    shape_t *propLossShape = reserveMemory(sizeof(shape_t));
+    setShape(propLossShape, propLossDims, 2, propLossOrder);
+    tensor_t *propLoss = initTensor(propLossShape, quantizationInitFloat(), NULL);
+
+    quantization_t *testQ = quantizationInitFloat();
+    layer_t *linearLayer = linearLayerInitLegacy(weights, bias, testQ, testQ, testQ, testQ);
+
+    linearBackward(linearLayer, forwardInput, loss, propLoss);
+
+    size_t numWeightElements = calcNumberOfElementsByShape(weights->param->shape);
+    size_t numBiasElements = calcNumberOfElementsByShape(bias->param->shape);
+    size_t numPropLossElements = calcNumberOfElementsByTensor(propLoss);
+
+    float capturedWeightGrad[6];
+    for (size_t i = 0; i < numWeightElements; i++) {
+        capturedWeightGrad[i] = ((float *)weights->grad->data)[i];
+    }
+    float capturedBiasGrad[2];
+    for (size_t i = 0; i < numBiasElements; i++) {
+        capturedBiasGrad[i] = ((float *)bias->grad->data)[i];
+    }
+    float capturedPropLoss[3];
+    for (size_t i = 0; i < numPropLossElements; i++) {
+        capturedPropLoss[i] = ((float *)propLoss->data)[i];
+    }
+
+    freeLinearLayerLegacy(linearLayer);
+    freeTensor(propLoss);
+    freeTensor(loss);
+    freeTensor(forwardInput);
+    freeParameter(bias);
+    freeParameter(weights);
+    freeQuantization(testQ);
+
+    float expected_weight_grad[] = {0.f, -4.f, -8.f, 0.f, -3.f, -6.f};
+    float expected_bias_grad[] = {-4.f, -3.f};
+    float expected_propagated_loss[] = {-8.f, -23.f, 30.f};
+
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(expected_weight_grad, capturedWeightGrad, numWeightElements);
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(expected_propagated_loss, capturedPropLoss, numPropLossElements);
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(expected_bias_grad, capturedBiasGrad, numBiasElements);
+}
+
+void testLinearBackwardSymInt32Rank1Bias() {
+    size_t numberOfWeights = 6;
+    size_t numberOfBiases = 2;
+    size_t numberOfForwardInputs = 3;
+
+    /* 1. Build heap weights parameter (SymInt32, shape 2x3) with grad. */
+    size_t *weightDims = reserveMemory(2 * sizeof(size_t));
+    weightDims[0] = 2;
+    weightDims[1] = 3;
+    size_t *weightOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, weightOrder);
+    shape_t *weightShape = reserveMemory(sizeof(shape_t));
+    setShape(weightShape, weightDims, 2, weightOrder);
+    tensor_t *weightsParam = initTensor(weightShape, quantizationInitSymInt32(HTE), NULL);
+    tensorFillFromFloatBuffer(weightsParam, (float[]){-1.f, 2.f, -3.f, 4.f, 5.f, -6.f}, 6);
+    tensor_t *weightsGrad = gradInitSymInt32(weightsParam, HTE, NULL);
+    parameter_t *weights = parameterInit(weightsParam, weightsGrad);
+
+    /* 2. Build heap bias parameter (SymInt32, RANK-1 shape [2]) with grad. */
+    size_t *biasDims = reserveMemory(1 * sizeof(size_t));
+    biasDims[0] = 2;
+    size_t *biasOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, biasOrder);
+    shape_t *biasShape = reserveMemory(sizeof(shape_t));
+    setShape(biasShape, biasDims, 1, biasOrder);
+    tensor_t *biasParam = initTensor(biasShape, quantizationInitSymInt32(HTE), NULL);
+    tensorFillFromFloatBuffer(biasParam, (float[]){-1.f, 3.f}, 2);
+    tensor_t *biasGrad = gradInitSymInt32(biasParam, HTE, NULL);
+    parameter_t *bias = parameterInit(biasParam, biasGrad);
+
+    /* 3. Build heap forwardInput tensor (SymInt32, shape 1x3). */
+    size_t *fwdDims = reserveMemory(2 * sizeof(size_t));
+    fwdDims[0] = 1;
+    fwdDims[1] = 3;
+    size_t *fwdOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, fwdOrder);
+    shape_t *fwdShape = reserveMemory(sizeof(shape_t));
+    setShape(fwdShape, fwdDims, 2, fwdOrder);
+    tensor_t *forwardInput = initTensor(fwdShape, quantizationInitSymInt32(HTE), NULL);
+    tensorFillFromFloatBuffer(forwardInput, (float[]){0.f, 1.f, 2.f}, 3);
+
+    /* 4. Build heap loss tensor (SymInt32, shape 1x2). */
+    size_t *lossDims = reserveMemory(2 * sizeof(size_t));
+    lossDims[0] = 1;
+    lossDims[1] = 2;
+    size_t *lossOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, lossOrder);
+    shape_t *lossShape = reserveMemory(sizeof(shape_t));
+    setShape(lossShape, lossDims, 2, lossOrder);
+    tensor_t *loss = initTensor(lossShape, quantizationInitSymInt32(HTE), NULL);
+    tensorFillFromFloatBuffer(loss, (float[]){-4.f, -3.f}, 2);
+
+    /* 5. Build heap propLoss tensor (SymInt32, shape (3,)). */
+    size_t *propLossDims = reserveMemory(1 * sizeof(size_t));
+    propLossDims[0] = numberOfForwardInputs;
+    size_t *propLossOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, propLossOrder);
+    shape_t *propLossShape = reserveMemory(sizeof(shape_t));
+    setShape(propLossShape, propLossDims, 1, propLossOrder);
+    tensor_t *propLoss = initTensor(propLossShape, quantizationInitSymInt32(HTE), NULL);
+
+    /* 6. Build layer (shared SymInt32 quantization). */
+    quantization_t *test = quantizationInitSymInt32(HTE);
+    layer_t *linearLayer = linearLayerInitLegacy(weights, bias, test, test, test, test);
+
+    linearBackward(linearLayer, forwardInput, loss, propLoss);
+
+    /* 7. Convert SymInt32 grads back to Float for comparison. */
+    size_t *wgDims = reserveMemory(2 * sizeof(size_t));
+    wgDims[0] = 2;
+    wgDims[1] = 3;
+    size_t *wgOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, wgOrder);
+    shape_t *wgShape = reserveMemory(sizeof(shape_t));
+    setShape(wgShape, wgDims, 2, wgOrder);
+    tensor_t *weightGradFloat = initTensor(wgShape, quantizationInitFloat(), NULL);
+    convertTensor(weights->grad, weightGradFloat);
+
+    /* RANK-1 bias-grad convert-back block. */
+    size_t *bgDims = reserveMemory(1 * sizeof(size_t));
+    bgDims[0] = 2;
+    size_t *bgOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, bgOrder);
+    shape_t *bgShape = reserveMemory(sizeof(shape_t));
+    setShape(bgShape, bgDims, 1, bgOrder);
+    tensor_t *biasGradFloat = initTensor(bgShape, quantizationInitFloat(), NULL);
+    convertTensor(bias->grad, biasGradFloat);
+
+    size_t *plDims = reserveMemory(1 * sizeof(size_t));
+    plDims[0] = numberOfForwardInputs;
+    size_t *plOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, plOrder);
+    shape_t *plShape = reserveMemory(sizeof(shape_t));
+    setShape(plShape, plDims, 1, plOrder);
+    tensor_t *propLossFloat = initTensor(plShape, quantizationInitFloat(), NULL);
+    convertTensor(propLoss, propLossFloat);
+
+    /* 8. CAPTURE. */
+    float capturedWeightGrad[6];
+    for (size_t i = 0; i < numberOfWeights; i++) {
+        capturedWeightGrad[i] = ((float *)weightGradFloat->data)[i];
+    }
+    float capturedBiasGrad[2];
+    for (size_t i = 0; i < numberOfBiases; i++) {
+        capturedBiasGrad[i] = ((float *)biasGradFloat->data)[i];
+    }
+    float capturedPropLoss[3];
+    for (size_t i = 0; i < numberOfForwardInputs; i++) {
+        capturedPropLoss[i] = ((float *)propLossFloat->data)[i];
+    }
+
+    /* 9. FREE. */
+    freeTensor(propLossFloat);
+    freeTensor(biasGradFloat);
+    freeTensor(weightGradFloat);
+    freeLinearLayerLegacy(linearLayer);
+    freeTensor(propLoss);
+    freeTensor(loss);
+    freeTensor(forwardInput);
+    freeParameter(bias);
+    freeParameter(weights);
+    freeQuantization(test);
+
+    /* 10. ASSERT. */
+    float expectedWeightGrads[] = {0.f, -4.f, -8.f, 0.f, -3.f, -6.f};
+    for (size_t i = 0; i < numberOfWeights; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(0.1f, expectedWeightGrads[i], capturedWeightGrad[i]);
+    }
+
+    float expectedBiasGrads[] = {-4.f, -3.f};
+    for (size_t i = 0; i < numberOfBiases; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(0.1f, expectedBiasGrads[i], capturedBiasGrad[i]);
+    }
+
+    float expectedPropagatedLoss[] = {-8.f, -23.f, 30.f};
+    for (size_t i = 0; i < numberOfForwardInputs; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(.2f, expectedPropagatedLoss[i], capturedPropLoss[i]);
+    }
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -937,10 +1170,12 @@ int main(void) {
     RUN_TEST(testLinearForwardFloat);
     RUN_TEST(testLinearForwardFloatRank1BiasRank2Output);
     RUN_TEST(testLinearBackwardFloat);
+    RUN_TEST(testLinearBackwardFloatRank1Bias);
 
     RUN_TEST(testLinearForwardSymInt32);
     RUN_TEST(testLinearForwardSymInt32Rank1BiasRank2Output);
     RUN_TEST(testLinearBackwardSymInt32);
+    RUN_TEST(testLinearBackwardSymInt32Rank1Bias);
     RUN_TEST(testLinearLayerInitAndFreeRoundTrip);
 
     RUN_TEST(testLinearBackwardFloatWithMismatchedQuantizations);

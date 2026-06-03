@@ -1,5 +1,7 @@
 #define SOURCE_FILE "LINEAR"
 
+#include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -120,7 +122,20 @@ void linearCalcWeightGradsFloatWithConversion(linearConfig_t *linearConfig, tens
 }
 
 void linearCalcBiasGradsFloat32(tensor_t *loss, tensor_t *biasGrad) {
-    addFloat32TensorsInplace(biasGrad, loss);
+    /* Reduce the loss over the batch (leading) axis into the rank-1 bias grad:
+     * biasGrad[f] += sum_n loss[n,f]. Mirrors conv1dCalcBiasGradsFloat32. */
+    size_t numFeatures = calcNumberOfElementsByTensor(biasGrad);
+    size_t numLoss = calcNumberOfElementsByTensor(loss);
+    size_t batch = (numFeatures == 0) ? 0 : numLoss / numFeatures;
+    float *bg = (float *)biasGrad->data;
+    float *l = (float *)loss->data;
+    for (size_t f = 0; f < numFeatures; f++) {
+        float sum = 0.0f;
+        for (size_t n = 0; n < batch; n++) {
+            sum += l[n * numFeatures + f];
+        }
+        bg[f] += sum;
+    }
 }
 
 void linearCalcBiasGradsFloatWithConversion(linearConfig_t *linearConfig, tensor_t *loss) {
@@ -297,7 +312,23 @@ void linearCalcWeightGradsSymInt32WithConversion(linearConfig_t *linearConfig, t
 }
 
 void linearCalcBiasGradsSymInt32(tensor_t *biasGrads, tensor_t *loss) {
-    addSymInt32TensorsInplace(biasGrads, loss);
+    /* Reduce loss over the batch axis into the rank-1 bias grad, rescaling from
+     * the loss scale into the bias-grad scale (fixed-point), mirroring the
+     * forward seed convention. */
+    size_t numFeatures = calcNumberOfElementsByTensor(biasGrads);
+    size_t numLoss = calcNumberOfElementsByTensor(loss);
+    size_t batch = (numFeatures == 0) ? 0 : numLoss / numFeatures;
+    int32_t *bg = (int32_t *)biasGrads->data;
+    int32_t *l = (int32_t *)loss->data;
+    float lossScale = ((symInt32QConfig_t *)loss->quantization->qConfig)->scale;
+    float bgScale = ((symInt32QConfig_t *)biasGrads->quantization->qConfig)->scale;
+    for (size_t f = 0; f < numFeatures; f++) {
+        int64_t sum = 0;
+        for (size_t n = 0; n < batch; n++) {
+            sum += l[n * numFeatures + f];
+        }
+        bg[f] += (int32_t)roundf((float)sum * lossScale / bgScale);
+    }
 }
 
 void linearCalcBiasGradsSymInt32WithConversion(linearConfig_t *linearConfig, tensor_t *loss) {
