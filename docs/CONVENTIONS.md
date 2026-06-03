@@ -54,6 +54,21 @@ aborts the test binary — earlier tests must run cleanly to surface later ones.
 When triaging multiple unrelated failures, isolate by running individual test
 binaries from `build/unit_test_asan/test/unit/...` directly.
 
+### macOS toolchain requirement (LLVM ≥ 22)
+
+macOS 26.4 changed the dyld shared-cache layout in a way that hangs
+AddressSanitizer startup — `__asan_init` livelocks before `main()` (zero output,
+~100% CPU) — for any compiler-rt **≤ 21.1.8**, which is the nixpkgs Darwin
+default that `pkgs.clang` would otherwise provide. The upstream fix (LLVM
+PR #182943, backported to `release/22.x`) ships in **LLVM ≥ 22**, so the devenv
+`run_asan_tests` and `ci` scripts pin the ASan compiler to clang 22 (the
+`nixpkgs-llvm22` input → `asanClang` in `devenv.nix`). The normal `gcc` build
+and CI (Linux / apt-clang) are unaffected.
+
+Running ASan outside devenv on macOS? Use clang ≥ 22, or Apple Command Line
+Tools ≥ 26.5 (Apple backported the same fix into their clang 21). Apple CLT
+≤ 26.3 will hang.
+
 ### Opt-in LeakSanitizer recipe
 
 LSan is staged separately because it requires a cleanup convention every test

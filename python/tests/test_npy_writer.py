@@ -2,6 +2,7 @@
 that calls npyWriteFloat32 / npyWriteInt32 with known buffers, then
 np.load()-ing the output and asserting it matches.
 """
+import os
 import shutil
 import subprocess
 import sys
@@ -12,6 +13,14 @@ import numpy as np
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+# AddressSanitizer is broken on macOS 26.4+ for compiler-rt <= 21.1.8 (the LLVM
+# version `clang` resolves to in the nix/devenv shell): the instrumented binary
+# livelocks in __asan_init before main(), so subprocess.run([binary]) below would
+# hang forever. The devenv `ci` script sets ODT_SANITIZER_CC to a clang >= 22
+# (which carries the upstream fix). Default to PATH `clang` so Linux CI, where
+# asan works, is unchanged.
+SANITIZER_CC = os.environ.get("ODT_SANITIZER_CC", "clang")
 
 
 def _compile_writer_test_harness(harness_src: Path, *, sanitize: bool = False) -> str:
@@ -24,7 +33,7 @@ def _compile_writer_test_harness(harness_src: Path, *, sanitize: bool = False) -
     writer_h = REPO_ROOT / "examples" / "_shared"
     binary = tempfile.NamedTemporaryFile(suffix="", delete=False).name
     cmd = [
-        "cc" if not sanitize else "clang",
+        "cc" if not sanitize else SANITIZER_CC,
         "-std=c11", "-O0", f"-I{writer_h}",
         str(harness_src), str(writer_c), "-o", binary,
     ]
@@ -87,8 +96,8 @@ def test_npy_writer_rejects_high_rank_shape_that_overflows_buf(tmp_path):
     OOB write or unsigned underflow trips the sanitizers; the test also asserts
     that npyWriteFloat32 returns a non-zero rc instead of writing a corrupt
     file."""
-    if shutil.which("clang") is None:
-        pytest.skip("clang required for sanitizer build")
+    if shutil.which(SANITIZER_CC) is None:
+        pytest.skip(f"sanitizer compiler {SANITIZER_CC!r} required for sanitizer build")
     harness = tmp_path / "harness.c"
     out = tmp_path / "out.npy"
     # ndim=200 with all-1 dims: leading "(" + 200 * "1," = 1 + 400 = 401 chars,

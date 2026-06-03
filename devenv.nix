@@ -2,6 +2,13 @@
 
 let
   unstablePkgs = import inputs.nixpkgs-unstable { system = pkgs.stdenv.system; };
+  # ASan compiler. macOS 26.4+ broke compiler-rt's ASan startup for LLVM
+  # <= 21.1.8 (the nixpkgs default that pkgs.clang provides) — __asan_init
+  # livelocks before main(). The fix is on LLVM's release/22.x line, so the
+  # ASan build links clang 22 from a separately-pinned input. Only the ASan
+  # path uses this; the normal build stays on gcc. See docs/CONVENTIONS.md.
+  llvm22Pkgs = import inputs.nixpkgs-llvm22 { system = pkgs.stdenv.system; };
+  asanClang = llvm22Pkgs.llvmPackages_22.clang;
 in
 {
   packages = let
@@ -64,7 +71,7 @@ in
 		run_asan_tests = {
 			exec = ''
 				set -e
-				CC=clang cmake --preset unit_test_asan
+				CC=${asanClang}/bin/clang cmake --preset unit_test_asan
 				cmake --build --preset unit_test_asan
 				ctest --preset unit_test_asan
 			'';
@@ -95,10 +102,10 @@ in
 				CC=gcc cmake --preset unit_test
 				cmake --build --preset unit_test
 				ctest --preset unit_test
-				CC=clang cmake --preset unit_test_asan
+				CC=${asanClang}/bin/clang cmake --preset unit_test_asan
 				cmake --build --preset unit_test_asan
 				ctest --preset unit_test_asan
-				uv run pytest
+				ODT_SANITIZER_CC=${asanClang}/bin/clang uv run pytest
 			'';
 			package = pkgs.bash;
 			description = "Run the full CI pipeline locally (format-check + C + ASan/UBSan + Python tests)";
