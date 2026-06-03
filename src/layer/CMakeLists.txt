@@ -55,6 +55,17 @@ target_link_libraries(AdaptiveAvgPool1d PRIVATE
         AdaptiveWindow1d
 )
 
+add_library(Dropout Dropout.c)
+target_include_directories(Dropout PUBLIC include)
+target_link_libraries(Dropout PRIVATE
+        DTypes
+        Tensor
+        Layer
+        Common
+        Bernoulli
+        Rounding
+)
+
 add_library(Layer Layer.c)
 target_include_directories(Layer PUBLIC include)
 target_link_libraries(Layer PRIVATE
@@ -70,6 +81,7 @@ target_link_libraries(Layer PRIVATE
         AdaptiveAvgPool1d
         Softmax
         Flatten
+        Dropout
 )
 
 add_library(Linear Linear.c)
@@ -135,6 +147,7 @@ target_link_libraries(CommonLayerLibs INTERFACE
         AdaptiveAvgPool1d
         Softmax
         Flatten
+        Dropout
         Rounding
         Tensor
         Sgd

@@ -11,6 +11,7 @@ typedef struct conv1dTransposedConfig conv1dTransposedConfig_t;
 typedef struct maxPool1dConfig maxPool1dConfig_t;
 typedef struct avgPool1dConfig avgPool1dConfig_t;
 typedef struct adaptiveAvgPool1dConfig adaptiveAvgPool1dConfig_t;
+typedef struct dropoutConfig dropoutConfig_t;
 
 typedef enum layerType {
     LINEAR,
@@ -22,7 +23,8 @@ typedef enum layerType {
     SOFTMAX,
     FLATTEN,
     QUANTIZATION,
-    ADAPTIVE_AVGPOOL1D
+    ADAPTIVE_AVGPOOL1D,
+    DROPOUT
 } layerType_t;
 
 typedef enum layerQType { FLOAT_LAYER, ASYM_LAYER } layerQType_t;
@@ -36,6 +38,7 @@ typedef union layerConfig {
     maxPool1dConfig_t *maxPool1d;
     avgPool1dConfig_t *avgPool1d;
     adaptiveAvgPool1dConfig_t *adaptiveAvgPool1d;
+    dropoutConfig_t *dropout;
 } layerConfig_t;
 
 typedef struct layer {

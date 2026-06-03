@@ -176,3 +176,18 @@ add_elastic_ai_unit_test(
 )
 add_dependencies(UnitTestAdaptiveAvgPool1d generate_expected_adaptive_avg_pool_1d)
 target_include_directories(UnitTestAdaptiveAvgPool1d PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
+        Dropout
+        MORE_LIBS
+        CommonLayerLibs
+        Bernoulli
+        RNG
+        TensorApi
+        QuantizationApi
+        LayerQuant
+        Quantization
+        Rounding
+        StorageApi
+)
