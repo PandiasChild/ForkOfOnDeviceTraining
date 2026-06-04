@@ -48,18 +48,24 @@ void convTranspose1dKernelFloat32(tensor_t const *input, tensor_t const *weight,
                         outputPadding, kernel->stride, kernel->dilation);
             exit(1);
         }
-    } else if (kernel->paddingType == SAME) {
+    } else if (kernel->paddingType == SAME || kernel->paddingType == EXPLICIT) {
+        // SAME and EXPLICIT share the adjoint path. The input-gradient of a
+        // forward Conv1d is a transposed conv that scatters back through the
+        // forward's left padding; we recover padLeft from the forward-conv1d
+        // geometry on the adjoint output length (= forward input len), whose
+        // forward output len must equal the adjoint input len. For EXPLICIT,
+        // windowGeometry1dCalc reports padLeft == kernel->padding; for SAME it
+        // reports the minimal {floor,ceil} split. This branch is reached as the
+        // Conv1d backward adjoint (conv1dBackward passes the forward kernel).
         if (outputPadding != 0) {
             PRINT_ERROR("convTranspose1dKernelFloat32: outputPadding must be 0 in "
-                        "SAME mode (was %zu)",
+                        "SAME/EXPLICIT mode (was %zu)",
                         outputPadding);
             exit(1);
         }
-        // Recover padLeft from forward-conv1d geometry: forward input len =
-        // adjoint output len; forward output len = adjoint input len.
         windowGeometry1d_t fwdGeom = windowGeometry1dCalc(outputLength, kernel);
         if (fwdGeom.outputLength != inputLength) {
-            PRINT_ERROR("convTranspose1dKernelFloat32: SAME adjoint input length "
+            PRINT_ERROR("convTranspose1dKernelFloat32: SAME/EXPLICIT adjoint input length "
                         "(%zu) does not match forward conv1d output length on the "
                         "given output shape (%zu, fwd-out=%zu)",
                         inputLength, outputLength, fwdGeom.outputLength);

@@ -182,6 +182,40 @@ void testSliceTrulyEmptyOnRightEdge() {
     TEST_ASSERT_EQUAL_size_t(0, s.validCount);
 }
 
+void testGeometryExplicitPaddingStride2() {
+    // enc1-shaped geometry: K=7, stride=2, explicit symmetric padding=3 on L=10.
+    // padded = 10 + 2*3 = 16; outputLength = (16 - 7)/2 + 1 = 5; padLeft = padRight = 3.
+    // This is DISTINCT from SAME, which for the same case yields the minimal
+    // totalPad = 5 -> padLeft=2, padRight=3. Explicit padding is how we match a
+    // PyTorch conv trained with padding=3 (see issue #177 ECG enc1).
+    kernel_t kernel;
+    initKernelExplicit(&kernel, 7, 3, 1, 2); // size, padding, dilation, stride
+    windowGeometry1d_t g = windowGeometry1dCalc(10, &kernel);
+    TEST_ASSERT_EQUAL_size_t(5, g.outputLength);
+    TEST_ASSERT_EQUAL_size_t(3, g.padLeft);
+    TEST_ASSERT_EQUAL_size_t(3, g.padRight);
+}
+
+void testGeometryExplicitPaddingOddKernelStride1MatchesSame() {
+    // For odd kernel + stride 1, explicit (K-1)/2 padding equals SAME exactly.
+    kernel_t kernel;
+    initKernelExplicit(&kernel, 3, 1, 1, 1); // size, padding, dilation, stride
+    windowGeometry1d_t g = windowGeometry1dCalc(5, &kernel);
+    TEST_ASSERT_EQUAL_size_t(5, g.outputLength);
+    TEST_ASSERT_EQUAL_size_t(1, g.padLeft);
+    TEST_ASSERT_EQUAL_size_t(1, g.padRight);
+}
+
+void testGeometryExplicitZeroPaddingEqualsValid() {
+    // Explicit padding of 0 must behave like VALID.
+    kernel_t kernel;
+    initKernelExplicit(&kernel, 2, 0, 1, 2); // size, padding, dilation, stride
+    windowGeometry1d_t g = windowGeometry1dCalc(6, &kernel);
+    TEST_ASSERT_EQUAL_size_t(3, g.outputLength);
+    TEST_ASSERT_EQUAL_size_t(0, g.padLeft);
+    TEST_ASSERT_EQUAL_size_t(0, g.padRight);
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -194,6 +228,9 @@ int main(void) {
     RUN_TEST(testGeometrySameAsymmetricPadding);
     RUN_TEST(testGeometryKernelLargerThanInput);
     RUN_TEST(testGeometryValidKernelLargerThanInput);
+    RUN_TEST(testGeometryExplicitPaddingStride2);
+    RUN_TEST(testGeometryExplicitPaddingOddKernelStride1MatchesSame);
+    RUN_TEST(testGeometryExplicitZeroPaddingEqualsValid);
     RUN_TEST(testSliceCenterFullWindow);
     RUN_TEST(testSliceLeftEdgeWithPadding);
     RUN_TEST(testSliceRightEdgeWithPadding);

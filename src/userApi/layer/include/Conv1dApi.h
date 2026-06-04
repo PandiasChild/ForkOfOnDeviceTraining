@@ -48,7 +48,8 @@ typedef struct conv1dInit {
     size_t kernelSize;
     /* OPTIONAL — zero-init defaults */
     size_t stride;         /* 0 → 1 */
-    paddingType_t padding; /* 0 → VALID (enum value 0) */
+    paddingType_t padding; /* 0 → VALID (enum value 0); SAME or EXPLICIT also valid */
+    size_t paddingAmount;  /* symmetric pad per side; used ONLY when padding == EXPLICIT */
     size_t dilation;       /* 0 → 1 */
     size_t groups;         /* 0 → 1 */
     bias_t bias;           /* BIAS_DEFAULT (0) → resolves to true (PyTorch parity) */

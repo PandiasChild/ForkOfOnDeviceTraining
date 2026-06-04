@@ -277,6 +277,43 @@ void testGetBatch_NpyBackedDataset() {
     }
 }
 
+/* Regression for issue #177: npyLoadFlat must load an ENTIRE .npy file as one
+ * contiguous tensor (full shape, dim0 included) — unlike npyLoad, which slices
+ * dim0 into N row tensors. The v2 BIT_PARITY weight loader needs every output
+ * channel, not just channel 0; the previous npyLoad()+array[0] path saw only the
+ * first dim0-slice and then memcpy'd past it into heap garbage. proxy_w.npy is
+ * arange(24) reshaped to [3, 2, 4], so flat element i must equal i — and the
+ * elements at i >= 8 (beyond row 0 of size 2*4) are exactly what the bug
+ * corrupted. */
+void testNpyLoadFlat_LoadsFullMultiDimTensor() {
+    tensor_t *w = npyLoadFlat(PROXY_W_PATH);
+
+    /* CAPTURE shape + all data before free, per this file's memory discipline. */
+    size_t capturedRank = w->shape->numberOfDimensions;
+    size_t capturedDims[3] = {0, 0, 0};
+    for (size_t i = 0; i < capturedRank && i < 3; i++) {
+        capturedDims[i] = w->shape->dimensions[i];
+    }
+    size_t n = calcNumberOfElementsByTensor(w);
+    float captured[24];
+    for (size_t i = 0; i < n && i < 24; i++) {
+        captured[i] = ((float *)w->data)[i];
+    }
+
+    freeTensor(w);
+
+    /* ASSERT on captured. */
+    TEST_ASSERT_EQUAL_size_t(3, capturedRank);
+    size_t expectedDims[3] = {3, 2, 4};
+    TEST_ASSERT_EQUAL_size_t_ARRAY(expectedDims, capturedDims, 3);
+    TEST_ASSERT_EQUAL_size_t(24, n);
+    float expected[24];
+    for (size_t i = 0; i < 24; i++) {
+        expected[i] = (float)i;
+    }
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(expected, captured, 24);
+}
+
 void testShuffle() {
     /* Stack-only test: stays in the stack-only tier per CONVENTIONS Rule 1.
      * No heap fixtures, no frees needed. Asserts directly. */
@@ -295,6 +332,7 @@ int main() {
     RUN_TEST(testGetBatch);
     RUN_TEST(testGetBatch_ShuffledMinibatchCoversAllSamples);
     RUN_TEST(testGetBatch_NpyBackedDataset);
+    RUN_TEST(testNpyLoadFlat_LoadsFullMultiDimTensor);
     RUN_TEST(testShuffle);
     return UNITY_END();
 }

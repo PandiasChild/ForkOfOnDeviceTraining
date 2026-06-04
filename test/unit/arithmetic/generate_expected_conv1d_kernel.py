@@ -100,6 +100,18 @@ def fixture_same_padding():
     return ("samePadding", y)
 
 
+def fixture_explicit_padding():
+    # B=1, Cin=1, Cout=1, L=10, K=7, stride=2, EXPLICIT symmetric padding=3.
+    # Mirrors the ECG enc1 geometry (issue #177): a stride>1 conv whose padding
+    # must match PyTorch's `padding=3` exactly. Output length = (10 + 6 - 7)//2 + 1 = 5.
+    # Distinct from SAME, which would pad {2,3}; this guards explicit-pad parity.
+    x = torch.arange(1.0, 11.0).reshape(1, 1, 10)
+    w = torch.tensor([[[0.1, -0.2, 0.3, -0.4, 0.5, -0.6, 0.7]]])
+    b = torch.tensor([0.25])
+    y = F.conv1d(x, w, bias=b, stride=2, padding=3, dilation=1, groups=1)
+    return ("explicitPadding", y)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True, type=Path)
@@ -117,6 +129,7 @@ def main() -> int:
         fixture_multi_channel_with_bias(),
         fixture_stride_dilation(),
         fixture_same_padding(),
+        fixture_explicit_padding(),
     ]
     for name, y in fixtures_simple:
         parts.append(emit_float_array(f"expectedConv1dForward_{name}", y))

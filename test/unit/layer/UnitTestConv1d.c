@@ -19,6 +19,7 @@ typedef struct conv1dFixtureSetup {
     int hasBias;
     size_t kSize;
     paddingType_t padding;
+    size_t paddingAmount; // used only when padding == EXPLICIT
     size_t dilation;
     size_t stride;
     size_t groups;
@@ -62,7 +63,11 @@ static conv1dRunResult_t conv1dRunForward(conv1dFixtureSetup_t s, float *outputB
     // kernelStore is static so its address remains valid after this function returns;
     // conv1dLayerInit / initConv1dConfigWithWeightsAndBias both store the kernel pointer.
     static kernel_t kernelStore;
-    initKernel(&kernelStore, s.kSize, s.padding, s.dilation, s.stride);
+    if (s.padding == EXPLICIT) {
+        initKernelExplicit(&kernelStore, s.kSize, s.paddingAmount, s.dilation, s.stride);
+    } else {
+        initKernel(&kernelStore, s.kSize, s.padding, s.dilation, s.stride);
+    }
     r.q = quantizationInitFloat();
 
     if (s.groups == 1) {
@@ -669,6 +674,88 @@ void testConv1dBackwardPointwise() {
     }
 }
 
+void testConv1dForwardExplicitPadding() {
+    // ECG enc1 geometry (issue #177): K=7, stride=2, EXPLICIT symmetric padding=3.
+    size_t weightDims[3] = {3, 2, 7};
+    size_t biasDims[1] = {3};
+    size_t inputDims[3] = {1, 2, 10};
+    size_t outputDims[3] = {1, 3, 5}; // (10 + 2*3 - 7)/2 + 1 = 5
+    float outputData[1 * 3 * 5] = {0};
+    conv1dFixtureSetup_t s = {
+        .weightDims = weightDims,
+        .biasDims = biasDims,
+        .inputDims = inputDims,
+        .outputDims = outputDims,
+        .hasBias = 1,
+        .kSize = 7,
+        .padding = EXPLICIT,
+        .paddingAmount = 3,
+        .dilation = 1,
+        .stride = 2,
+        .groups = 1,
+        .weightData = weight_conv1d_explicitPadding,
+        .biasData = bias_conv1d_explicitPadding,
+        .inputData = input_conv1d_explicitPadding,
+    };
+    conv1dRunResult_t r = conv1dRunForward(s, outputData);
+
+    for (size_t i = 0; i < expectedForward_conv1d_explicitPadding_len; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(1e-4f, expectedForward_conv1d_explicitPadding[i],
+                                 ((float *)r.output->data)[i]);
+    }
+}
+
+void testConv1dBackwardExplicitPadding() {
+    // Backward twin of the forward above. conv1dBackward delegates the input
+    // gradient to the transposed-conv adjoint, which must also honour the
+    // explicit pad — this is the regression guard for issue #177's training path.
+    size_t weightDims[3] = {3, 2, 7};
+    size_t biasDims[1] = {3};
+    size_t inputDims[3] = {1, 2, 10};
+    size_t outputDims[3] = {1, 3, 5};
+    float outputData[1 * 3 * 5] = {0};
+    conv1dFixtureSetup_t s = {
+        .weightDims = weightDims,
+        .biasDims = biasDims,
+        .inputDims = inputDims,
+        .outputDims = outputDims,
+        .hasBias = 1,
+        .kSize = 7,
+        .padding = EXPLICIT,
+        .paddingAmount = 3,
+        .dilation = 1,
+        .stride = 2,
+        .groups = 1,
+        .weightData = weight_conv1d_explicitPadding,
+        .biasData = bias_conv1d_explicitPadding,
+        .inputData = input_conv1d_explicitPadding,
+    };
+    conv1dRunResult_t r = conv1dRunForward(s, outputData);
+
+    // Non-uniform lossGrad (from the generator), NOT all-ones — pins the output
+    // channel in dL/dW (see generate_expected_conv1d.py::fixture_explicit_padding).
+    tensor_t *lossGrad =
+        tensorInitFloat((float *)lossGrad_conv1d_explicitPadding, outputDims, 3, NULL);
+
+    float propLossData[1 * 2 * 10] = {0};
+    tensor_t *propLoss = tensorInitFloat(propLossData, inputDims, 3, NULL);
+
+    conv1dBackward(r.layer, r.input, lossGrad, propLoss);
+
+    for (size_t i = 0; i < expectedPropLoss_conv1d_explicitPadding_len; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(1e-4f, expectedPropLoss_conv1d_explicitPadding[i],
+                                 ((float *)propLoss->data)[i]);
+    }
+    for (size_t i = 0; i < expectedWeightGrad_conv1d_explicitPadding_len; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(1e-4f, expectedWeightGrad_conv1d_explicitPadding[i],
+                                 ((float *)r.weights->grad->data)[i]);
+    }
+    for (size_t i = 0; i < expectedBiasGrad_conv1d_explicitPadding_len; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(1e-4f, expectedBiasGrad_conv1d_explicitPadding[i],
+                                 ((float *)r.bias->grad->data)[i]);
+    }
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -690,5 +777,7 @@ int main() {
     RUN_TEST(testConv1dBackwardSamePaddingWithGroups);
     RUN_TEST(testConv1dForwardPointwise);
     RUN_TEST(testConv1dBackwardPointwise);
+    RUN_TEST(testConv1dForwardExplicitPadding);
+    RUN_TEST(testConv1dBackwardExplicitPadding);
     return UNITY_END();
 }

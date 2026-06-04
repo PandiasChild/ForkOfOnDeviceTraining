@@ -84,6 +84,52 @@ tensorArray_t *npyLoad(char *path) {
     return tensorArr;
 }
 
+tensor_t *npyLoadFlat(char *path) {
+    FILE *f = openNPYFile(path);
+
+    checkMagic(f);
+
+    uint32_t headerSize = readHeaderSize(f);
+    char *header = reserveMemory(headerSize + 1);
+    readHeader(header, headerSize, f);
+
+    dtype_t dtype = getDTypeFromHeader(header);
+    quantization_t *q = initQByDType(dtype);
+
+    size_t numberOfDims = getNumberOfDimsFromHeader(header);
+    shape_t fileShape;
+    size_t fileDims[numberOfDims];
+    size_t fileOrder[numberOfDims];
+    getShapeFromHeader(&fileShape, fileDims, fileOrder, header, numberOfDims);
+
+    /* Header is fully consumed; release before allocating the tensor. */
+    freeReservedMemory(header);
+
+    /* Owned copy of the FULL on-disk shape (dim0 included) so the entire payload
+     * lands in one contiguous tensor — no dim0 slicing as npyLoad() does. */
+    size_t *dims = reserveMemory(numberOfDims * sizeof(size_t));
+    memcpy(dims, fileDims, numberOfDims * sizeof(size_t));
+    size_t *order = reserveMemory(numberOfDims * sizeof(size_t));
+    setOrderOfDimsForNewTensor(numberOfDims, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, numberOfDims, order);
+
+    /* The tensor takes ownership of `q`; freeTensor() releases it later. */
+    tensor_t *t = initTensor(shape, q, NULL);
+
+    size_t bytesPerValue = calcBytesPerElement(q);
+    size_t numberOfValues = calcNumberOfElementsByShape(&fileShape);
+    size_t n = fread(t->data, bytesPerValue, numberOfValues, f);
+    if (n != numberOfValues) {
+        PRINT_ERROR("npyLoadFlat: fread read %zu of %zu values from %s", n, numberOfValues, path);
+        exit(1);
+    }
+
+    fclose(f);
+
+    return t;
+}
+
 sample_t *npyGetSample(dataset_t *dataset, size_t index) {
     sample_t *sample = reserveMemory(sizeof(sample_t));
     sample->item = dataset->items->array[index];

@@ -30,6 +30,19 @@ windowGeometry1d_t windowGeometry1dCalc(size_t inputLength, kernel_t const *kern
         g.padRight = totalPad - g.padLeft;
         break;
     }
+    case EXPLICIT: {
+        // PyTorch padding=N: exactly `padding` zeros on EACH side (symmetric).
+        // outputLength follows the standard conv formula on the padded input.
+        g.padLeft = kernel->padding;
+        g.padRight = kernel->padding;
+        size_t paddedLength = inputLength + 2 * kernel->padding;
+        if (paddedLength >= effectiveKernel) {
+            g.outputLength = (paddedLength - effectiveKernel) / kernel->stride + 1;
+        } else {
+            g.outputLength = 0;
+        }
+        break;
+    }
     }
     return g;
 }

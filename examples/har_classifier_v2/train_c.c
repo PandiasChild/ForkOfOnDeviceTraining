@@ -207,14 +207,17 @@ static int loadStateDictFromDir(layer_t **model, const char *weightsDir) {
     for (int i = 0; i < 4; i++) {
         snprintf(wPath, sizeof(wPath), "%s/%s.weight.npy", weightsDir, names[i]);
         snprintf(bPath, sizeof(bPath), "%s/%s.bias.npy", weightsDir, names[i]);
-        tensorArray_t *wArr = npyLoad(wPath);
-        tensorArray_t *bArr = npyLoad(bPath);
-        if (wArr == NULL || bArr == NULL) {
+        /* npyLoadFlat (not npyLoad): a weight file is ONE tensor of shape
+         * [out, in, k] (or [out, in] for fc). npyLoad() slices dim0 (the output
+         * axis) into row tensors, so array[0] is only output channel 0; the
+         * subsequent layerLoadWeights memcpy then runs past that short buffer
+         * into heap garbage — the issue #177 collapse. */
+        w[i] = npyLoadFlat(wPath);
+        b[i] = npyLoadFlat(bPath);
+        if (w[i] == NULL || b[i] == NULL) {
             fprintf(stderr, "loadStateDictFromDir: missing %s or %s\n", wPath, bPath);
             return 1;
         }
-        w[i] = wArr->array[0];
-        b[i] = bArr->array[0];
     }
 
     modelLoadStateDict(
@@ -226,6 +229,12 @@ static int loadStateDictFromDir(layer_t **model, const char *weightsDir) {
             {.name = names[3], .weightData = (float *)w[3]->data, .biasData = (float *)b[3]->data},
         },
         4);
+
+    /* modelLoadStateDict copied the data into the layers; release the loaders. */
+    for (int i = 0; i < 4; i++) {
+        freeTensor(w[i]);
+        freeTensor(b[i]);
+    }
     return 0;
 }
 

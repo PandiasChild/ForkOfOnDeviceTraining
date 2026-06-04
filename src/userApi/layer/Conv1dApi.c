@@ -182,7 +182,14 @@ static kernel_t *buildConv1dKernel(conv1dInit_t *init) {
     kernel_t *kernel = reserveMemory(sizeof(kernel_t));
     size_t stride = init->stride == 0 ? 1 : init->stride;
     size_t dilation = init->dilation == 0 ? 1 : init->dilation;
-    initKernel(kernel, init->kernelSize, init->padding, dilation, stride);
+    if (init->padding == EXPLICIT) {
+        /* Symmetric integer padding (PyTorch padding=N). Required to match a
+         * reference conv trained with explicit padding under stride>1, where
+         * SAME's minimal/asymmetric padding would diverge (issue #177 enc1). */
+        initKernelExplicit(kernel, init->kernelSize, init->paddingAmount, dilation, stride);
+    } else {
+        initKernel(kernel, init->kernelSize, init->padding, dilation, stride);
+    }
     return kernel;
 }
 

@@ -166,6 +166,39 @@ void testConv1dKernelSamePadding() {
                                   expectedConv1dForward_samePadding_len);
 }
 
+void testConv1dKernelExplicitPaddingStride2() {
+    // ECG enc1 geometry (issue #177): K=7, stride=2, EXPLICIT symmetric padding=3.
+    // Gold from PyTorch F.conv1d(..., stride=2, padding=3) — see the generator's
+    // fixture_explicit_padding. This is the layer-level parity guard for explicit
+    // padding: a stride>1 conv that must reproduce PyTorch's padding=N exactly.
+    float xData[10];
+    for (size_t i = 0; i < 10; i++) {
+        xData[i] = (float)(i + 1);
+    }
+    size_t xDims[] = {1, 1, 10};
+    tensor_t *x = tensorInitFloat(xData, xDims, 3, NULL);
+
+    float wData[] = {0.1f, -0.2f, 0.3f, -0.4f, 0.5f, -0.6f, 0.7f};
+    size_t wDims[] = {1, 1, 7};
+    tensor_t *w = tensorInitFloat(wData, wDims, 3, NULL);
+
+    float bData[] = {0.25f};
+    size_t bDims[] = {1};
+    tensor_t *b = tensorInitFloat(bData, bDims, 1, NULL);
+
+    float yData[5] = {0};
+    size_t yDims[] = {1, 1, 5};
+    tensor_t *y = tensorInitFloat(yData, yDims, 3, NULL);
+
+    kernel_t kernel;
+    initKernelExplicit(&kernel, 7, 3, 1, 2); // size, padding, dilation, stride
+
+    conv1dKernelFloat32(x, w, b, &kernel, 1, y);
+
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(expectedConv1dForward_explicitPadding, y->data,
+                                  expectedConv1dForward_explicitPadding_len);
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -178,5 +211,6 @@ int main(void) {
     RUN_TEST(testConv1dKernelGroupsGrouped);
     RUN_TEST(testConv1dKernelStrideDilation);
     RUN_TEST(testConv1dKernelSamePadding);
+    RUN_TEST(testConv1dKernelExplicitPaddingStride2);
     return UNITY_END();
 }

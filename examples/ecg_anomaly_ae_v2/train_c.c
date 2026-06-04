@@ -46,6 +46,10 @@
 #define E1_OUT 8
 #define E1_K 7
 #define E1_S 2
+/* enc1 is a stride-2 conv; PyTorch trained it with symmetric padding=3. C SAME
+ * would pick the minimal/asymmetric pad {2,3} and diverge, so use EXPLICIT
+ * padding=(K-1)/2=3 to match PyTorch bit-for-bit (issue #177). */
+#define E1_PAD (E1_K / 2)
 #define E2_OUT 16
 #define E2_K 5
 
@@ -137,7 +141,8 @@ static void buildModel(layer_t **model, layerQuant_t *lq) {
                                                .outChannels = E1_OUT,
                                                .kernelSize = E1_K,
                                                .stride = E1_S,
-                                               .padding = SAME},
+                                               .padding = EXPLICIT,
+                                               .paddingAmount = E1_PAD},
                                lq);
     model[1] = reluLayerInit(lq);
     model[2] = maxPool1dLayerInit(
@@ -181,14 +186,17 @@ static int loadStateDictFromDir(layer_t **model, const char *weightsDir) {
     for (int i = 0; i < 5; i++) {
         snprintf(wPath, sizeof(wPath), "%s/%s.weight.npy", weightsDir, names[i]);
         snprintf(bPath, sizeof(bPath), "%s/%s.bias.npy", weightsDir, names[i]);
-        tensorArray_t *wArr = npyLoad(wPath);
-        tensorArray_t *bArr = npyLoad(bPath);
-        if (wArr == NULL || bArr == NULL) {
+        /* npyLoadFlat (not npyLoad): a weight file is ONE tensor of shape
+         * [out, in, k] (Conv1d) or [in, out, k] (ConvTranspose1d). npyLoad()
+         * slices dim0 into row tensors, so array[0] is only the first channel;
+         * the subsequent layerLoadWeights memcpy then runs past that short
+         * buffer into heap garbage — the issue #177 collapse. */
+        w[i] = npyLoadFlat(wPath);
+        b[i] = npyLoadFlat(bPath);
+        if (w[i] == NULL || b[i] == NULL) {
             fprintf(stderr, "loadStateDictFromDir: missing %s or %s\n", wPath, bPath);
             return 1;
         }
-        w[i] = wArr->array[0];
-        b[i] = bArr->array[0];
     }
 
     modelLoadStateDict(
@@ -201,6 +209,12 @@ static int loadStateDictFromDir(layer_t **model, const char *weightsDir) {
             {.name = names[4], .weightData = (float *)w[4]->data, .biasData = (float *)b[4]->data},
         },
         5);
+
+    /* modelLoadStateDict copied the data into the layers; release the loaders. */
+    for (int i = 0; i < 5; i++) {
+        freeTensor(w[i]);
+        freeTensor(b[i]);
+    }
     return 0;
 }
 

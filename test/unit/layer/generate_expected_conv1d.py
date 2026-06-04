@@ -209,6 +209,34 @@ def fixture_pointwise():
     }
 
 
+def fixture_explicit_padding():
+    # ECG enc1 geometry (issue #177): Conv1d K=7, stride=2, EXPLICIT symmetric
+    # padding=3 — a stride>1 conv whose integer padding SAME cannot express.
+    # Exercises forward AND backward; the backward delegates to the transposed-conv
+    # adjoint, which must also honour the explicit pad (otherwise training crashes).
+    # NON-UNIFORM lossGrad so dL/dW pins the output channel: a uniform lossGrad
+    # makes every weight-grad row identical across oc (see fixture_pointwise).
+    torch.manual_seed(7)
+    x = torch.randn(1, 2, 10).clone().detach().requires_grad_(True)
+    w = torch.randn(3, 2, 7).clone().detach().requires_grad_(True)
+    b = torch.randn(3).clone().detach().requires_grad_(True)
+    # output length = (10 + 2*3 - 7)//2 + 1 = 5
+    loss_grad = torch.randn(1, 3, 5)
+    y = F.conv1d(x, w, bias=b, stride=2, padding=3, dilation=1, groups=1)
+    y.backward(loss_grad)
+    return {
+        "name": "explicitPadding",
+        "x": x.detach(),
+        "w": w.detach(),
+        "b": b.detach(),
+        "y": y.detach(),
+        "dx": x.grad.detach(),
+        "dw": w.grad.detach(),
+        "db": b.grad.detach(),
+        "lossGrad": loss_grad.detach(),
+    }
+
+
 def emit_fixture(parts, fx):
     pre = f"conv1d_{fx['name']}"
     parts.append(emit_float_array(f"input_{pre}", fx["x"]))
@@ -249,6 +277,7 @@ def main() -> int:
         fixture_same_padding_asymmetric(),
         fixture_same_padding_with_groups(),
         fixture_pointwise(),
+        fixture_explicit_padding(),
     ]
     for fx in fixtures:
         emit_fixture(parts, fx)

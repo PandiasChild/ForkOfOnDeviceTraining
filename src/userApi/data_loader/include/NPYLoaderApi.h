@@ -12,6 +12,24 @@
 tensorArray_t *npyLoad(char *path);
 
 /*!
+ * Loads an entire .npy file as a SINGLE contiguous tensor, preserving the full
+ * on-disk shape including the leading dimension.
+ *
+ * Use this for weight/parameter files, where the whole array is one tensor —
+ * unlike npyLoad(), which interprets the leading dimension as a dataset's sample
+ * count and returns one tensor per row (slicing dim0 away). Loading a weight of
+ * shape [out, in, k] with npyLoad() yields `out` separate [in, k] tensors, so
+ * only the first output channel is reachable as array[0]; npyLoadFlat() keeps
+ * all `out * in * k` elements contiguous in one tensor.
+ *
+ * The caller owns the returned tensor and must release it with freeTensor().
+ *
+ * \param path: Path to .npy file
+ * \return Pointer to a tensor holding the file's full shape and data
+ */
+tensor_t *npyLoadFlat(char *path);
+
+/*!
  * Gets a sample of given dataset.
  *
  * sample = item + label.
