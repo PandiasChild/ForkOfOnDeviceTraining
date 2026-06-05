@@ -87,7 +87,8 @@ static shape_t *buildOwnedShape(const size_t *srcDims, size_t numberOfDims) {
 }
 
 static parameter_t *allocateConv1dWeights(size_t outChannels, size_t inChannels, size_t groups,
-                                          size_t kernelSize, quantization_t *storageQ) {
+                                          size_t kernelSize, quantization_t *storageQ,
+                                          quantization_t *gradQ) {
     /* Conv1d weight shape: [outChannels, inChannels/groups, kernelSize].
      * Per Conv1d.h:11. */
     if (inChannels % groups != 0) {
@@ -120,17 +121,18 @@ static parameter_t *allocateConv1dWeights(size_t outChannels, size_t inChannels,
     };
     initDistribution(paramTensor, &dist);
 
-    tensor_t *gradTensor = gradInitFloat(paramTensor, NULL);
+    tensor_t *gradTensor = gradInit(paramTensor, gradQ, NULL);
     return parameterInit(paramTensor, gradTensor);
 }
 
-static parameter_t *allocateConv1dBias(size_t outChannels, quantization_t *storageQ) {
+static parameter_t *allocateConv1dBias(size_t outChannels, quantization_t *storageQ,
+                                       quantization_t *gradQ) {
     /* Bias tensor: shape [outChannels]. Zero-initialized via calloc (reserveMemory). */
     shape_t *shape = buildOwnedShape((size_t[]){outChannels}, 1);
     tensor_t *paramTensor = initTensor(shape, getQLike(storageQ), NULL);
     /* No initDistribution(ZEROS) — calloc already gave us zeros. */
 
-    tensor_t *gradTensor = gradInitFloat(paramTensor, NULL);
+    tensor_t *gradTensor = gradInit(paramTensor, gradQ, NULL);
     return parameterInit(paramTensor, gradTensor);
 }
 
@@ -209,9 +211,11 @@ layer_t *conv1dLayerInit(conv1dInit_t *init, layerQuant_t *lq) {
     layer->config = layerCfg;
 
     cfg->kernel = buildConv1dKernel(init);
+    quantization_t *gradQ = quantizationInitFloat(); /* Conv1d backward is FLOAT32-only */
     cfg->weights = allocateConv1dWeights(init->outChannels, init->inChannels, groups,
-                                         init->kernelSize, lq->weightStorage);
-    cfg->bias = hasBias ? allocateConv1dBias(init->outChannels, lq->biasStorage) : NULL;
+                                         init->kernelSize, lq->weightStorage, gradQ);
+    cfg->bias = hasBias ? allocateConv1dBias(init->outChannels, lq->biasStorage, gradQ) : NULL;
+    freeQuantization(gradQ);
     cfg->groups = groups;
     cfg->forwardQ = lq->forwardMath;
     cfg->weightGradQ = lq->backwardMath;
@@ -241,9 +245,11 @@ layer_t *conv1dLayerInitOwning(conv1dInit_t *init, layerQuant_t *lq) {
     /* allocateConv1dWeights / allocateConv1dBias internally clone via getQLike,
      * so the parameter tensors own their quantization_t — caller can drop
      * lq->weightStorage / lq->biasStorage immediately. */
+    quantization_t *gradQ = quantizationInitFloat(); /* Conv1d backward is FLOAT32-only */
     cfg->weights = allocateConv1dWeights(init->outChannels, init->inChannels, groups,
-                                         init->kernelSize, lq->weightStorage);
-    cfg->bias = hasBias ? allocateConv1dBias(init->outChannels, lq->biasStorage) : NULL;
+                                         init->kernelSize, lq->weightStorage, gradQ);
+    cfg->bias = hasBias ? allocateConv1dBias(init->outChannels, lq->biasStorage, gradQ) : NULL;
+    freeQuantization(gradQ);
     cfg->groups = groups;
 
     /* Owning: deep-copy each of the four math quantizations. Always four

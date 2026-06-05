@@ -196,6 +196,41 @@ void testConv1dLayerInitOwningFreesAllAllocationsWithoutLeak(void) {
     TEST_PASS();
 }
 
+void testConv1dLayerInitKeepsFloat32GradEvenWithSymInt32BackwardMath(void) {
+    /* Conv1d backward is FLOAT32-only; its grad must stay FLOAT32 regardless of
+     * backwardMath, so the gradInit plumbing defaults Conv1d to FLOAT32. */
+    quantization_t *fwd = quantizationInitFloat();
+    quantization_t *bwd = quantizationInitSymInt32(HTE);
+    layerQuant_t lq = {
+        .forwardMath = fwd,
+        .backwardMath = bwd,
+        .weightStorage = fwd,
+        .biasStorage = fwd,
+    };
+
+    layer_t *layer = conv1dLayerInit(
+        &(conv1dInit_t){
+            .inChannels = 2,
+            .outChannels = 4,
+            .kernelSize = 3,
+            .bias = BIAS_TRUE,
+        },
+        &lq);
+
+    conv1dConfig_t *cfg = layer->config->conv1d;
+    int weightGradType = cfg->weights->grad->quantization->type;
+    int biasGradType = cfg->bias->grad->quantization->type;
+
+    freeConv1dLayer(layer);
+    freeQuantization(bwd);
+    freeQuantization(fwd);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(
+        FLOAT32, weightGradType, "Conv1d weight grad must stay FLOAT32 (backward is FLOAT32-only)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(FLOAT32, biasGradType,
+                                  "Conv1d bias grad must stay FLOAT32 (backward is FLOAT32-only)");
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testConv1dLayerInitBorrowingBuildsLayerWithCorrectShape);
@@ -204,5 +239,6 @@ int main(void) {
     RUN_TEST(testConv1dLayerInitBorrowingPaddingDefaultIsValid);
     RUN_TEST(testConv1dLayerInitOwningDeepCopiesQuantizations);
     RUN_TEST(testConv1dLayerInitOwningFreesAllAllocationsWithoutLeak);
+    RUN_TEST(testConv1dLayerInitKeepsFloat32GradEvenWithSymInt32BackwardMath);
     return UNITY_END();
 }
