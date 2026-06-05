@@ -41,6 +41,13 @@ _Static_assert(_Generic((&tensorFillFromBoolBuffer),
                    default: 0),
                "tensorFillFromBoolBuffer must take (tensor_t *, const bool *, size_t)");
 
+/* Compile-time contract: gradInit takes (tensor_t *, quantization_t *, sparsity_t *)
+ * and returns tensor_t *. Config-respecting grad-init for PR-0. */
+_Static_assert(_Generic((&gradInit),
+                   tensor_t *(*)(tensor_t *, quantization_t *, sparsity_t *): 1,
+                   default: 0),
+               "gradInit must take (tensor_t *, quantization_t *, sparsity_t *)");
+
 void setUp() {}
 void tearDown() {}
 
@@ -581,6 +588,72 @@ void testInitTensor_AllocatesOwnZeroDataBuffer_FreeTensorIsSafe(void) {
      * for an initTensor-allocated tensor. */
 }
 
+void testGradInit_Float32_MatchesParamShapeOwnsOwnQuant(void) {
+    size_t *dims = reserveMemory(2 * sizeof(size_t));
+    dims[0] = 3;
+    dims[1] = 4;
+    size_t *order = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, 2, order);
+
+    tensor_t *param = initTensor(shape, quantizationInitFloat(), NULL);
+
+    quantization_t *gradQ = quantizationInitFloat();
+    tensor_t *grad = gradInit(param, gradQ, NULL);
+
+    /* CAPTURE before frees. */
+    int gradTypeMatches = (grad->quantization->type == FLOAT32);
+    int ownsOwnQuant = (grad->quantization != gradQ); /* getQLike deep-clones */
+    int ownsOwnShape = (grad->shape != param->shape); /* getShapeLike clones */
+    size_t nDims = grad->shape->numberOfDimensions;
+    size_t d0 = grad->shape->dimensions[0];
+    size_t d1 = grad->shape->dimensions[1];
+
+    freeTensor(grad);
+    freeQuantization(gradQ);
+    freeTensor(param);
+
+    TEST_ASSERT_TRUE_MESSAGE(gradTypeMatches, "gradInit FLOAT32 grad dtype mismatch");
+    TEST_ASSERT_TRUE_MESSAGE(ownsOwnQuant, "gradInit must clone quantization (own it)");
+    TEST_ASSERT_TRUE_MESSAGE(ownsOwnShape, "gradInit must clone shape (own it)");
+    TEST_ASSERT_EQUAL_UINT(2, nDims);
+    TEST_ASSERT_EQUAL_UINT(3, d0);
+    TEST_ASSERT_EQUAL_UINT(4, d1);
+}
+
+void testGradInit_SymInt32_MatchesParamShapeAndDtype(void) {
+    size_t *dims = reserveMemory(2 * sizeof(size_t));
+    dims[0] = 2;
+    dims[1] = 5;
+    size_t *order = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, 2, order);
+
+    /* Param can stay FLOAT32; grad dtype is driven solely by gradQ. */
+    tensor_t *param = initTensor(shape, quantizationInitFloat(), NULL);
+
+    quantization_t *gradQ = quantizationInitSymInt32(HTE);
+    tensor_t *grad = gradInit(param, gradQ, NULL);
+
+    int gradTypeMatches = (grad->quantization->type == SYM_INT32);
+    int ownsOwnQuant = (grad->quantization != gradQ);
+    size_t nDims = grad->shape->numberOfDimensions;
+    size_t d0 = grad->shape->dimensions[0];
+    size_t d1 = grad->shape->dimensions[1];
+
+    freeTensor(grad);
+    freeQuantization(gradQ);
+    freeTensor(param);
+
+    TEST_ASSERT_TRUE_MESSAGE(gradTypeMatches, "gradInit SYM_INT32 grad dtype mismatch");
+    TEST_ASSERT_TRUE_MESSAGE(ownsOwnQuant, "gradInit must clone SYM_INT32 quantization");
+    TEST_ASSERT_EQUAL_UINT(2, nDims);
+    TEST_ASSERT_EQUAL_UINT(2, d0);
+    TEST_ASSERT_EQUAL_UINT(5, d1);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testTensorInitWithDistribution_Zeros_InitializesProductOfDimsValues);
@@ -597,6 +670,8 @@ int main(void) {
     RUN_TEST(testGradInitInt32_DoesNotAliasParentShape);
     RUN_TEST(testGradInitSymInt32_DoesNotAliasParentShape);
     RUN_TEST(testGradInitAsym_DoesNotAliasParentShape);
+    RUN_TEST(testGradInit_Float32_MatchesParamShapeOwnsOwnQuant);
+    RUN_TEST(testGradInit_SymInt32_MatchesParamShapeAndDtype);
     RUN_TEST(testInitDistribution_Zeros_AllValuesAreZero);
     RUN_TEST(testInitDistribution_Ones_AllValuesAreOne);
     RUN_TEST(testInitDistribution_Uniform_AllValuesInRange);
