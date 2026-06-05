@@ -98,7 +98,7 @@ static shape_t *buildOwnedShape(const size_t *srcDims, size_t numberOfDims) {
 }
 
 static parameter_t *allocateLinearWeights(size_t inFeatures, size_t outFeatures,
-                                          quantization_t *storageQ) {
+                                          quantization_t *storageQ, quantization_t *gradQ) {
     /* Weight tensor: shape [outFeatures, inFeatures]. The tensor takes ownership
      * of `shape` and `quantization`, so we clone the borrowed storageQ via
      * getQLike to avoid tying the tensor's lifetime to the caller's quant. */
@@ -120,18 +120,19 @@ static parameter_t *allocateLinearWeights(size_t inFeatures, size_t outFeatures,
     };
     initDistribution(paramTensor, &dist);
 
-    tensor_t *gradTensor = gradInitFloat(paramTensor, NULL);
+    tensor_t *gradTensor = gradInit(paramTensor, gradQ, NULL);
     return parameterInit(paramTensor, gradTensor);
 }
 
-static parameter_t *allocateLinearBias(size_t outFeatures, quantization_t *storageQ) {
+static parameter_t *allocateLinearBias(size_t outFeatures, quantization_t *storageQ,
+                                       quantization_t *gradQ) {
     /* Bias tensor: shape [outFeatures]. Initialized to ZEROS, which initTensor
      * already provides (reserveMemory == calloc), so no fill is needed. */
     shape_t *shape = buildOwnedShape((size_t[]){outFeatures}, 1);
     tensor_t *paramTensor = initTensor(shape, getQLike(storageQ), NULL);
     /* No initDistribution(ZEROS) call needed: data is already zero from calloc. */
 
-    tensor_t *gradTensor = gradInitFloat(paramTensor, NULL);
+    tensor_t *gradTensor = gradInit(paramTensor, gradQ, NULL);
     return parameterInit(paramTensor, gradTensor);
 }
 
@@ -186,8 +187,10 @@ layer_t *linearLayerInit(linearInit_t *init, layerQuant_t *lq) {
     layerCfg->linear = cfg;
     layer->config = layerCfg;
 
-    cfg->weights = allocateLinearWeights(init->inFeatures, init->outFeatures, lq->weightStorage);
-    cfg->bias = hasBias ? allocateLinearBias(init->outFeatures, lq->biasStorage) : NULL;
+    cfg->weights = allocateLinearWeights(init->inFeatures, init->outFeatures, lq->weightStorage,
+                                         lq->backwardMath);
+    cfg->bias =
+        hasBias ? allocateLinearBias(init->outFeatures, lq->biasStorage, lq->backwardMath) : NULL;
 
     /* Borrowing: store the four quant pointers verbatim, no copy.
      * Per design spec section 4: collapse to a single math Q for forward and
@@ -220,8 +223,10 @@ layer_t *linearLayerInitOwning(linearInit_t *init, layerQuant_t *lq) {
      * T12) internally clone via getQLike, so the parameter tensors hold their
      * own quantization_t copies — the caller can immediately drop the lq's
      * weightStorage/biasStorage pointers without breaking the parameters. */
-    cfg->weights = allocateLinearWeights(init->inFeatures, init->outFeatures, lq->weightStorage);
-    cfg->bias = hasBias ? allocateLinearBias(init->outFeatures, lq->biasStorage) : NULL;
+    cfg->weights = allocateLinearWeights(init->inFeatures, init->outFeatures, lq->weightStorage,
+                                         lq->backwardMath);
+    cfg->bias =
+        hasBias ? allocateLinearBias(init->outFeatures, lq->biasStorage, lq->backwardMath) : NULL;
 
     /* Owning: deep-copy each of the four math quantizations.  Always allocate
      * four separate copies, even if multiple lq slots pointed to the same

@@ -1110,6 +1110,40 @@ void testLinearLayerInitBorrowingBiasFalseLeavesBiasNull(void) {
     freeLinearLayer(layer);
 }
 
+void testLinearLayerInitSymInt32BackwardMathYieldsSymInt32Grad(void) {
+    /* Regression for the "config lies" bug: a Linear built with a SYM_INT32
+     * backwardMath must store SYM_INT32 parameter gradients, not FLOAT32. */
+    quantization_t *fwd = quantizationInitFloat();       /* FLOAT32 forward + storage */
+    quantization_t *bwd = quantizationInitSymInt32(HTE); /* SYM_INT32 backward */
+    layerQuant_t lq = {
+        .forwardMath = fwd,
+        .backwardMath = bwd,
+        .weightStorage = fwd, /* KAIMING init requires FLOAT32 weight storage */
+        .biasStorage = fwd,
+    };
+
+    layer_t *layer = linearLayerInit(
+        &(linearInit_t){
+            .inFeatures = 3,
+            .outFeatures = 2,
+            .bias = BIAS_TRUE,
+        },
+        &lq);
+
+    linearConfig_t *cfg = layer->config->linear;
+    int weightGradType = cfg->weights->grad->quantization->type;
+    int biasGradType = cfg->bias->grad->quantization->type;
+
+    freeLinearLayer(layer);
+    freeQuantization(bwd);
+    freeQuantization(fwd);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(SYM_INT32, weightGradType,
+                                  "weight grad must be SYM_INT32 when backwardMath is SYM_INT32");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(SYM_INT32, biasGradType,
+                                  "bias grad must be SYM_INT32 when backwardMath is SYM_INT32");
+}
+
 void testLinearLayerInitOwningDeepCopiesQuantizations(void) {
     quantization_t *q = quantizationInitFloat();
     layerQuant_t lq;
@@ -1185,6 +1219,7 @@ int main(void) {
     RUN_TEST(testLinearLayerInitBorrowingZeroInChannelsAbortsViaPrintError);
     RUN_TEST(testLinearLayerInitBorrowingBiasDefaultResolvesToTrue);
     RUN_TEST(testLinearLayerInitBorrowingBiasFalseLeavesBiasNull);
+    RUN_TEST(testLinearLayerInitSymInt32BackwardMathYieldsSymInt32Grad);
 
     RUN_TEST(testLinearLayerInitOwningDeepCopiesQuantizations);
     RUN_TEST(testLinearLayerInitOwningFreesAllAllocationsWithoutLeak);
