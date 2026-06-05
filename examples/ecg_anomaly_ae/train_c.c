@@ -35,7 +35,7 @@
 
 #define EPOCHS 200
 #define BATCH 32
-#define LR 0.005f
+#define LEARNING_RATE 0.005f
 #define MOMENTUM 0.9f
 #define SEED 42
 #define SHUFFLE_SEED 42
@@ -415,7 +415,7 @@ int main(void) {
     buildModel(model);
 
     optimizer_t *sgd =
-        sgdMCreateOptim(LR, MOMENTUM, /*weightDecay*/ 0.0f, model, MODEL_SIZE, FLOAT32);
+        sgdMCreateOptim(LEARNING_RATE, MOMENTUM, /*weightDecay*/ 0.0f, model, MODEL_SIZE, FLOAT32);
 
     g_log_file = fopen("examples/ecg_anomaly_ae/logs/c.json", "w");
     if (!g_log_file) {
@@ -429,7 +429,7 @@ int main(void) {
             "  \"config\": {\"epochs\": %d, \"batch\": %d, \"lr\": %.6f, "
             "\"momentum\": %.6f, \"seed\": %d, \"shuffle_seed\": %d},\n"
             "  \"epochs\": [\n",
-            EPOCHS, BATCH, (double)LR, (double)MOMENTUM, SEED, SHUFFLE_SEED);
+            EPOCHS, BATCH, (double)LEARNING_RATE, (double)MOMENTUM, SEED, SHUFFLE_SEED);
     fflush(g_log_file);
 
     clock_gettime(CLOCK_MONOTONIC, &g_epoch_t0);

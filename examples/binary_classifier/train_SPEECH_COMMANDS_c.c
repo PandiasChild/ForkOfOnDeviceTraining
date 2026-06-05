@@ -41,10 +41,11 @@
 #define MOMENTUM 0.9f
 #define SEED 42
 #define SHUFFLE_SEED 42
-#define NUM_CLASSES 6
-
-#define IN_CHANNELS 9
-#define LEN_INPUT 128
+#define NUM_CLASSES 2
+//train_y.npy [N_train]
+#define IN_CHANNELS 1
+//train_x.npy [N_train, 1, 16000]
+#define LEN_INPUT 16000
 
 #define C1_OUT 16
 #define C1_K 7

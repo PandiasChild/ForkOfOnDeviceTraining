@@ -1,4 +1,4 @@
-#define SOURCE_FILE "har_classifier_train_c"
+#define SOURCE_FILE "binary_classifier_train_c"
 
 #include <errno.h>
 #include <stdint.h>
@@ -41,10 +41,11 @@
 #define MOMENTUM 0.9f
 #define SEED 42
 #define SHUFFLE_SEED 42
-#define NUM_CLASSES 6
-
-#define IN_CHANNELS 9
-#define LEN_INPUT 128
+#define NUM_CLASSES 2
+// train_x.npy [N_train, 1, 56000]
+#define IN_CHANNELS 1
+/*! 7seconds × 8000samples/sec = 56000 samples */
+#define LEN_INPUT 56000
 
 #define C1_OUT 16
 #define C1_K 7
@@ -56,6 +57,7 @@
 /* 3 x (Conv1d + ReLU + Pool) + Flatten + Linear + Softmax = 12 layers */
 #define MODEL_SIZE 12
 
+
 /* ------------------------------------------------------------------------- */
 /* Datasets and dataloader thunks (mirrors example/MnistExperiment.c).       */
 /* ------------------------------------------------------------------------- */
@@ -64,7 +66,10 @@ static dataset_t g_trainDataset;
 static dataset_t g_valDataset;
 static dataset_t g_testDataset;
 
-/* Per-sample shape after npyLoad strips the leading N dim is [9, 128] (rank-2)
+//    train_x.npy [N_train, 1, 56000]
+//    train_y.npy [N_train, 8]
+
+/* Per-sample shape after npyLoad strips the leading N dim is [1, 56000] (rank-3)
  * for items and rank-0 (single int32 value) for labels. The C model expects
  * rank-3 inputs [B=1, 9, 128] for Conv1d and rank-1 one-hot float labels [6]
  * for CrossEntropy. We rebuild both at load time. */
@@ -131,20 +136,20 @@ static tensorArray_t *buildOneHotLabels(tensorArray_t *intLabels) {
 }
 
 static void initDataSets(void) {
-    tensorArray_t *trainItems = npyLoad("examples/har_classifier/data/train_x.npy");
-    tensorArray_t *trainLabelsRaw = npyLoad("examples/har_classifier/data/train_y.npy");
-    reshapeItemsAddBatchDim(trainItems);
+    tensorArray_t *trainItems = npyLoad("examples/binary_classifier/data/train_x.npy");
+    tensorArray_t *trainLabelsRaw = npyLoad("examples/binary_classifier/data/train_y.npy");
+// reshapeItemsAddBatchDim(trainItems);
     g_trainDataset.items = trainItems;
     g_trainDataset.labels = buildOneHotLabels(trainLabelsRaw);
 
-    tensorArray_t *valItems = npyLoad("examples/har_classifier/data/val_x.npy");
-    tensorArray_t *valLabelsRaw = npyLoad("examples/har_classifier/data/val_y.npy");
+    tensorArray_t *valItems = npyLoad("examples/binary_classifier/data/val_x.npy");
+    tensorArray_t *valLabelsRaw = npyLoad("examples/binary_classifier/data/val_y.npy");
     reshapeItemsAddBatchDim(valItems);
     g_valDataset.items = valItems;
     g_valDataset.labels = buildOneHotLabels(valLabelsRaw);
 
-    tensorArray_t *testItems = npyLoad("examples/har_classifier/data/test_x.npy");
-    tensorArray_t *testLabelsRaw = npyLoad("examples/har_classifier/data/test_y.npy");
+    tensorArray_t *testItems = npyLoad("examples/binary_classifier/data/test_x.npy");
+    tensorArray_t *testLabelsRaw = npyLoad("examples/binary_classifier/data/test_y.npy");
     reshapeItemsAddBatchDim(testItems);
     g_testDataset.items = testItems;
     g_testDataset.labels = buildOneHotLabels(testLabelsRaw);
@@ -342,10 +347,10 @@ static int ensureDir(const char *p) {
 }
 
 int main(void) {
-    if (ensureDir("examples/har_classifier/logs") != 0) {
+    if (ensureDir("examples/binary_classifier/logs") != 0) {
         return 1;
     }
-    if (ensureDir("examples/har_classifier/outputs") != 0) {
+    if (ensureDir("examples/binary_classifier/outputs") != 0) {
         return 1;
     }
 
@@ -367,7 +372,7 @@ int main(void) {
     optimizer_t *sgd =
         sgdMCreateOptim(LEARNING_RATE, MOMENTUM, /*weightDecay*/ 0.0f, model, MODEL_SIZE, FLOAT32);
 
-    g_log_file = fopen("examples/har_classifier/logs/c.json", "w");
+    g_log_file = fopen("examples/binary_classifier/logs/c.json", "w");
     if (!g_log_file) {
         fprintf(stderr, "ERROR: cannot open log file for writing\n");
         return 1;
@@ -375,7 +380,7 @@ int main(void) {
     fprintf(g_log_file,
             "{\n"
             "  \"impl\": \"c\",\n"
-            "  \"example\": \"har_classifier\",\n"
+            "  \"example\": \"binary_classifier\",\n"
             "  \"config\": {\"epochs\": %d, \"batch\": %d, \"lr\": %.6f, "
             "\"momentum\": %.6f, \"seed\": %d, \"shuffle_seed\": %d},\n"
             "  \"epochs\": [\n",
@@ -435,7 +440,7 @@ int main(void) {
 
     size_t outShape[] = {numTest};
     int status = 0;
-    int rc = npyWriteInt32("examples/har_classifier/outputs/c_predictions.npy", predictions,
+    int rc = npyWriteInt32("examples/binary_classifier/outputs/c_predictions.npy", predictions,
                            outShape, 1);
     if (rc != 0) {
         fprintf(stderr, "ERROR: npyWriteInt32 failed (rc=%d)\n", rc);
