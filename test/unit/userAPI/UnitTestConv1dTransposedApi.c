@@ -166,6 +166,39 @@ void testConv1dTransposedLayerInitOwningFreesAllAllocationsWithoutLeak(void) {
     TEST_PASS();
 }
 
+void testConv1dTransposedLayerInitKeepsFloat32Grad(void) {
+    quantization_t *fwd = quantizationInitFloat();
+    quantization_t *bwd = quantizationInitSymInt32(HTE);
+    layerQuant_t lq = {
+        .forwardMath = fwd,
+        .backwardMath = bwd,
+        .weightStorage = fwd,
+        .biasStorage = fwd,
+    };
+
+    layer_t *layer = conv1dTransposedLayerInit(
+        &(conv1dTransposedInit_t){
+            .inChannels = 2,
+            .outChannels = 4,
+            .kernelSize = 3,
+            .bias = BIAS_TRUE,
+        },
+        &lq);
+
+    conv1dTransposedConfig_t *cfg = layer->config->conv1dTransposed;
+    int weightGradType = cfg->weights->grad->quantization->type;
+    int biasGradType = cfg->bias->grad->quantization->type;
+
+    freeConv1dTransposedLayer(layer);
+    freeQuantization(bwd);
+    freeQuantization(fwd);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(FLOAT32, weightGradType,
+                                  "Conv1dTransposed weight grad must stay FLOAT32");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(FLOAT32, biasGradType,
+                                  "Conv1dTransposed bias grad must stay FLOAT32");
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testConv1dTransposedLayerInitBorrowingBuildsLayerWithCorrectShape);
@@ -173,5 +206,6 @@ int main(void) {
     RUN_TEST(testConv1dTransposedLayerInitBorrowingOutputPaddingPropagatesToConfig);
     RUN_TEST(testConv1dTransposedLayerInitOwningDeepCopiesQuantizations);
     RUN_TEST(testConv1dTransposedLayerInitOwningFreesAllAllocationsWithoutLeak);
+    RUN_TEST(testConv1dTransposedLayerInitKeepsFloat32Grad);
     return UNITY_END();
 }

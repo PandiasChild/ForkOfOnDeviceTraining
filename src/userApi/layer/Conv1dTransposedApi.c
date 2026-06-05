@@ -44,7 +44,8 @@ static shape_t *buildOwnedShape(const size_t *srcDims, size_t numberOfDims) {
 
 static parameter_t *allocateConv1dTransposedWeights(size_t inChannels, size_t outChannels,
                                                     size_t groups, size_t kernelSize,
-                                                    quantization_t *storageQ) {
+                                                    quantization_t *storageQ,
+                                                    quantization_t *gradQ) {
     /* Conv1dTransposed weight shape: [inChannels, outChannels/groups, kernelSize].
      * Note SWAP relative to Conv1d. Per Conv1dTransposed.h:12. */
     if (outChannels % groups != 0) {
@@ -75,14 +76,15 @@ static parameter_t *allocateConv1dTransposedWeights(size_t inChannels, size_t ou
     };
     initDistribution(paramTensor, &dist);
 
-    tensor_t *gradTensor = gradInitFloat(paramTensor, NULL);
+    tensor_t *gradTensor = gradInit(paramTensor, gradQ, NULL);
     return parameterInit(paramTensor, gradTensor);
 }
 
-static parameter_t *allocateConv1dTransposedBias(size_t outChannels, quantization_t *storageQ) {
+static parameter_t *allocateConv1dTransposedBias(size_t outChannels, quantization_t *storageQ,
+                                                 quantization_t *gradQ) {
     shape_t *shape = buildOwnedShape((size_t[]){outChannels}, 1);
     tensor_t *paramTensor = initTensor(shape, getQLike(storageQ), NULL);
-    tensor_t *gradTensor = gradInitFloat(paramTensor, NULL);
+    tensor_t *gradTensor = gradInit(paramTensor, gradQ, NULL);
     return parameterInit(paramTensor, gradTensor);
 }
 
@@ -148,9 +150,12 @@ static layer_t *buildConv1dTransposedLayerSkeleton(conv1dTransposedInit_t *init,
     layer->config = layerCfg;
 
     cfg->kernel = buildConv1dTransposedKernel(init);
+    quantization_t *gradQ = quantizationInitFloat(); /* Conv1dTransposed backward is FLOAT32-only */
     cfg->weights = allocateConv1dTransposedWeights(init->inChannels, init->outChannels, groups,
-                                                   init->kernelSize, lq->weightStorage);
-    cfg->bias = hasBias ? allocateConv1dTransposedBias(init->outChannels, lq->biasStorage) : NULL;
+                                                   init->kernelSize, lq->weightStorage, gradQ);
+    cfg->bias =
+        hasBias ? allocateConv1dTransposedBias(init->outChannels, lq->biasStorage, gradQ) : NULL;
+    freeQuantization(gradQ);
     cfg->groups = groups;
     cfg->outputPadding = init->outputPadding;
     return layer;
