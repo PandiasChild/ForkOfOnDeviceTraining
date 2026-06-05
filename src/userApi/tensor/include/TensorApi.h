@@ -147,6 +147,18 @@ void tensorFillFromFloatBuffer(tensor_t *tensor, const float *source, size_t cou
  */
 void tensorFillFromBoolBuffer(tensor_t *tensor, const bool *source, size_t count);
 
+/*! Initializes a gradient tensor whose quantization is cloned from `gradQ`
+ *  (deep copy via getQLike, so the grad tensor owns its own quantization_t)
+ *  and whose shape is cloned from `param->shape`. This is the config-respecting
+ *  grad-init: a layer's grad takes the dtype its backwardMath config declares.
+ *
+ * \param param: Pointer to param tensor (supplies the shape to clone)
+ * \param gradQ: Quantization template to clone for the grad tensor
+ * \param sparsity: sparsity_t of tensor
+ *
+ * \returns Pointer to initialized gradient tensor
+ */
+tensor_t *gradInit(tensor_t *param, quantization_t *gradQ, sparsity_t *sparsity);
 /*! Initializes int32 gradient tensor to match given param tensor.
  *
  * \param param: Pointer to param tensor

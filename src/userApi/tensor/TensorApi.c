@@ -265,12 +265,22 @@ tensor_t *gradInitInt32(tensor_t *param, sparsity_t *sparsity) {
     return initTensor(getShapeLike(param->shape), quantizationInitInt32(), sparsity);
 }
 
+tensor_t *gradInit(tensor_t *param, quantization_t *gradQ, sparsity_t *sparsity) {
+    return initTensor(getShapeLike(param->shape), getQLike(gradQ), sparsity);
+}
+
 tensor_t *gradInitFloat(tensor_t *param, sparsity_t *sparsity) {
-    return initTensor(getShapeLike(param->shape), quantizationInitFloat(), sparsity);
+    quantization_t *floatQ = quantizationInitFloat();
+    tensor_t *grad = gradInit(param, floatQ, sparsity);
+    freeQuantization(floatQ);
+    return grad;
 }
 
 tensor_t *gradInitSymInt32(tensor_t *param, roundingMode_t roundingMode, sparsity_t *sparsity) {
-    return initTensor(getShapeLike(param->shape), quantizationInitSymInt32(roundingMode), sparsity);
+    quantization_t *symQ = quantizationInitSymInt32(roundingMode);
+    tensor_t *grad = gradInit(param, symQ, sparsity);
+    freeQuantization(symQ);
+    return grad;
 }
 
 tensor_t *gradInitAsym(tensor_t *param, uint8_t qBits, roundingMode_t roundingMode,
