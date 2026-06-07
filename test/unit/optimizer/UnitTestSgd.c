@@ -2,6 +2,7 @@
 #include <stdlib.h>
 
 #include "Layer.h"
+#include "LayerQuant.h"
 #include "Linear.h"
 #include "LinearApi.h"
 #include "OptimizerApi.h"
@@ -324,10 +325,59 @@ void testSGDZeroGrad() {
     TEST_ASSERT_EQUAL_FLOAT_ARRAY(bGradExpected, capturedBGrad, 2);
 }
 
+void testSgdZeroGradOnSymInt32GradZeroesMantissasAndResetsScale(void) {
+    quantization_t *fwd = quantizationInitFloat();
+    quantization_t *bwd = quantizationInitSymInt32(HTE);
+    layerQuant_t lq = {
+        .forwardMath = fwd, .backwardMath = bwd, .weightStorage = fwd, .biasStorage = fwd};
+    layer_t *layer =
+        linearLayerInit(&(linearInit_t){.inFeatures = 3, .outFeatures = 2, .bias = BIAS_TRUE}, &lq);
+
+    tensor_t *wGrad = layer->config->linear->weights->grad;
+    TEST_ASSERT_EQUAL_INT(SYM_INT32, wGrad->quantization->type); /* guard */
+
+    /* Pre-load non-zero mantissas and a non-1.0 scale to prove the reset. */
+    size_t nW = calcNumberOfElementsByTensor(wGrad);
+    for (size_t i = 0; i < nW; i++) {
+        ((int32_t *)wGrad->data)[i] = 123 + (int32_t)i;
+    }
+    ((symInt32QConfig_t *)wGrad->quantization->qConfig)->scale = 0.07f;
+
+    layer_t *model[] = {layer};
+    optimizer_t *optim = sgdMCreateOptim(0.1f, 0.9f, 0.0f, model, 1, SYM_INT32);
+
+    sgdZeroGrad(optim);
+
+    /* CAPTURE post-zero state. */
+    int allZero = 1;
+    for (size_t i = 0; i < nW; i++) {
+        if (((int32_t *)wGrad->data)[i] != 0) {
+            allZero = 0;
+        }
+    }
+    float scaleAfterZero = ((symInt32QConfig_t *)wGrad->quantization->qConfig)->scale;
+
+    /* Prove subsequent accumulation works: load a fresh int mantissa. */
+    ((int32_t *)wGrad->data)[0] = 5;
+    int accumWorks = (((int32_t *)wGrad->data)[0] == 5);
+
+    freeOptimSgdM(optim); /* frees the layer's parameters */
+    freeReservedMemory(layer->config->linear);
+    freeReservedMemory(layer->config);
+    freeReservedMemory(layer);
+    freeQuantization(bwd);
+    freeQuantization(fwd);
+
+    TEST_ASSERT_TRUE_MESSAGE(allZero, "sgdZeroGrad must zero SYM_INT32 grad mantissas");
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.0f, scaleAfterZero);
+    TEST_ASSERT_TRUE(accumWorks);
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(testSgdMCreateOptim);
     RUN_TEST(testSGDStep);
     RUN_TEST(testSGDZeroGrad);
+    RUN_TEST(testSgdZeroGradOnSymInt32GradZeroesMantissasAndResetsScale);
     return UNITY_END();
 }
