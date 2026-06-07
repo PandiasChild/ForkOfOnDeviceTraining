@@ -304,3 +304,37 @@ Runtime assertion of the `dimensions[0] >= 1` contract is deferred to the
 microbatch-B>1 umbrella (#152) — specifically #153. Today (B=1 only) the
 assertion would be effectively a no-op; the protective value materialises
 when B>1 becomes a real feature target.
+
+## Quantized gradient accumulation — known precision Open Problem
+
+As of the quantized-gradient prerequisite (`gradInit`, 2026-06-05) a trainable
+layer's parameter gradient can be stored in the dtype its `backwardMath`
+declares. For SYM_INT32 grads, the per-microbatch accumulation reuses the
+existing `addSymInt32TensorsInplace` ("strategy A", dynamic-rescale): it
+dequantizes both the running grad and the new microbatch grad to float, adds,
+and re-quantizes the running sum to a new absmax-derived scale **on every
+microbatch**.
+
+This is functionally correct end-to-end today, but **not** numerically ideal:
+
+- Quantization noise compounds with the number of microbatches M.
+- The running-sum absmax is pinned by the heaviest microbatch, coarsening the
+  LSB for the accumulated small-gradient mass.
+
+Preliminary characterization (internal simulation, M=100, N=64, σ=1e-3 with a
+10% ×50 heavy tail — *problem characterization only, not a basis for a chosen
+solution*):
+
+| Strategy | Final rel. error vs float64 | Float-free? |
+|---|---|---|
+| A — dynamic-rescale (current) | ~1.5e-4, **grows with M** (2.0e-5 @ step1 → 1.7e-4 @ step100) | No |
+| B — fixed-scale integer accum | ~9.9e-5 | Yes |
+| C — float accum, quantize-at-read | ~2.2e-5 | No |
+
+We deliberately ship strategy A now and do **not** adopt B/C or any homegrown
+numerical scheme. The resolution path is a literature review (stochastic-rounding
+accumulators, error-feedback / residual accumulation, higher-precision master
+grads, block/group scaling, …) → implement or improve a **published** technique.
+Tracked as a separate research task. This note is intentionally public (not
+buried in a private spec) so contributors hitting accuracy issues in quantized
+training know this is a known, expected limitation rather than a bug.
