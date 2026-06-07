@@ -1,3 +1,4 @@
+#include <math.h>
 #include <string.h>
 
 #include "DTypes.h"
@@ -6,8 +7,10 @@
 #include "LayerQuant.h"
 #include "Linear.h"
 #include "LinearApi.h"
+#include "Optimizer.h"
 #include "QuantizationApi.h"
 #include "Rounding.h"
+#include "SgdApi.h"
 #include "StorageApi.h"
 #include "Tensor.h"
 #include "TensorApi.h"
@@ -1199,6 +1202,167 @@ void testLinearLayerInitOwningFreesAllAllocationsWithoutLeak(void) {
     TEST_PASS();
 }
 
+/* Helper: build a 1x3 FLOAT32 input tensor with the given values (NULL => zeros). */
+static tensor_t *e2eMakeInput(const float *vals) {
+    size_t *d = reserveMemory(2 * sizeof(size_t));
+    d[0] = 1;
+    d[1] = 3;
+    size_t *o = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, o);
+    shape_t *s = reserveMemory(sizeof(shape_t));
+    setShape(s, d, 2, o);
+    tensor_t *t = initTensor(s, quantizationInitFloat(), NULL);
+    if (vals != NULL) {
+        tensorFillFromFloatBuffer(t, vals, 3);
+    }
+    return t;
+}
+/* Helper: build a 1x2 FLOAT32 loss tensor (NULL => zeros). */
+static tensor_t *e2eMake1x2(const float *vals) {
+    size_t *d = reserveMemory(2 * sizeof(size_t));
+    d[0] = 1;
+    d[1] = 2;
+    size_t *o = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, o);
+    shape_t *s = reserveMemory(sizeof(shape_t));
+    setShape(s, d, 2, o);
+    tensor_t *t = initTensor(s, quantizationInitFloat(), NULL);
+    if (vals != NULL) {
+        tensorFillFromFloatBuffer(t, vals, 2);
+    }
+    return t;
+}
+
+/* Helper: build a 1x3 SYM_INT32 propLoss buffer (the SYM_INT32 backward writes the
+ * propLoss result + scale in place, so its dtype must match propLossQ = SYM_INT32). */
+static tensor_t *e2eMakeSym1x3(void) {
+    size_t *d = reserveMemory(2 * sizeof(size_t));
+    d[0] = 1;
+    d[1] = 3;
+    size_t *o = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, o);
+    shape_t *s = reserveMemory(sizeof(shape_t));
+    setShape(s, d, 2, o);
+    return initTensor(s, quantizationInitSymInt32(HTE), NULL);
+}
+
+void testLinearSymInt32GradAccumulatesOverTwoMicrobatchesAndSteps(void) {
+    /* outFeatures=2, inFeatures=3. forward input [1,2,3], loss [0.5, -0.25].
+     * Two identical microbatches => accumulated weight grad ~= 2 * (loss^T @ input). */
+    const float inputVals[3] = {1.0f, 2.0f, 3.0f};
+    const float lossVals[2] = {0.5f, -0.25f};
+
+    /* ---- SYM_INT32-backward layer (under test) ---- */
+    quantization_t *fwd = quantizationInitFloat();
+    quantization_t *bwd = quantizationInitSymInt32(HTE);
+    layerQuant_t lqSym = {
+        .forwardMath = fwd, .backwardMath = bwd, .weightStorage = fwd, .biasStorage = fwd};
+    layer_t *symLayer = linearLayerInit(
+        &(linearInit_t){.inFeatures = 3, .outFeatures = 2, .bias = BIAS_TRUE}, &lqSym);
+
+    tensor_t *symWGrad = symLayer->config->linear->weights->grad;
+    TEST_ASSERT_EQUAL_INT(SYM_INT32, symWGrad->quantization->type); /* guard */
+
+    tensor_t *symIn1 = e2eMakeInput(inputVals);
+    tensor_t *symLoss1 = e2eMake1x2(lossVals);
+    tensor_t *symProp1 = e2eMakeSym1x3(); /* propLoss [1,3], SYM_INT32 (matches propLossQ) */
+    linearBackward(symLayer, symIn1, symLoss1, symProp1);
+
+    tensor_t *symIn2 = e2eMakeInput(inputVals);
+    tensor_t *symLoss2 = e2eMake1x2(lossVals);
+    tensor_t *symProp2 = e2eMakeSym1x3();
+    linearBackward(symLayer, symIn2, symLoss2, symProp2);
+
+    /* Capture accumulated SYM_INT32 weight grad as float (dequantized). */
+    size_t nW = calcNumberOfElementsByTensor(symWGrad);
+    float symGradFloat[6];
+    {
+        tensor_t gf;
+        quantization_t gfQ;
+        initFloat32Quantization(&gfQ);
+        uint8_t gfData[6 * sizeof(float)];
+        setTensorValuesForConversion(gfData, &gfQ, symWGrad, &gf);
+        convertTensor(symWGrad, &gf);
+        for (size_t i = 0; i < nW; i++) {
+            symGradFloat[i] = ((float *)gf.data)[i];
+        }
+    }
+
+    /* ---- Optimizer step on the SYM_INT32 layer ("updates the param without crashing"). ---- */
+    layer_t *symModel[] = {symLayer};
+    optimizer_t *symOptim = sgdMCreateOptim(0.1f, 0.0f, 0.0f, symModel, 1, SYM_INT32);
+    optimizerFunctions[symOptim->type].step(symOptim);
+    tensor_t *symWParam = symLayer->config->linear->weights->param;
+    int paramFinite = 1;
+    for (size_t i = 0; i < nW; i++) {
+        if (!isfinite(((float *)symWParam->data)[i])) {
+            paramFinite = 0;
+        }
+    }
+
+    /* ---- FLOAT32-backward layer (reference) ---- */
+    quantization_t *fwd2 = quantizationInitFloat();
+    quantization_t *bwd2 = quantizationInitFloat();
+    layerQuant_t lqF = {
+        .forwardMath = fwd2, .backwardMath = bwd2, .weightStorage = fwd2, .biasStorage = fwd2};
+    layer_t *fLayer = linearLayerInit(
+        &(linearInit_t){.inFeatures = 3, .outFeatures = 2, .bias = BIAS_TRUE}, &lqF);
+    tensor_t *fWGrad = fLayer->config->linear->weights->grad;
+
+    tensor_t *fIn1 = e2eMakeInput(inputVals);
+    tensor_t *fLoss1 = e2eMake1x2(lossVals);
+    tensor_t *fProp1 = e2eMakeInput(NULL);
+    linearBackward(fLayer, fIn1, fLoss1, fProp1);
+    tensor_t *fIn2 = e2eMakeInput(inputVals);
+    tensor_t *fLoss2 = e2eMake1x2(lossVals);
+    tensor_t *fProp2 = e2eMakeInput(NULL);
+    linearBackward(fLayer, fIn2, fLoss2, fProp2);
+
+    float refGradFloat[6];
+    for (size_t i = 0; i < nW; i++) {
+        refGradFloat[i] = ((float *)fWGrad->data)[i];
+    }
+
+    /* ---- Compare accumulated grads within SYM_INT32 tolerance ---- */
+    bool gradsClose = true;
+    for (size_t i = 0; i < nW; i++) {
+        if (fabsf(symGradFloat[i] - refGradFloat[i]) > 5e-3f) {
+            gradsClose = false;
+        }
+    }
+
+    freeLinearLayer(fLayer);
+    freeTensor(fProp2);
+    freeTensor(fLoss2);
+    freeTensor(fIn2);
+    freeTensor(fProp1);
+    freeTensor(fLoss1);
+    freeTensor(fIn1);
+    freeQuantization(bwd2);
+    freeQuantization(fwd2);
+
+    /* freeOptimSgdM frees the SYM layer's parameters; do NOT also freeLinearLayer(symLayer)
+     * (double-free). Free the layer/config shell manually (borrowing factory: caller owns
+     * the quantizations, freed separately below). */
+    freeOptimSgdM(symOptim);
+    freeReservedMemory(symLayer->config->linear);
+    freeReservedMemory(symLayer->config);
+    freeReservedMemory(symLayer);
+    freeTensor(symProp2);
+    freeTensor(symLoss2);
+    freeTensor(symIn2);
+    freeTensor(symProp1);
+    freeTensor(symLoss1);
+    freeTensor(symIn1);
+    freeQuantization(bwd);
+    freeQuantization(fwd);
+
+    TEST_ASSERT_TRUE_MESSAGE(gradsClose,
+                             "SYM_INT32 accumulated weight grad diverged from FLOAT32 reference");
+    TEST_ASSERT_TRUE_MESSAGE(paramFinite,
+                             "SYM_INT32 optimizer step left a non-finite weight param");
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testLinearForwardFloat);
@@ -1220,6 +1384,7 @@ int main(void) {
     RUN_TEST(testLinearLayerInitBorrowingBiasDefaultResolvesToTrue);
     RUN_TEST(testLinearLayerInitBorrowingBiasFalseLeavesBiasNull);
     RUN_TEST(testLinearLayerInitSymInt32BackwardMathYieldsSymInt32Grad);
+    RUN_TEST(testLinearSymInt32GradAccumulatesOverTwoMicrobatchesAndSteps);
 
     RUN_TEST(testLinearLayerInitOwningDeepCopiesQuantizations);
     RUN_TEST(testLinearLayerInitOwningFreesAllAllocationsWithoutLeak);

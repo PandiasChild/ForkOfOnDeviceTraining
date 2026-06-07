@@ -75,6 +75,10 @@ add_elastic_ai_unit_test(
         Quantization
         Rounding
         StorageApi
+        Add
+        SgdApi
+        Sgd
+        Optimizer
 )
 
 add_elastic_ai_unit_test(
