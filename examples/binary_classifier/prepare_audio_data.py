@@ -24,6 +24,7 @@ def read_wav(path):
         audio /= 32768.0
     return sr, audio
 
+# TODO: does work for yes no but not for speech commands. speech commands have no seperate folder
 def _download_if_missing(archive_path: Path, extracted_dir: Path, zip_url: str) -> None:
     RAW_DIR.mkdir(parents=True, exist_ok=True)
 
