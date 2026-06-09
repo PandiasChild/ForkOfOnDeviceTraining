@@ -50,6 +50,6 @@ void requantSymInt32Tensor(tensor_t *inputTensor, tensor_t *outputTensor);
 void requantSymInt32TensorToScale(tensor_t *inputTensor, tensor_t *outputTensor);
 char *quantTypeToString(qtype_t t);
 
-extern conversionFunction_t conversionMatrix[6][6];
+extern conversionFunction_t conversionMatrix[7][7];
 
 #endif // TENSOR_CONVERSION_H
