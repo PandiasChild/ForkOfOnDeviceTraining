@@ -66,6 +66,16 @@ target_link_libraries(Dropout PRIVATE
         Rounding
 )
 
+add_library(LayerNorm LayerNorm.c)
+target_include_directories(LayerNorm PUBLIC include)
+target_link_libraries(LayerNorm PRIVATE
+        DTypes
+        Tensor
+        Arithmetic
+        Layer
+        Common
+)
+
 add_library(Layer Layer.c)
 target_include_directories(Layer PUBLIC include)
 target_link_libraries(Layer PRIVATE
@@ -82,6 +92,7 @@ target_link_libraries(Layer PRIVATE
         Softmax
         Flatten
         Dropout
+        LayerNorm
 )
 
 add_library(Linear Linear.c)
@@ -148,6 +159,7 @@ target_link_libraries(CommonLayerLibs INTERFACE
         Softmax
         Flatten
         Dropout
+        LayerNorm
         Rounding
         Tensor
         Sgd

@@ -196,3 +196,17 @@ add_elastic_ai_unit_test(
         StorageApi
         DropoutApi
 )
+
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
+        LayerNorm
+        MORE_LIBS
+        CommonLayerLibs
+        TensorApi
+        QuantizationApi
+        LayerQuant
+        Quantization
+        Rounding
+        Arithmetic
+        StorageApi
+)
