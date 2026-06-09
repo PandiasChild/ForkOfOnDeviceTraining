@@ -61,3 +61,8 @@ void initAsymQuantization(asymQConfig_t *asymQConfig, quantization_t *quantizati
     quantization->type = ASYM;
     quantization->qConfig = asymQConfig;
 }
+
+void initSymQDeltaQuantization(symQDeltaConfig_t *symQDeltaConfig, quantization_t *quantization) {
+    quantization->type = DELTA;
+    quantization->qConfig = symQDeltaConfig;
+}

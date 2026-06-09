@@ -9,6 +9,12 @@
  */
 typedef enum roundingMode { HALF_AWAY, SR_HALF_AWAY } roundingMode_t;
 
+/**
+ * Rounds a floating-point value to the nearest integer using half-to-even rule.
+ * When the fractional part is exactly 0.5, the result is rounded to the nearest even integer.
+ *
+ * @return The rounded integer value.
+ */
 int32_t roundByMode(float input, roundingMode_t roundingMode);
 
 /*! @brief Rescale a SYM_INT32 parameter mantissa from its own scale into an
@@ -26,6 +32,30 @@ int32_t roundByMode(float input, roundingMode_t roundingMode);
 int32_t rescaleIntoAccumulatorScale(int32_t paramQ, float paramScale, float accumulatorScale,
                                     roundingMode_t roundingMode);
 
+/**
+ * Saturates a floating-point value into the range [min, max].
+ *
+ * Unlike naive clamping, this operation performs saturation, meaning that
+ * values below min are set to min and values above max are set to max,
+ * without any truncation artifacts beyond range limiting.
+ *
+ * @param input The value to saturate.
+ * @param min The lower saturation bound.
+ * @param max The upper saturation bound.
+ * @return The saturated value.
+ */
 float clamp(float input, float min, float max);
+
+/**
+ * Performs a saturating subtraction operation.
+ * The result is clamped to the range [min, max] if overflow/underflow would occur.
+ *
+ * @param minuend Minuend value.
+ * @param subtrahend Subtrahend value.
+ * @param min Lower saturation bound.
+ * @param max Upper saturation bound.
+ * @return Saturated difference.
+ */
+int32_t saturatingSubstraction(int32_t minuend, int32_t subtrahend, int32_t min, size_t int32_t);
 
 #endif // ROUNDING_H

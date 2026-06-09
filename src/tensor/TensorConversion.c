@@ -387,6 +387,90 @@ void convertAsymTensorToSymTensor(tensor_t *inputTensor, tensor_t *outputTensor)
     packFloatBufferAsSym(deq, n, outQC, outputTensor->data, "convertAsymTensorToSymTensor");
 }
 
+
+
+void convertSymInt32TensorToSymQDeltaTensor(tensor_t *inputTensor, tensor_t *outputTensor) {
+    size_t numberOfElements = calcNumberOfElementsByTensor(inputTensor);
+    size_t sizeOfUInt8TDataArray =  numberOfElements * sizeof(int32_t);
+    size_t sizeOfInt32DataArray = sizeOfUInt8TDataArray/sizeof(int32_t);
+
+    int32_t dataInInt32[sizeOfInt32DataArray];
+    readBytesAsInt32Array(sizeOfInt32DataArray, inputTensor->data, dataInInt32);
+    symQDeltaConfig_t *symQDeltaConfig = outputTensor->quantization->qConfig;
+    size_t y = symQDeltaConfig->deltabits;
+    int32_t dMax = pow(2, y) - 1;
+    int32_t dMin = - pow(2, y) ;
+    int32_t deltasInInt32[sizeOfInt32DataArray];
+    deltasInInt32[0] = readBytesAsInt32(&inputTensor->data[0]);
+    for (int i= 1; i < sizeOfInt32DataArray; i++){
+        deltasInInt32[i] = saturatingSubstraction(dataInInt32[i-1] ,dataInInt32[i], dMin, dMax);
+    }
+    symInt32QConfig_t *symInt32QConfig = inputTensor->quantization->qConfig;
+    uint8_t deltasInByteArray[sizeOfUInt8TDataArray];
+    writeInt32ArrayToByteArray(sizeOfInt32DataArray, deltasInInt32, deltasInByteArray);
+    uint8_t compressedDeltas[sizeof(int32_t) + (sizeOfInt32DataArray-1)*symQDeltaConfig->deltabits];
+    for (int i = 0; i < sizeof(int32_t); i++){
+        compressedDeltas[i] = deltasInByteArray[i];
+    }
+    byteConversion(&deltasInByteArray[sizeof(int32_t)-1], 32, &compressedDeltas[sizeof(int32_t)-1], symQDeltaConfig->deltabits, sizeOfInt32DataArray-1);
+    memcpy(compressedDeltas, outputTensor->data, sizeof(compressedDeltas));
+    symQDeltaConfig->scale = symInt32QConfig->scale;
+    symQDeltaConfig->roundingMode = symInt32QConfig->roundingMode;
+    symQDeltaConfig->qBits = symInt32QConfig->qMaxBits;
+}
+
+void convertSymQDeltaTensorToSymInt32Tensor(
+    tensor_t *inputTensor,
+    tensor_t *outputTensor)
+{
+    size_t numberOfElements = calcNumberOfElementsByTensor(outputTensor);
+    symQDeltaConfig_t *symQDeltaConfig = inputTensor->quantization->qConfig;
+    size_t sizeOfUInt8TDataArray =  sizeof(int32_t) + ((numberOfElements-1) * symQDeltaConfig->deltabits);
+    size_t sizeOfInt32DataArray = sizeOfUInt8TDataArray/sizeof(int32_t);
+
+    uint8_t deltasInByteArray[sizeOfUInt8TDataArray];
+
+    for (int i = 0; i < sizeof(int32_t); i++) {
+        deltasInByteArray[i] = inputTensor->data[i];
+    }
+
+    byteConversion(
+        &inputTensor->data[sizeof(int32_t) - 1],
+        symQDeltaConfig->deltabits,
+        &deltasInByteArray[sizeof(int32_t) - 1],
+        32,
+        sizeOfInt32DataArray - 1);
+
+    int32_t deltasInInt32[sizeOfInt32DataArray];
+    readBytesAsInt32Array(
+        sizeOfInt32DataArray,
+        deltasInByteArray,
+        deltasInInt32);
+
+    int32_t dataInInt32[sizeOfInt32DataArray];
+
+    dataInInt32[0] = deltasInInt32[0];
+
+    for (int i = 1; i < sizeOfInt32DataArray; i++) {
+        dataInInt32[i] =
+            dataInInt32[i - 1] - deltasInInt32[i];
+    }
+
+
+    writeInt32ArrayToByteArray(
+        sizeOfInt32DataArray,
+        dataInInt32,
+        outputTensor->data);
+
+    symInt32QConfig_t *symInt32QConfig =
+        outputTensor->quantization->qConfig;
+
+    symInt32QConfig->scale = symQDeltaConfig->scale;
+    symInt32QConfig->roundingMode = symQDeltaConfig->roundingMode;
+    symInt32QConfig->qMaxBits = symQDeltaConfig->qBits;
+}
+
+
 char *quantTypeToString(qtype_t t) {
     switch (t) {
     case INT32:
@@ -399,6 +483,8 @@ char *quantTypeToString(qtype_t t) {
         return "SYM";
     case ASYM:
         return "ASYM";
+    case DELTA:
+        return "DELTA";
     case BOOL:
         return "BOOL";
     default:
@@ -477,25 +563,28 @@ void repackSymInt32ToSymNoRescale(tensor_t *inputTensor, tensor_t *outputTensor)
 
 _Static_assert(BOOL + 1 == 6, "extend conversionMatrix when adding qtype_t entries");
 
-conversionFunction_t conversionMatrix[6][6] = {
+conversionFunction_t conversionMatrix[7][7]  = {
     [INT32] = {[INT32] = NULL,
                [FLOAT32] = convertInt32TensorToFloatTensor,
                [SYM_INT32] = convertInt32TensorToSymInt32Tensor,
-               [SYM] = convertInt32TensorToSymTensor,
+               [SYM] = unsupportedConversionTypes,
                [ASYM] = convertInt32TensorToAsymTensor,
-               [BOOL] = unsupportedConversionTypes},
+               [BOOL] = unsupportedConversionTypes,
+               [DELTA]= unsupportedConversionTypes},
     [FLOAT32] = {[INT32] = convertFloatTensorToInt32Tensor,
                  [FLOAT32] = NULL,
                  [SYM_INT32] = convertFloatTensorToSymInt32Tensor,
-                 [SYM] = convertFloatTensorToSymTensor,
+                 [SYM] = unsupportedConversionTypes,
                  [ASYM] = convertFloatTensorToAsymTensor,
-                 [BOOL] = unsupportedConversionTypes},
+                 [BOOL] = unsupportedConversionTypes,
+                 [DELTA]= unsupportedConversionTypes},
     [SYM_INT32] = {[INT32] = extractInt32TensorFromSymInt32Tensor,
                    [FLOAT32] = convertSymInt32TensorToFloat32Tensor,
                    [SYM_INT32] = requantSymInt32Tensor,
-                   [SYM] = convertSymInt32TensorToSymTensor,
+                   [SYM] = unsupportedConversionTypes,
                    [ASYM] = convertSymInt32TensorToAsymTensor,
-                   [BOOL] = unsupportedConversionTypes},
+                   [BOOL] = unsupportedConversionTypes,
+                   [DELTA] = convertSymInt32TensorToSymQDeltaTensor},
     [SYM] = {[INT32] = convertSymTensorToInt32Tensor,
              [FLOAT32] = convertSymTensorToFloat32Tensor,
              [SYM_INT32] = convertSymTensorToSymInt32Tensor,
@@ -513,7 +602,15 @@ conversionFunction_t conversionMatrix[6][6] = {
               [SYM_INT32] = unsupportedConversionTypes,
               [SYM] = unsupportedConversionTypes,
               [ASYM] = unsupportedConversionTypes,
-              [BOOL] = NULL}};
+              [BOOL] = NULL,
+              [DELTA]= unsupportedConversionTypes},
+    [DELTA] = {[INT32] = unsupportedConversionTypes,
+               [FLOAT32] = unsupportedConversionTypes,
+               [SYM_INT32] = convertSymQDeltaTensorToSymInt32Tensor,
+               [SYM] = unsupportedConversionTypes,
+               [ASYM] = unsupportedConversionTypes,
+               [BOOL] = unsupportedConversionTypes,
+               [DELTA]= NULL}};
 
 static void convertTensorsWithSameType(tensor_t *inputTensor, tensor_t *outputTensor,
                                        qtype_t qType) {

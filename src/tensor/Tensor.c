@@ -338,7 +338,7 @@ void printTensor(tensor_t *t) {
         }
         break;
     case SYM_INT32:
-        symInt32QConfig_t *symQC = q->qConfig;
+        symInt32QConfig_t *symQC = (symInt32QConfig_t *)q->qConfig;
         printf("SYM_INT32 \n");
         printf("scale=%e\n", symQC->scale);
         printf("Data \n");

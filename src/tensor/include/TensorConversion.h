@@ -55,6 +55,6 @@ char *quantTypeToString(qtype_t t);
  *  cell (the rescale variant owns [SYM_INT32][SYM]); call directly. */
 void repackSymInt32ToSymNoRescale(tensor_t *inputTensor, tensor_t *outputTensor);
 
-extern conversionFunction_t conversionMatrix[6][6];
+extern conversionFunction_t conversionMatrix[7][7];
 
 #endif // TENSOR_CONVERSION_H
