@@ -1,0 +1,39 @@
+#ifndef ODT_LAYERNORM_API_H
+#define ODT_LAYERNORM_API_H
+
+#include <stddef.h>
+
+#include "Layer.h"
+#include "LayerNorm.h"
+#include "LayerQuant.h"
+
+typedef struct layerNormInit {
+    size_t *normalizedShape; /* REQUIRED — last-D logical dims */
+    size_t numNormDims;      /* REQUIRED — D, must be > 0 */
+    float eps;               /* 0 → default 1e-5 */
+    /* affine is ALWAYS ON for v1 (gamma + beta present). */
+} layerNormInit_t;
+
+/*! Borrowing factory — stores lq->forwardMath / lq->backwardMath verbatim
+ *  into the config (ownsQuantizations=false; caller retains ownership of the
+ *  math quantizations). Allocates gamma (init 1) and beta (init 0) parameter_t
+ *  (storage dtype = lq->weightStorage / lq->biasStorage) and their grads via
+ *  gradInit(param, lq->backwardMath, NULL). Copies normalizedShape into
+ *  factory-owned memory. */
+layer_t *layerNormLayerInit(layerNormInit_t *init, layerQuant_t *lq);
+
+/*! Owning factory — deep-copies lq->forwardMath / lq->backwardMath into the
+ *  config (ownsQuantizations=true; the caller may drop its forwardMath/backwardMath
+ *  pointers immediately). Identical gamma/beta allocation + normalizedShape copy
+ *  as the Borrowing variant. Mirrors linearLayerInitOwning. */
+layer_t *layerNormLayerInitOwning(layerNormInit_t *init, layerQuant_t *lq);
+
+/*! Frees the parameter_t (gamma/beta + grads + shapes), the copied
+ *  normalizedShape, and the layer/config wrappers. ALWAYS frees gamma/beta.
+ *  If ownsQuantizations is true (Owning factory), also frees forwardQ and
+ *  backwardQ (qConfig + struct, with a backwardQ != forwardQ dedup guard);
+ *  if false (Borrowing factory), leaves the caller-owned math quantizations
+ *  untouched. */
+void freeLayerNormLayer(layer_t *layer);
+
+#endif // ODT_LAYERNORM_API_H

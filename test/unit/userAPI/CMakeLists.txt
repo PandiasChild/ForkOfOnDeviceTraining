@@ -21,6 +21,7 @@ add_elastic_ai_unit_test(
         LinearApi
         Conv1dApi
         Conv1dTransposedApi
+        LayerNormApi
         QuantizationApi
         LayerQuant
         LayerCommon
@@ -29,6 +30,7 @@ add_elastic_ai_unit_test(
         Linear
         Conv1d
         Conv1dTransposed
+        LayerNorm
         Kernel
         Tensor
         TensorApi
@@ -41,6 +43,7 @@ add_elastic_ai_unit_test(
         MORE_LIBS
         LinearApi
         ReluApi
+        LayerNormApi
         LayerQuant
         QuantizationApi
         LayerWeightsApi
@@ -49,7 +52,9 @@ add_elastic_ai_unit_test(
         Rounding
         Linear
         Relu
+        LayerNorm
         Tensor
+        TensorApi
 )
 
 

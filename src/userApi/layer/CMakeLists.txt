@@ -126,3 +126,18 @@ target_link_libraries(DropoutApi PRIVATE
         Rounding
         StorageApi
 )
+
+add_library(LayerNormApi LayerNormApi.c)
+target_include_directories(LayerNormApi PUBLIC include)
+target_link_libraries(LayerNormApi PRIVATE
+        Tensor
+        TensorApi
+        QuantizationApi
+        Rounding
+        Layer
+        LayerNorm
+        LayerQuant
+        Distributions
+        Common
+        StorageApi
+)

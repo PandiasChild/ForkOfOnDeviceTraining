@@ -204,6 +204,7 @@ add_elastic_ai_unit_test(
         CommonLayerLibs
         TensorApi
         QuantizationApi
+        LayerNormApi
         LayerQuant
         Quantization
         Rounding

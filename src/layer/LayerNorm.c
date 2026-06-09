@@ -22,6 +22,7 @@ void initLayerNormConfig(layerNormConfig_t *cfg, parameter_t *gamma, parameter_t
     cfg->eps = eps;
     cfg->forwardQ = forwardQ;
     cfg->backwardQ = backwardQ;
+    cfg->ownsQuantizations = false;
 }
 
 /* Compute G (groups) and N (per-group element count) from a logical shape:
@@ -30,6 +31,10 @@ void initLayerNormConfig(layerNormConfig_t *cfg, parameter_t *gamma, parameter_t
  * Logical dim sizes honor orderOfDimensions via getDimensionsByIndex. */
 static void layerNormGroupSizes(tensor_t *t, size_t numNormDims, size_t *outG, size_t *outN) {
     size_t rank = t->shape->numberOfDimensions;
+    if (numNormDims > rank) {
+        PRINT_ERROR("LayerNorm: numNormDims (%zu) exceeds input rank (%zu)", numNormDims, rank);
+        exit(1);
+    }
     size_t total = calcNumberOfElementsByTensor(t);
     size_t n = 1;
     for (size_t d = rank - numNormDims; d < rank; d++) {

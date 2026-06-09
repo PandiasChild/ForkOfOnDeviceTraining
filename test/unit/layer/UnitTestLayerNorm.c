@@ -7,6 +7,7 @@
 #include "Arithmetic.h"
 #include "Layer.h"
 #include "LayerNorm.h"
+#include "LayerNormApi.h"
 #include "Quantization.h"
 #include "QuantizationApi.h"
 #include "StorageApi.h"
@@ -475,6 +476,166 @@ void testBackwardFloatDivergentLayouts(void) {
     }
 }
 
+void testFactoryBuildsGammaOnesBetaZerosAndForwards(void) {
+    size_t normShape[] = {4};
+    layerNormInit_t init = {.normalizedShape = normShape, .numNormDims = 1, .eps = 0.0f};
+
+    quantization_t *fwdMath = quantizationInitFloat();
+    quantization_t *bwdMath = quantizationInitFloat();
+    quantization_t *wStore = quantizationInitFloat();
+    quantization_t *bStore = quantizationInitFloat();
+    layerQuant_t lq = {.forwardMath = fwdMath,
+                       .backwardMath = bwdMath,
+                       .weightStorage = wStore,
+                       .biasStorage = bStore};
+
+    layer_t *layer = layerNormLayerInit(&init, &lq);
+
+    bool typeOk = (layer->type == LAYERNORM);
+    layerNormConfig_t *cfg = layer->config->layerNorm;
+    /* eps==0 → factory substitutes default 1e-5 */
+    float capturedEps = cfg->eps;
+    /* gamma all ones, beta all zeros */
+    float g0 = ((float *)cfg->gamma->param->data)[0];
+    float g3 = ((float *)cfg->gamma->param->data)[3];
+    float b0 = ((float *)cfg->beta->param->data)[0];
+    bool gammaGradFloat = (cfg->gamma->grad->quantization->type == FLOAT32);
+    bool betaGradFloat = (cfg->beta->grad->quantization->type == FLOAT32);
+    bool fwdMapped = (cfg->forwardQ == fwdMath);
+    bool bwdMapped = (cfg->backwardQ == bwdMath);
+
+    /* Forward: x=[1,-1,1,-1], gamma=1, beta=0 -> n ~ [+1,-1,+1,-1] (eps=1e-5). */
+    size_t dims[] = {4};
+    tensor_t *in = buildFloatTensorND(1, dims, (float[]){1.f, -1.f, 1.f, -1.f});
+    tensor_t *out = buildFloatTensorND(1, dims, NULL);
+    layerFunctions[LAYERNORM].forward(layer, in, out);
+    float y0 = ((float *)out->data)[0];
+    float y1 = ((float *)out->data)[1];
+
+    freeTensor(out);
+    freeTensor(in);
+    freeLayerNormLayer(layer);
+    freeQuantization(bStore);
+    freeQuantization(wStore);
+    freeQuantization(bwdMath);
+    freeQuantization(fwdMath);
+
+    TEST_ASSERT_TRUE(typeOk);
+    TEST_ASSERT_FLOAT_WITHIN(1e-9f, 1e-5f, capturedEps);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.f, g0);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.f, g3);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.f, b0);
+    TEST_ASSERT_TRUE(gammaGradFloat);
+    TEST_ASSERT_TRUE(betaGradFloat);
+    TEST_ASSERT_TRUE(fwdMapped);
+    TEST_ASSERT_TRUE(bwdMapped);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.999995f, y0);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, -0.999995f, y1);
+}
+
+void testFactoryOwningDeepCopiesQuantizations(void) {
+    size_t normShape[] = {3};
+    layerNormInit_t init = {.normalizedShape = normShape, .numNormDims = 1, .eps = 1e-5f};
+
+    quantization_t *fwdMath = quantizationInitFloat();
+    quantization_t *bwdMath = quantizationInitFloat();
+    quantization_t *wStore = quantizationInitFloat();
+    quantization_t *bStore = quantizationInitFloat();
+    layerQuant_t lq = {.forwardMath = fwdMath,
+                       .backwardMath = bwdMath,
+                       .weightStorage = wStore,
+                       .biasStorage = bStore};
+
+    layer_t *layer = layerNormLayerInitOwning(&init, &lq);
+    layerNormConfig_t *cfg = layer->config->layerNorm;
+
+    /* Owning: forwardQ/backwardQ are fresh allocations, NOT the caller's. */
+    bool fwdIsCopy = (cfg->forwardQ != fwdMath);
+    bool bwdIsCopy = (cfg->backwardQ != bwdMath);
+    bool fwdTypeOk = (cfg->forwardQ->type == fwdMath->type);
+    bool owns = cfg->ownsQuantizations;
+
+    /* Caller drops its math quant configs IMMEDIATELY — the layer holds copies.
+     * Storage quant is cloned into the param tensors via getQLike, so freeing the
+     * caller's wStore/bStore here is also safe. */
+    freeQuantization(bStore);
+    freeQuantization(wStore);
+    freeQuantization(bwdMath);
+    freeQuantization(fwdMath);
+
+    /* Now tear down the layer — frees gamma/beta + the OWNED forwardQ/backwardQ
+     * copies. No double-free (the caller's originals are already gone and were
+     * never aliased). */
+    freeLayerNormLayer(layer);
+
+    TEST_ASSERT_TRUE(fwdIsCopy);
+    TEST_ASSERT_TRUE(bwdIsCopy);
+    TEST_ASSERT_TRUE(fwdTypeOk);
+    TEST_ASSERT_TRUE(owns);
+}
+
+void testFactoryBorrowingDoesNotFreeCallerQuantizations(void) {
+    size_t normShape[] = {3};
+    layerNormInit_t init = {.normalizedShape = normShape, .numNormDims = 1, .eps = 1e-5f};
+
+    quantization_t *fwdMath = quantizationInitFloat();
+    quantization_t *bwdMath = quantizationInitFloat();
+    quantization_t *wStore = quantizationInitFloat();
+    quantization_t *bStore = quantizationInitFloat();
+    layerQuant_t lq = {.forwardMath = fwdMath,
+                       .backwardMath = bwdMath,
+                       .weightStorage = wStore,
+                       .biasStorage = bStore};
+
+    layer_t *layer = layerNormLayerInit(&init, &lq);
+    layerNormConfig_t *cfg = layer->config->layerNorm;
+
+    /* Borrowing: verbatim pointers, no ownership. */
+    bool fwdVerbatim = (cfg->forwardQ == fwdMath);
+    bool bwdVerbatim = (cfg->backwardQ == bwdMath);
+    bool owns = cfg->ownsQuantizations;
+
+    /* Free the layer FIRST — it must NOT touch the borrowed math quantizations. */
+    freeLayerNormLayer(layer);
+
+    /* Caller frees its own quant configs AFTER. If freeLayerNormLayer had freed
+     * forwardQ/backwardQ, these would be double-frees (ASan/valgrind catch them). */
+    freeQuantization(bStore);
+    freeQuantization(wStore);
+    freeQuantization(bwdMath);
+    freeQuantization(fwdMath);
+
+    TEST_ASSERT_TRUE(fwdVerbatim);
+    TEST_ASSERT_TRUE(bwdVerbatim);
+    TEST_ASSERT_FALSE(owns);
+}
+
+void testFactoryRank2NormShapeAndExplicitEps(void) {
+    size_t normShape[] = {2, 3};
+    layerNormInit_t init = {.normalizedShape = normShape, .numNormDims = 2, .eps = 0.1f};
+
+    quantization_t *q = quantizationInitFloat();
+    layerQuant_t lq = {.forwardMath = q, .backwardMath = q, .weightStorage = q, .biasStorage = q};
+
+    layer_t *layer = layerNormLayerInit(&init, &lq);
+    layerNormConfig_t *cfg = layer->config->layerNorm;
+
+    size_t numNormDims = cfg->numNormDims;
+    float capturedEps = cfg->eps;
+    size_t ns0 = cfg->normalizedShape[0];
+    size_t ns1 = cfg->normalizedShape[1];
+    size_t gammaCount = calcNumberOfElementsByTensor(cfg->gamma->param);
+
+    freeLayerNormLayer(layer);
+    freeQuantization(q);
+
+    TEST_ASSERT_EQUAL_UINT(2, numNormDims);
+    TEST_ASSERT_FLOAT_WITHIN(1e-9f, 0.1f, capturedEps);
+    TEST_ASSERT_EQUAL_UINT(2, ns0);
+    TEST_ASSERT_EQUAL_UINT(3, ns1);
+    TEST_ASSERT_EQUAL_UINT(6, gammaCount);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testConfigStructIsPopulated);
@@ -486,5 +647,9 @@ int main(void) {
     RUN_TEST(testBackwardFloatSingleGroup);
     RUN_TEST(testBackwardFloatMultiGroupAccumulatesGradients);
     RUN_TEST(testBackwardFloatDivergentLayouts);
+    RUN_TEST(testFactoryBuildsGammaOnesBetaZerosAndForwards);
+    RUN_TEST(testFactoryOwningDeepCopiesQuantizations);
+    RUN_TEST(testFactoryBorrowingDoesNotFreeCallerQuantizations);
+    RUN_TEST(testFactoryRank2NormShapeAndExplicitEps);
     return UNITY_END();
 }

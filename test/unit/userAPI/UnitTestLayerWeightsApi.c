@@ -5,6 +5,8 @@
 #include "Conv1dTransposed.h"
 #include "Conv1dTransposedApi.h"
 #include "LayerCommon.h"
+#include "LayerNorm.h"
+#include "LayerNormApi.h"
 #include "LayerQuant.h"
 #include "LayerWeightsApi.h"
 #include "Linear.h"
@@ -165,6 +167,30 @@ void testLayerLoadWeightsConv1dTransposedOverwritesWeightAndBiasTensors(void) {
     freeQuantization(q);
 }
 
+void testLayerLoadWeightsLayerNormOverwritesGammaAndBeta(void) {
+    quantization_t *q = quantizationInitFloat();
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, q);
+
+    size_t normShape[] = {3};
+    layer_t *layer = layerNormLayerInit(
+        &(layerNormInit_t){.normalizedShape = normShape, .numNormDims = 1, .eps = 1e-5f}, &lq);
+
+    float gammaData[3] = {2.f, 3.f, 4.f};
+    float betaData[3] = {-1.f, -2.f, -3.f};
+    layerLoadWeights(layer, gammaData, betaData);
+
+    layerNormConfig_t *cfg = layer->config->layerNorm;
+    float *loadedGamma = (float *)cfg->gamma->param->data;
+    float *loadedBeta = (float *)cfg->beta->param->data;
+
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(gammaData, loadedGamma, 3);
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(betaData, loadedBeta, 3);
+
+    freeLayerNormLayer(layer);
+    freeQuantization(q);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testLayerLoadWeightsLinearOverwritesWeightAndBiasTensors);
@@ -172,5 +198,6 @@ int main(void) {
     RUN_TEST(testLayerLoadWeightsConv1dOverwritesWeightAndBiasTensors);
     RUN_TEST(testLayerLoadWeightsConv1dNoBiasAcceptsNullBiasData);
     RUN_TEST(testLayerLoadWeightsConv1dTransposedOverwritesWeightAndBiasTensors);
+    RUN_TEST(testLayerLoadWeightsLayerNormOverwritesGammaAndBeta);
     return UNITY_END();
 }

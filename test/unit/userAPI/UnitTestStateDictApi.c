@@ -1,12 +1,15 @@
 #define SOURCE_FILE "UNIT_TEST_STATE_DICT_API"
 
 #include "LayerCommon.h"
+#include "LayerNorm.h"
+#include "LayerNormApi.h"
 #include "LayerQuant.h"
 #include "Linear.h"
 #include "LinearApi.h"
 #include "QuantizationApi.h"
 #include "ReluApi.h"
 #include "StateDictApi.h"
+#include "TensorApi.h"
 #include "unity.h"
 
 void setUp() {}
@@ -59,9 +62,38 @@ void testModelLoadStateDictCountMismatchIsCoveredByDesign(void) {
     TEST_IGNORE_MESSAGE("Count mismatch path fires exit() — covered by design contract.");
 }
 
+void testModelLoadStateDictTreatsLayerNormAsParameterLayer(void) {
+    quantization_t *q = quantizationInitFloat();
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, q);
+
+    size_t normShape[] = {2};
+    layer_t *ln = layerNormLayerInit(
+        &(layerNormInit_t){.normalizedShape = normShape, .numNormDims = 1, .eps = 1e-5f}, &lq);
+    layer_t *model[] = {ln};
+
+    float gammaData[2] = {5.f, 6.f};
+    float betaData[2] = {7.f, 8.f};
+    stateDictEntry_t entries[] = {{.name = "ln", .weightData = gammaData, .biasData = betaData}};
+
+    /* If LAYERNORM were param-less, numEntries(1) != paramLayers(0) -> exit(1). */
+    modelLoadStateDict(model, 1, entries, 1);
+
+    layerNormConfig_t *cfg = ln->config->layerNorm;
+    float *loadedGamma = (float *)cfg->gamma->param->data;
+    float *loadedBeta = (float *)cfg->beta->param->data;
+
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(gammaData, loadedGamma, 2);
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(betaData, loadedBeta, 2);
+
+    freeLayerNormLayer(ln);
+    freeQuantization(q);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testModelLoadStateDictLoadsTwoLinearLayersSkippingRelu);
     RUN_TEST(testModelLoadStateDictCountMismatchIsCoveredByDesign);
+    RUN_TEST(testModelLoadStateDictTreatsLayerNormAsParameterLayer);
     return UNITY_END();
 }
