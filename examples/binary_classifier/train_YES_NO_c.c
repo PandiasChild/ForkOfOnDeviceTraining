@@ -271,6 +271,7 @@ static void buildModel(layer_t **model) {
     parameter_t *c1_b = buildParam(ZEROS, c1_b_data, c1_b_dims, 1, 1, C1_OUT);
     model[0] = conv1dLayerInit(c1_w, c1_b, k1, q1, q2, q3, q4);
     model[1] = reluLayerInit(quantizationInitFloat(), quantizationInitFloat());
+    //pooling führt dazu, dass reihenfolge nicht relevant ist. es soll nicht alles ein einziger mittelwert werden
     model[2] = buildMaxPool1dLayer(2, 2, C1_OUT, LEN_INPUT / 2);
 
     /* Block 2: Conv1d(16->32, K=5, padding=SAME), ReLU, MaxPool(K=2,S=2). */

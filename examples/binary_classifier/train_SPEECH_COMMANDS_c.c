@@ -1,4 +1,4 @@
-#define SOURCE_FILE "har_classifier_train_c"
+#define SOURCE_FILE "speech_commands_classifier_train_c"
 
 #include <errno.h>
 #include <stdint.h>
@@ -35,7 +35,7 @@
 
 #include "npy_writer.h"
 
-#define EPOCHS 20
+#define EPOCHS 10
 #define BATCH 64
 #define LEARNING_RATE 0.01f
 #define MOMENTUM 0.9f
@@ -99,9 +99,9 @@ static void reshapeItemsAddBatchDim(tensorArray_t *items) {
 }
 
 static tensorArray_t *buildOneHotLabels(tensorArray_t *intLabels) {
-    /* intLabels->array[i] is a rank-0 int32 tensor (single class index 0..5).
+    /* intLabels->array[i] is a rank-0 float32 tensor (single class index 0,..1).
      * We allocate a brand-new tensorArray_t whose entries are rank-1 float32
-     * one-hot tensors of shape [NUM_CLASSES]. The original int32 array is
+     * one-hot tensors of shape [NUM_CLASSES]. The original float32 array is
      * left intact (caller still owns it). */
     tensorArray_t *out = reserveMemory(sizeof(tensorArray_t));
     tensor_t **arr = reserveMemory(intLabels->size * sizeof(tensor_t *));
@@ -132,20 +132,20 @@ static tensorArray_t *buildOneHotLabels(tensorArray_t *intLabels) {
 }
 
 static void initDataSets(void) {
-    tensorArray_t *trainItems = npyLoad("examples/har_classifier/data/train_x.npy");
-    tensorArray_t *trainLabelsRaw = npyLoad("examples/har_classifier/data/train_y.npy");
+    tensorArray_t *trainItems = npyLoad("examples/binary_classifier/data/SPEECH_COMMANDS_one_label/train_x.npy");
+    tensorArray_t *trainLabelsRaw = npyLoad("examples/binary_classifier/data/SPEECH_COMMANDS_one_label/train_y.npy");
     reshapeItemsAddBatchDim(trainItems);
     g_trainDataset.items = trainItems;
     g_trainDataset.labels = buildOneHotLabels(trainLabelsRaw);
 
-    tensorArray_t *valItems = npyLoad("examples/har_classifier/data/val_x.npy");
-    tensorArray_t *valLabelsRaw = npyLoad("examples/har_classifier/data/val_y.npy");
+    tensorArray_t *valItems = npyLoad("examples/binary_classifier/data/SPEECH_COMMANDS_one_label/val_x.npy");
+    tensorArray_t *valLabelsRaw = npyLoad("examples/binary_classifier/data/SPEECH_COMMANDS_one_label/val_y.npy");
     reshapeItemsAddBatchDim(valItems);
     g_valDataset.items = valItems;
     g_valDataset.labels = buildOneHotLabels(valLabelsRaw);
 
-    tensorArray_t *testItems = npyLoad("examples/har_classifier/data/test_x.npy");
-    tensorArray_t *testLabelsRaw = npyLoad("examples/har_classifier/data/test_y.npy");
+    tensorArray_t *testItems = npyLoad("examples/binary_classifier/data/SPEECH_COMMANDS_one_label/test_x.npy");
+    tensorArray_t *testLabelsRaw = npyLoad("examples/binary_classifier/data/SPEECH_COMMANDS_one_label/test_y.npy");
     reshapeItemsAddBatchDim(testItems);
     g_testDataset.items = testItems;
     g_testDataset.labels = buildOneHotLabels(testLabelsRaw);
@@ -291,7 +291,7 @@ static void buildModel(layer_t **model) {
     model[7] = reluLayerInit(quantizationInitFloat(), quantizationInitFloat());
     model[8] = buildAvgPool1dLayer(LEN_INPUT / 4, LEN_INPUT / 4);
 
-    /* Head: Flatten, Linear(64 -> 6), Softmax. */
+    /* Head: Flatten, Linear(64 -> 6), Softmax. */ /*TODO: Linear(64->2)*/
     model[9] = flattenLayerInit();
     parameter_t *fc_w = buildParam(XAVIER_UNIFORM, fc_w_data, fc_w_dims, 2, C3_OUT, NUM_CLASSES);
     parameter_t *fc_b = buildParam(ZEROS, fc_b_data, fc_b_dims, 2, 1, NUM_CLASSES);
