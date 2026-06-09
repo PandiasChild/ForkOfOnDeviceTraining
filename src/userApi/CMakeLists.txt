@@ -20,6 +20,7 @@ target_link_libraries(InferenceApi PRIVATE
         MaxPool1d
         AvgPool1d
         AdaptiveAvgPool1d
+        LayerNorm
         LossFunction
         Common
         DataLoader
@@ -49,6 +50,7 @@ target_link_libraries(LayerWeightsApi PRIVATE
         Conv1d
         Conv1dTransposed
         Layer
+        LayerNorm
         Linear
         Rounding
         Tensor

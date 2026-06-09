@@ -7,6 +7,7 @@
 #include "Conv1d.h"
 #include "Conv1dTransposed.h"
 #include "Layer.h"
+#include "LayerNorm.h"
 #include "Linear.h"
 #include "SgdApi.h"
 #include "StorageApi.h"
@@ -117,6 +118,33 @@ optimizer_t *sgdMCreateOptim(float learningRate, float momentumFactor, float wei
 
             states[paramSlot] = ctWeightStates;
             states[paramSlot + 1] = ctBiasStates;
+
+            paramSlot += 2;
+            break;
+        }
+        case LAYERNORM: {
+            layerNormConfig_t *lnCfg = layerConfig->layerNorm;
+
+            parameter_t *lnGamma = lnCfg->gamma;
+            optim->parameter[paramSlot] = lnGamma;
+            tensor_t *lnGammaStateBuffer = getTensorLike(lnGamma->param);
+
+            parameter_t *lnBeta = lnCfg->beta;
+            optim->parameter[paramSlot + 1] = lnBeta;
+            tensor_t *lnBetaStateBuffer = getTensorLike(lnBeta->param);
+
+            states_t *lnGammaStates = reserveMemory(sizeof(states_t));
+            lnGammaStates->statesPerParameter = statesPerParam;
+            lnGammaStates->stateBuffers = reserveMemory(sizeof(tensor_t *));
+            lnGammaStates->stateBuffers[0] = lnGammaStateBuffer;
+
+            states_t *lnBetaStates = reserveMemory(sizeof(states_t));
+            lnBetaStates->statesPerParameter = statesPerParam;
+            lnBetaStates->stateBuffers = reserveMemory(sizeof(tensor_t *));
+            lnBetaStates->stateBuffers[0] = lnBetaStateBuffer;
+
+            states[paramSlot] = lnGammaStates;
+            states[paramSlot + 1] = lnBetaStates;
 
             paramSlot += 2;
             break;

@@ -12,6 +12,7 @@
 #include "Dropout.h"
 #include "InferenceApi.h"
 #include "Layer.h"
+#include "LayerNorm.h"
 #include "Linear.h"
 #include "MaxPool1d.h"
 #include "Relu.h"
@@ -58,6 +59,9 @@ static void initBufferOutput(tensor_t *buffer, layer_t *currentLayer, shape_t *i
         break;
     case DROPOUT:
         currentQ = currentLayer->config->dropout->forwardQ;
+        break;
+    case LAYERNORM:
+        currentQ = currentLayer->config->layerNorm->forwardQ;
         break;
     default:
         PRINT_ERROR("Unknown Layer Type!");

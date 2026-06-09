@@ -19,6 +19,7 @@ target_link_libraries(SgdApi PRIVATE
         Layer
         Conv1d
         Conv1dTransposed
+        LayerNorm
         Sgd
         Optimizer
         Common

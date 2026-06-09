@@ -2,9 +2,11 @@
 #include <stdlib.h>
 
 #include "Layer.h"
+#include "LayerNorm.h"
 #include "LayerQuant.h"
 #include "Linear.h"
 #include "LinearApi.h"
+#include "Optimizer.h"
 #include "OptimizerApi.h"
 #include "QuantizationApi.h"
 #include "Sgd.h"
@@ -373,11 +375,105 @@ void testSgdZeroGradOnSymInt32GradZeroesMantissasAndResetsScale(void) {
     TEST_ASSERT_TRUE(accumWorks);
 }
 
+void testSgdMCreateOptimRegistersLayerNormGammaAndBeta(void) {
+    /* Build gamma parameter: shape [3], FLOAT32. */
+    size_t *gDims = reserveMemory(1 * sizeof(size_t));
+    gDims[0] = 3;
+    size_t *gOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, gOrder);
+    shape_t *gShape = reserveMemory(sizeof(shape_t));
+    setShape(gShape, gDims, 1, gOrder);
+    tensor_t *gParam = initTensor(gShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(gParam, (float[]){1.f, 1.f, 1.f}, 3);
+    tensor_t *gGrad = gradInitFloat(gParam, NULL);
+    tensorFillFromFloatBuffer(gGrad, (float[]){0.f, 0.f, 0.f}, 3);
+    parameter_t *gamma = parameterInit(gParam, gGrad);
+
+    /* Build beta parameter: shape [3], FLOAT32. */
+    size_t *bDims = reserveMemory(1 * sizeof(size_t));
+    bDims[0] = 3;
+    size_t *bOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, bOrder);
+    shape_t *bShape = reserveMemory(sizeof(shape_t));
+    setShape(bShape, bDims, 1, bOrder);
+    tensor_t *bParam = initTensor(bShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(bParam, (float[]){0.f, 0.f, 0.f}, 3);
+    tensor_t *bGrad = gradInitFloat(bParam, NULL);
+    tensorFillFromFloatBuffer(bGrad, (float[]){0.f, 0.f, 0.f}, 3);
+    parameter_t *beta = parameterInit(bParam, bGrad);
+
+    /* Build LayerNorm config + layer. */
+    quantization_t *fq = quantizationInitFloat();
+    quantization_t *bq = quantizationInitFloat();
+
+    size_t *normShape = reserveMemory(sizeof(size_t));
+    normShape[0] = 3;
+
+    layerNormConfig_t *lnCfg = reserveMemory(sizeof(layerNormConfig_t));
+    initLayerNormConfig(lnCfg, gamma, beta, normShape, 1, 1e-5f, fq, bq);
+
+    layerConfig_t *lcfg = reserveMemory(sizeof(layerConfig_t));
+    lcfg->layerNorm = lnCfg;
+
+    layer_t *lnLayer = reserveMemory(sizeof(layer_t));
+    lnLayer->type = LAYERNORM;
+    lnLayer->config = lcfg;
+
+    layer_t *model[] = {lnLayer};
+    size_t sizeModel = 1;
+    float lr = 0.1f;
+    float momentumFactor = 0.9f;
+    float weightDecay = 0.0f;
+
+    optimizer_t *optim =
+        sgdMCreateOptim(lr, momentumFactor, weightDecay, model, sizeModel, FLOAT32);
+
+    /* CAPTURE before frees. */
+    size_t capturedSizeStates = optim->sizeStates;
+    parameter_t *capturedP0 = optim->parameter[0];
+    parameter_t *capturedP1 = optim->parameter[1];
+
+    size_t gammaN = calcNumberOfElementsByParameter(lnCfg->gamma);
+    size_t betaN = calcNumberOfElementsByParameter(lnCfg->beta);
+
+    size_t capturedGammaStateN = calcNumberOfElementsByTensor(optim->states[0]->stateBuffers[0]);
+    size_t capturedBetaStateN = calcNumberOfElementsByTensor(optim->states[1]->stateBuffers[0]);
+
+    /* FREE: freeOptimSgdM frees the two registered parameter_t* (gamma, beta)
+     * and their state buffers. Then free the layer wrapper structs. */
+    freeOptimSgdM(optim);
+    freeReservedMemory(lnLayer);
+    freeReservedMemory(lcfg);
+    freeReservedMemory(normShape);
+    freeQuantization(bq);
+    freeQuantization(fq);
+    freeReservedMemory(lnCfg);
+
+    /* ASSERT. */
+    TEST_ASSERT_EQUAL_size_t(2, capturedSizeStates);
+    TEST_ASSERT_EQUAL_PTR(gamma, capturedP0);
+    TEST_ASSERT_EQUAL_PTR(beta, capturedP1);
+    TEST_ASSERT_EQUAL_size_t(gammaN, capturedGammaStateN);
+    TEST_ASSERT_EQUAL_size_t(betaN, capturedBetaStateN);
+}
+
+void testLayerNormContributesTwoOptimizerStates(void) {
+    layer_t layer = {.type = LAYERNORM, .config = NULL};
+    layer_t *model[] = {&layer};
+    size_t sizeModel = 1;
+
+    size_t nStates = calcTotalNumberOfStates(model, sizeModel);
+
+    TEST_ASSERT_EQUAL_size_t(2, nStates);
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(testSgdMCreateOptim);
     RUN_TEST(testSGDStep);
     RUN_TEST(testSGDZeroGrad);
     RUN_TEST(testSgdZeroGradOnSymInt32GradZeroesMantissasAndResetsScale);
+    RUN_TEST(testLayerNormContributesTwoOptimizerStates);
+    RUN_TEST(testSgdMCreateOptimRegistersLayerNormGammaAndBeta);
     return UNITY_END();
 }

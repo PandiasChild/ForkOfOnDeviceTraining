@@ -4,6 +4,7 @@
 #include "Common.h"
 #include "Conv1d.h"
 #include "Conv1dTransposed.h"
+#include "LayerNorm.h"
 #include "Linear.h"
 #include "Tensor.h"
 #include <stdlib.h>
@@ -66,6 +67,29 @@ void layerLoadWeights(layer_t *layer, float *weightData, float *biasData) {
             PRINT_ERROR("layerLoadWeights CONV1D: layer has no bias but biasData is non-NULL");
             exit(1);
         }
+        break;
+    }
+    case LAYERNORM: {
+        layerNormConfig_t *cfg = layer->config->layerNorm;
+        if (cfg->gamma == NULL) {
+            PRINT_ERROR("layerLoadWeights LAYERNORM: layer has no gamma parameter");
+            exit(1);
+        }
+        tensor_t *gammaTensor = cfg->gamma->param;
+        size_t numGamma = calcNumberOfElementsByTensor(gammaTensor);
+        memcpy(gammaTensor->data, weightData, numGamma * sizeof(float));
+
+        if (cfg->beta == NULL) {
+            PRINT_ERROR("layerLoadWeights LAYERNORM: layer has no beta parameter");
+            exit(1);
+        }
+        if (biasData == NULL) {
+            PRINT_ERROR("layerLoadWeights LAYERNORM: beta required but biasData is NULL");
+            exit(1);
+        }
+        tensor_t *betaTensor = cfg->beta->param;
+        size_t numBeta = calcNumberOfElementsByTensor(betaTensor);
+        memcpy(betaTensor->data, biasData, numBeta * sizeof(float));
         break;
     }
     case RELU:

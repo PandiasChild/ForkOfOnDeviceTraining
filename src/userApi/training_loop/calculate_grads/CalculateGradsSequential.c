@@ -13,6 +13,7 @@
 #include "Conv1dTransposed.h"
 #include "Dropout.h"
 #include "Layer.h"
+#include "LayerNorm.h"
 #include "Linear.h"
 #include "LossFunction.h"
 #include "MaxPool1d.h"
@@ -125,6 +126,9 @@ static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t si
             break;
         case DROPOUT:
             currentQ = currentLayer->config->dropout->forwardQ;
+            break;
+        case LAYERNORM:
+            currentQ = currentLayer->config->layerNorm->forwardQ;
             break;
         default:
             PRINT_ERROR("Unknown Layer Type!");

@@ -12,6 +12,7 @@ optimizerFunctions_t optimizerFunctions[] = {
 static size_t calcNumberOfStatesByLayerType(const layerType_t type) {
     switch (type) {
     case LINEAR:
+    case LAYERNORM:
         return 2;
     case RELU:
     case SOFTMAX:
