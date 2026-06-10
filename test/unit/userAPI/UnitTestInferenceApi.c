@@ -1,7 +1,13 @@
+#include <stdbool.h>
+#include <stdint.h>
+
 #include "InferenceApi.h"
 #include "Layer.h"
+#include "LayerNormApi.h"
+#include "LayerQuant.h"
 #include "LinearApi.h"
 #include "LossFunction.h"
+#include "Quantization.h"
 #include "QuantizationApi.h"
 #include "ReluApi.h"
 #include "StorageApi.h"
@@ -251,6 +257,52 @@ void testInferenceWithLossLinearReluFloat() {
     TEST_ASSERT_EQUAL_FLOAT_ARRAY(expectedOutput, capturedOutput, 2);
 }
 
+void testInferenceLayerNormSymInt32(void) {
+    size_t normShape[] = {4};
+    layerNormInit_t init = {.normalizedShape = normShape, .numNormDims = 1, .eps = 1e-5f};
+
+    quantization_t *symQ = quantizationInitSymInt32(HTE);
+    quantization_t *bwd = quantizationInitFloat();
+    layerQuant_t lq = {
+        .forwardMath = symQ, .backwardMath = bwd, .weightStorage = symQ, .biasStorage = symQ};
+    layer_t *ln = layerNormLayerInitOwning(&init, &lq);
+    freeQuantization(bwd);
+    freeQuantization(symQ);
+    layer_t *model[] = {ln};
+
+    /* [2,4] SYM input — int16-range mantissas by construction (NOT a Linear
+     * output; Linear SYM outputs are accumulator-range and would violate the
+     * LayerNorm input contract — open inter-layer requantization question
+     * for the quantized-training epic, #137). */
+    size_t *inDims = reserveMemory(2 * sizeof(size_t));
+    inDims[0] = 2;
+    inDims[1] = 4;
+    size_t *inOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, inOrder);
+    shape_t *inShape = reserveMemory(sizeof(shape_t));
+    setShape(inShape, inDims, 2, inOrder);
+    tensor_t *input = initTensor(inShape, quantizationInitSymInt32(HTE), NULL);
+    tensorFillFromFloatBuffer(input, (float[]){1.f, 2.f, 3.f, 4.f, 10.f, 20.f, 30.f, 40.f}, 8);
+
+    tensor_t *output = inference(model, 1, input);
+
+    bool typeOk = (output->quantization->type == SYM_INT32);
+    float scale = ((symInt32QConfig_t *)output->quantization->qConfig)->scale;
+    float deqMean = 0.f;
+    for (size_t i = 0; i < 8; i++) {
+        deqMean += (float)((int32_t *)output->data)[i] * scale;
+    }
+    deqMean /= 8.f;
+
+    freeTensor(output); /* inference() returns a heap tensor — caller owns. */
+    freeTensor(input);
+    freeLayerNormLayer(ln);
+
+    TEST_ASSERT_TRUE(typeOk);
+    TEST_ASSERT_TRUE(scale > 0.0f && scale < 1e-3f);
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0.f, deqMean);
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -258,6 +310,7 @@ int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testInferenceLinearReluFloat);
     RUN_TEST(testInferenceLinearReluSymInt32);
+    RUN_TEST(testInferenceLayerNormSymInt32);
 
     RUN_TEST(testInferenceWithLossLinearReluFloat);
     return UNITY_END();

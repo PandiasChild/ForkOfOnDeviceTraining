@@ -5,7 +5,6 @@
 #include "LayerNormApi.h"
 
 #include "Common.h"
-#include "Distributions.h"
 #include "Layer.h"
 #include "LayerNorm.h"
 #include "LayerQuant.h"
@@ -30,32 +29,42 @@ static shape_t *buildOwnedShape(const size_t *srcDims, size_t numberOfDims) {
     return shape;
 }
 
-/* gamma: shape normalizedShape, init all-ones; grad dtype from gradQ (= the
- * profile's backwardMath; FLOAT32 in PR-1). */
+/* Constant fill via tensorFillFromFloatBuffer: plain memcpy for FLOAT32; for
+ * SYM_INT32 it routes through convertFloatTensorToSymInt32Tensor, which IS
+ * the spec's parameter quantization (all-ones -> mantissa 32767, scale
+ * 1/32767; all-zeros -> mantissa 0, scale 1.0 via the absMax==0 guard).
+ * initDistribution cannot be used here: it is FLOAT32-only by guard, and
+ * extending it is Issue-C scope. */
+static void fillParamTensorWithConstant(tensor_t *paramTensor, float value) {
+    size_t count = calcNumberOfElementsByTensor(paramTensor);
+    float *buf = reserveMemory(count * sizeof(float));
+    for (size_t i = 0; i < count; i++) {
+        buf[i] = value;
+    }
+    tensorFillFromFloatBuffer(paramTensor, buf, count);
+    freeReservedMemory(buf);
+}
+
+/* gamma: shape normalizedShape, init all-ones (FLOAT32: 1.0f each; SYM_INT32:
+ * mantissa 32767, scale 1/32767); grad dtype from gradQ (= the profile's
+ * backwardMath). */
 static parameter_t *allocateLayerNormGamma(const size_t *normalizedShape, size_t numNormDims,
                                            quantization_t *storageQ, quantization_t *gradQ) {
-    if (storageQ->type != FLOAT32) {
-        PRINT_ERROR("layerNormLayerInit: PR-1 supports FLOAT32 gamma storage only");
-        exit(1);
-    }
     shape_t *shape = buildOwnedShape(normalizedShape, numNormDims);
     tensor_t *paramTensor = initTensor(shape, getQLike(storageQ), NULL);
-    distribution_t ones = {.type = ONES};
-    initDistribution(paramTensor, &ones);
+    fillParamTensorWithConstant(paramTensor, 1.0f);
     tensor_t *gradTensor = gradInit(paramTensor, gradQ, NULL);
     return parameterInit(paramTensor, gradTensor);
 }
 
-/* beta: shape normalizedShape, init all-zeros (calloc); grad dtype from gradQ. */
+/* beta: shape normalizedShape, init all-zeros (FLOAT32: 0.0f each; SYM_INT32:
+ * mantissa 0, scale 1.0 — the explicit fill exercises the absMax==0 constant
+ * guard instead of relying on calloc zeros + the default scale). */
 static parameter_t *allocateLayerNormBeta(const size_t *normalizedShape, size_t numNormDims,
                                           quantization_t *storageQ, quantization_t *gradQ) {
-    if (storageQ->type != FLOAT32) {
-        PRINT_ERROR("layerNormLayerInit: PR-1 supports FLOAT32 beta storage only");
-        exit(1);
-    }
     shape_t *shape = buildOwnedShape(normalizedShape, numNormDims);
     tensor_t *paramTensor = initTensor(shape, getQLike(storageQ), NULL);
-    /* zeros already provided by reserveMemory (calloc). */
+    fillParamTensorWithConstant(paramTensor, 0.0f);
     tensor_t *gradTensor = gradInit(paramTensor, gradQ, NULL);
     return parameterInit(paramTensor, gradTensor);
 }
@@ -104,6 +113,21 @@ static void validateLayerQuantForLayerNorm(layerQuant_t *lq) {
     }
     if (lq->biasStorage == NULL) {
         PRINT_ERROR("layerNormLayerInit: layerQuant.biasStorage must be set (beta storage)");
+        exit(1);
+    }
+    if (lq->weightStorage->type != FLOAT32 && lq->weightStorage->type != SYM_INT32) {
+        PRINT_ERROR("layerNormLayerInit: gamma storage must be FLOAT32 or SYM_INT32");
+        exit(1);
+    }
+    if (lq->biasStorage->type != FLOAT32 && lq->biasStorage->type != SYM_INT32) {
+        PRINT_ERROR("layerNormLayerInit: beta storage must be FLOAT32 or SYM_INT32");
+        exit(1);
+    }
+    /* The kernels read gamma/beta in the forward dtype: a FLOAT32 kernel over
+     * SYM mantissas (or vice versa) is silent garbage. Fail at construction. */
+    if (lq->weightStorage->type != lq->forwardMath->type ||
+        lq->biasStorage->type != lq->forwardMath->type) {
+        PRINT_ERROR("layerNormLayerInit: gamma/beta storage type must match forwardMath");
         exit(1);
     }
 }

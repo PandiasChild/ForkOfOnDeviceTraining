@@ -7,6 +7,7 @@
 #include "LayerNorm.h"
 #include "Linear.h"
 #include "Tensor.h"
+#include "TensorApi.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -77,7 +78,7 @@ void layerLoadWeights(layer_t *layer, float *weightData, float *biasData) {
         }
         tensor_t *gammaTensor = cfg->gamma->param;
         size_t numGamma = calcNumberOfElementsByTensor(gammaTensor);
-        memcpy(gammaTensor->data, weightData, numGamma * sizeof(float));
+        tensorFillFromFloatBuffer(gammaTensor, weightData, numGamma);
 
         if (cfg->beta == NULL) {
             PRINT_ERROR("layerLoadWeights LAYERNORM: layer has no beta parameter");
@@ -89,7 +90,7 @@ void layerLoadWeights(layer_t *layer, float *weightData, float *biasData) {
         }
         tensor_t *betaTensor = cfg->beta->param;
         size_t numBeta = calcNumberOfElementsByTensor(betaTensor);
-        memcpy(betaTensor->data, biasData, numBeta * sizeof(float));
+        tensorFillFromFloatBuffer(betaTensor, biasData, numBeta);
         break;
     }
     case RELU:

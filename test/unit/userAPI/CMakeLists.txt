@@ -66,6 +66,10 @@ add_elastic_ai_unit_test(
         TensorApi
         LinearApi
         ReluApi
+        LayerNormApi
+        LayerNorm
+        LayerQuant
+        Quantization
         QuantizationApi
         LossFunction
         DataLoader

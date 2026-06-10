@@ -54,6 +54,7 @@ target_link_libraries(LayerWeightsApi PRIVATE
         Linear
         Rounding
         Tensor
+        TensorApi
 )
 
 add_library(StateDictApi StateDictApi.c)

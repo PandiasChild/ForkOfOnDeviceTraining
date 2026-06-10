@@ -137,7 +137,6 @@ target_link_libraries(LayerNormApi PRIVATE
         Layer
         LayerNorm
         LayerQuant
-        Distributions
         Common
         StorageApi
 )

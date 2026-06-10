@@ -1301,6 +1301,87 @@ void testSymForwardTransposedMatchesContiguous(void) {
     }
 }
 
+void testFactorySymInt32StorageQuantizesGammaBeta(void) {
+    size_t normShape[] = {4};
+    layerNormInit_t init = {.normalizedShape = normShape, .numNormDims = 1, .eps = 0.0f};
+
+    quantization_t *symQ = quantizationInitSymInt32(HTE);
+    quantization_t *bwdMath = quantizationInitFloat();
+    layerQuant_t lq = {
+        .forwardMath = symQ, .backwardMath = bwdMath, .weightStorage = symQ, .biasStorage = symQ};
+
+    layer_t *layer = layerNormLayerInit(&init, &lq);
+    layerNormConfig_t *cfg = layer->config->layerNorm;
+
+    int32_t g[4];
+    int32_t b[4];
+    for (size_t i = 0; i < 4; i++) {
+        g[i] = ((int32_t *)cfg->gamma->param->data)[i];
+        b[i] = ((int32_t *)cfg->beta->param->data)[i];
+    }
+    float gScale = symScaleOf(cfg->gamma->param);
+    float bScale = symScaleOf(cfg->beta->param);
+    bool gammaGradFloat = (cfg->gamma->grad->quantization->type == FLOAT32);
+    bool betaGradFloat = (cfg->beta->grad->quantization->type == FLOAT32);
+
+    /* Forward smoke through the vtable on SYM input (factory-built params). */
+    size_t dims[] = {4};
+    tensor_t *in = buildSymInt32TensorND(1, dims, (float[]){1.f, 2.f, 3.f, 4.f});
+    tensor_t *out = buildSymInt32TensorND(1, dims, NULL);
+    layerFunctions[LAYERNORM].forward(layer, in, out);
+    float outScale = symScaleOf(out);
+    float deqMean = 0.f;
+    for (size_t i = 0; i < 4; i++) {
+        deqMean += (float)((int32_t *)out->data)[i] * outScale;
+    }
+    deqMean /= 4.f;
+
+    freeTensor(out);
+    freeTensor(in);
+    freeLayerNormLayer(layer);
+    freeQuantization(bwdMath);
+    freeQuantization(symQ);
+
+    for (size_t i = 0; i < 4; i++) {
+        TEST_ASSERT_EQUAL_INT(32767, g[i]);
+        TEST_ASSERT_EQUAL_INT(0, b[i]);
+    }
+    TEST_ASSERT_FLOAT_WITHIN(1e-9f, 1.0f / 32767.0f, gScale);
+    TEST_ASSERT_FLOAT_WITHIN(1e-9f, 1.0f, bScale);
+    TEST_ASSERT_TRUE(gammaGradFloat);
+    TEST_ASSERT_TRUE(betaGradFloat);
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0.f, deqMean);
+}
+
+void testFactoryOwningSymInt32DeepCopiesQuantizations(void) {
+    size_t normShape[] = {3};
+    layerNormInit_t init = {.normalizedShape = normShape, .numNormDims = 1, .eps = 1e-5f};
+
+    quantization_t *symQ = quantizationInitSymInt32(HTE);
+    quantization_t *bwdMath = quantizationInitFloat();
+    layerQuant_t lq = {
+        .forwardMath = symQ, .backwardMath = bwdMath, .weightStorage = symQ, .biasStorage = symQ};
+
+    layer_t *layer = layerNormLayerInitOwning(&init, &lq);
+    layerNormConfig_t *cfg = layer->config->layerNorm;
+
+    bool fwdIsCopy = (cfg->forwardQ != symQ);
+    bool fwdIsSym = (cfg->forwardQ->type == SYM_INT32);
+    bool fwdCfgIsCopy = (cfg->forwardQ->qConfig != symQ->qConfig);
+    bool owns = cfg->ownsQuantizations;
+
+    /* Caller drops its quants immediately — the layer holds deep copies
+     * (incl. the symInt32QConfig_t; double-free/UAF surfaces under CI ASan). */
+    freeQuantization(bwdMath);
+    freeQuantization(symQ);
+    freeLayerNormLayer(layer);
+
+    TEST_ASSERT_TRUE(fwdIsCopy);
+    TEST_ASSERT_TRUE(fwdIsSym);
+    TEST_ASSERT_TRUE(fwdCfgIsCopy);
+    TEST_ASSERT_TRUE(owns);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testConfigStructIsPopulated);
@@ -1334,5 +1415,7 @@ int main(void) {
     RUN_TEST(testSymGoldSigmaRatio10x);
     RUN_TEST(testSymForwardVarNearEpsReconstructsHalf);
     RUN_TEST(testSymForwardTransposedMatchesContiguous);
+    RUN_TEST(testFactorySymInt32StorageQuantizesGammaBeta);
+    RUN_TEST(testFactoryOwningSymInt32DeepCopiesQuantizations);
     return UNITY_END();
 }
