@@ -175,6 +175,29 @@ target_link_libraries(UnitTestDropoutIntegration PRIVATE
 )
 __register_target_as_unit_test(UnitTestDropoutIntegration)
 
+add_executable(UnitTestLayerNormIntegration UnitTestLayerNormIntegration.c)
+target_link_libraries(UnitTestLayerNormIntegration PRIVATE
+        unity
+        TrainingLoopApi
+        CalculateGradsSequential
+        CommonLayerLibs
+        LayerNormApi
+        LayerNorm
+        SgdApi
+        Sgd
+        Optimizer
+        LayerQuant
+        LayerCommon
+        LinearApi
+        TensorApi
+        QuantizationApi
+        LossFunction
+        InferenceApi
+        DataLoader
+        StorageApi
+)
+__register_target_as_unit_test(UnitTestLayerNormIntegration)
+
 add_executable(UnitTestAdaptiveAvgPool1dIntegration UnitTestAdaptiveAvgPool1dIntegration.c)
 target_link_libraries(UnitTestAdaptiveAvgPool1dIntegration PRIVATE
         unity

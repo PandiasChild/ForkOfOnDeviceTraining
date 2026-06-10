@@ -15,6 +15,8 @@
 #include "TensorApi.h"
 #include "unity.h"
 
+#include "expected_layernorm.h"
+
 void setUp(void) {}
 void tearDown(void) {}
 
@@ -636,6 +638,188 @@ void testFactoryRank2NormShapeAndExplicitEps(void) {
     TEST_ASSERT_EQUAL_UINT(6, gammaCount);
 }
 
+/* Run forward with explicit gamma/beta gold arrays and compare to expected y. */
+static void runGoldForward(size_t numDims, const size_t *dims, const float *xVals,
+                           size_t numNormDims, const size_t *normShapeIn, const float *gammaVals,
+                           const float *betaVals, const float *expectedY, size_t count) {
+    TEST_ASSERT_TRUE_MESSAGE(count > 0 && count <= 64, "fixture exceeds capture buffer");
+    tensor_t *in = buildFloatTensorND(numDims, dims, xVals);
+    tensor_t *out = buildFloatTensorND(numDims, dims, NULL);
+    parameter_t *gamma = buildFloatParam(numNormDims, normShapeIn, gammaVals);
+    parameter_t *beta = buildFloatParam(numNormDims, normShapeIn, betaVals);
+    size_t *normShape = reserveMemory(numNormDims * sizeof(size_t));
+    for (size_t i = 0; i < numNormDims; i++) {
+        normShape[i] = normShapeIn[i];
+    }
+    quantization_t *fq = quantizationInitFloat();
+    quantization_t *bq = quantizationInitFloat();
+    layerNormConfig_t cfg;
+    initLayerNormConfig(&cfg, gamma, beta, normShape, numNormDims, 1e-5f, fq, bq);
+    layerConfig_t lcfg;
+    layer_t layer = makeLayerNormLayer(&cfg, &lcfg);
+
+    layerNormForward(&layer, in, out);
+
+    float captured[64];
+    for (size_t i = 0; i < count; i++) {
+        captured[i] = ((float *)out->data)[i];
+    }
+
+    freeQuantization(bq);
+    freeQuantization(fq);
+    freeReservedMemory(normShape);
+    freeParameter(beta);
+    freeParameter(gamma);
+    freeTensor(out);
+    freeTensor(in);
+
+    for (size_t i = 0; i < count; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(1e-4f, expectedY[i], captured[i]);
+    }
+}
+
+/* Run backward with gold gamma/beta + gold lossGrad; compare dx, dgamma, dbeta. */
+static void runGoldBackward(size_t numDims, const size_t *dims, const float *xVals,
+                            size_t numNormDims, const size_t *normShapeIn, const float *gammaVals,
+                            const float *betaVals, const float *lossGradVals, const float *expDx,
+                            const float *expDgamma, const float *expDbeta, size_t count,
+                            size_t normCount) {
+    TEST_ASSERT_TRUE_MESSAGE(count > 0 && count <= 64, "fixture exceeds capture buffer");
+    TEST_ASSERT_TRUE_MESSAGE(normCount > 0 && normCount <= 64, "fixture exceeds capture buffer");
+    tensor_t *fwdIn = buildFloatTensorND(numDims, dims, xVals);
+    tensor_t *loss = buildFloatTensorND(numDims, dims, lossGradVals);
+    tensor_t *propLoss = buildFloatTensorND(numDims, dims, NULL);
+    parameter_t *gamma = buildFloatParam(numNormDims, normShapeIn, gammaVals);
+    parameter_t *beta = buildFloatParam(numNormDims, normShapeIn, betaVals);
+    size_t *normShape = reserveMemory(numNormDims * sizeof(size_t));
+    for (size_t i = 0; i < numNormDims; i++) {
+        normShape[i] = normShapeIn[i];
+    }
+    quantization_t *fq = quantizationInitFloat();
+    quantization_t *bq = quantizationInitFloat();
+    layerNormConfig_t cfg;
+    initLayerNormConfig(&cfg, gamma, beta, normShape, numNormDims, 1e-5f, fq, bq);
+    layerConfig_t lcfg;
+    layer_t layer = makeLayerNormLayer(&cfg, &lcfg);
+
+    layerNormBackward(&layer, fwdIn, loss, propLoss);
+
+    float dx[64], dg[64], db[64];
+    for (size_t i = 0; i < count; i++) {
+        dx[i] = ((float *)propLoss->data)[i];
+    }
+    for (size_t i = 0; i < normCount; i++) {
+        dg[i] = ((float *)gamma->grad->data)[i];
+        db[i] = ((float *)beta->grad->data)[i];
+    }
+
+    freeQuantization(bq);
+    freeQuantization(fq);
+    freeReservedMemory(normShape);
+    freeParameter(beta);
+    freeParameter(gamma);
+    freeTensor(propLoss);
+    freeTensor(loss);
+    freeTensor(fwdIn);
+
+    for (size_t i = 0; i < count; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(1e-4f, expDx[i], dx[i]);
+    }
+    for (size_t i = 0; i < normCount; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(1e-4f, expDgamma[i], dg[i]);
+        TEST_ASSERT_FLOAT_WITHIN(1e-4f, expDbeta[i], db[i]);
+    }
+}
+
+/* Small-variance fixture: var (1.25e-6) is comparable to eps (1e-5), so this
+ * test distinguishes sqrt(var+eps) from the wrong sqrt(var)+eps — the O(1)-
+ * variance fixtures cannot (relative difference ~5e-6, below tolerance).
+ *   x = [0.001, 0.002, 0.003, 0.004]: mean=0.0025, biased var=1.25e-6,
+ *   invSigma = 1/sqrt(1.125e-5) = 298.142, gamma=1, beta=0
+ *   y = n = [-0.447213, -0.149071, +0.149071, +0.447213]
+ *   (sqrt(var)+eps would give y0 ~ -1.3298 instead). */
+void testForwardFloatSmallVarianceEpsInsideSqrt(void) {
+    size_t dims[] = {4};
+    size_t ns[] = {4};
+    float x[] = {0.001f, 0.002f, 0.003f, 0.004f};
+    float gammaOnes[] = {1.f, 1.f, 1.f, 1.f};
+    float betaZeros[] = {0.f, 0.f, 0.f, 0.f};
+    float expected[] = {-0.447213f, -0.149071f, 0.149071f, 0.447213f};
+    runGoldForward(1, dims, x, 1, ns, gammaOnes, betaZeros, expected, 4);
+}
+
+void testGoldForwardD1SingleGroup(void) {
+    size_t dims[] = {5};
+    size_t ns[] = {5};
+    runGoldForward(1, dims, input_layerNorm_d1SingleGroup, 1, ns, gamma_layerNorm_d1SingleGroup,
+                   beta_layerNorm_d1SingleGroup, expectedForward_layerNorm_d1SingleGroup,
+                   expectedForward_layerNorm_d1SingleGroup_len);
+}
+
+void testGoldBackwardD1SingleGroup(void) {
+    size_t dims[] = {5};
+    size_t ns[] = {5};
+    runGoldBackward(1, dims, input_layerNorm_d1SingleGroup, 1, ns, gamma_layerNorm_d1SingleGroup,
+                    beta_layerNorm_d1SingleGroup, lossGrad_layerNorm_d1SingleGroup,
+                    expectedPropLoss_layerNorm_d1SingleGroup,
+                    expectedDgamma_layerNorm_d1SingleGroup, expectedDbeta_layerNorm_d1SingleGroup,
+                    expectedForward_layerNorm_d1SingleGroup_len, gamma_layerNorm_d1SingleGroup_len);
+}
+
+void testGoldForwardD1MultiGroup(void) {
+    size_t dims[] = {3, 4};
+    size_t ns[] = {4};
+    runGoldForward(2, dims, input_layerNorm_d1MultiGroup, 1, ns, gamma_layerNorm_d1MultiGroup,
+                   beta_layerNorm_d1MultiGroup, expectedForward_layerNorm_d1MultiGroup,
+                   expectedForward_layerNorm_d1MultiGroup_len);
+}
+
+void testGoldBackwardD1MultiGroup(void) {
+    size_t dims[] = {3, 4};
+    size_t ns[] = {4};
+    runGoldBackward(2, dims, input_layerNorm_d1MultiGroup, 1, ns, gamma_layerNorm_d1MultiGroup,
+                    beta_layerNorm_d1MultiGroup, lossGrad_layerNorm_d1MultiGroup,
+                    expectedPropLoss_layerNorm_d1MultiGroup, expectedDgamma_layerNorm_d1MultiGroup,
+                    expectedDbeta_layerNorm_d1MultiGroup,
+                    expectedForward_layerNorm_d1MultiGroup_len, gamma_layerNorm_d1MultiGroup_len);
+}
+
+void testGoldForwardD2MultiGroup(void) {
+    size_t dims[] = {2, 3, 4};
+    size_t ns[] = {3, 4};
+    runGoldForward(3, dims, input_layerNorm_d2MultiGroup, 2, ns, gamma_layerNorm_d2MultiGroup,
+                   beta_layerNorm_d2MultiGroup, expectedForward_layerNorm_d2MultiGroup,
+                   expectedForward_layerNorm_d2MultiGroup_len);
+}
+
+void testGoldBackwardD2MultiGroup(void) {
+    size_t dims[] = {2, 3, 4};
+    size_t ns[] = {3, 4};
+    runGoldBackward(3, dims, input_layerNorm_d2MultiGroup, 2, ns, gamma_layerNorm_d2MultiGroup,
+                    beta_layerNorm_d2MultiGroup, lossGrad_layerNorm_d2MultiGroup,
+                    expectedPropLoss_layerNorm_d2MultiGroup, expectedDgamma_layerNorm_d2MultiGroup,
+                    expectedDbeta_layerNorm_d2MultiGroup,
+                    expectedForward_layerNorm_d2MultiGroup_len, gamma_layerNorm_d2MultiGroup_len);
+}
+
+void testGoldForwardFullRank(void) {
+    size_t dims[] = {2, 3};
+    size_t ns[] = {2, 3};
+    runGoldForward(2, dims, input_layerNorm_fullRank, 2, ns, gamma_layerNorm_fullRank,
+                   beta_layerNorm_fullRank, expectedForward_layerNorm_fullRank,
+                   expectedForward_layerNorm_fullRank_len);
+}
+
+void testGoldBackwardFullRank(void) {
+    size_t dims[] = {2, 3};
+    size_t ns[] = {2, 3};
+    runGoldBackward(2, dims, input_layerNorm_fullRank, 2, ns, gamma_layerNorm_fullRank,
+                    beta_layerNorm_fullRank, lossGrad_layerNorm_fullRank,
+                    expectedPropLoss_layerNorm_fullRank, expectedDgamma_layerNorm_fullRank,
+                    expectedDbeta_layerNorm_fullRank, expectedForward_layerNorm_fullRank_len,
+                    gamma_layerNorm_fullRank_len);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testConfigStructIsPopulated);
@@ -651,5 +835,14 @@ int main(void) {
     RUN_TEST(testFactoryOwningDeepCopiesQuantizations);
     RUN_TEST(testFactoryBorrowingDoesNotFreeCallerQuantizations);
     RUN_TEST(testFactoryRank2NormShapeAndExplicitEps);
+    RUN_TEST(testForwardFloatSmallVarianceEpsInsideSqrt);
+    RUN_TEST(testGoldForwardD1SingleGroup);
+    RUN_TEST(testGoldBackwardD1SingleGroup);
+    RUN_TEST(testGoldForwardD1MultiGroup);
+    RUN_TEST(testGoldBackwardD1MultiGroup);
+    RUN_TEST(testGoldForwardD2MultiGroup);
+    RUN_TEST(testGoldBackwardD2MultiGroup);
+    RUN_TEST(testGoldForwardFullRank);
+    RUN_TEST(testGoldBackwardFullRank);
     return UNITY_END();
 }

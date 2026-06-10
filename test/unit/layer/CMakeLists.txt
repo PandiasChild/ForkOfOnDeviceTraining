@@ -197,6 +197,18 @@ add_elastic_ai_unit_test(
         DropoutApi
 )
 
+set(GEN_LAYERNORM_HEADER ${CMAKE_CURRENT_BINARY_DIR}/expected_layernorm.h)
+add_custom_command(
+        OUTPUT ${GEN_LAYERNORM_HEADER}
+        COMMAND uv run ${CMAKE_CURRENT_SOURCE_DIR}/generate_expected_layernorm.py
+                --out ${GEN_LAYERNORM_HEADER}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/generate_expected_layernorm.py
+        COMMENT "Generating expected_layernorm.h via PyTorch"
+        VERBATIM
+)
+add_custom_target(generate_expected_layernorm
+        DEPENDS ${GEN_LAYERNORM_HEADER})
+
 add_elastic_ai_unit_test(
         LIB_UNDER_TEST
         LayerNorm
@@ -211,3 +223,5 @@ add_elastic_ai_unit_test(
         Arithmetic
         StorageApi
 )
+add_dependencies(UnitTestLayerNorm generate_expected_layernorm)
+target_include_directories(UnitTestLayerNorm PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
