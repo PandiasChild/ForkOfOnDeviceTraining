@@ -209,6 +209,18 @@ add_custom_command(
 add_custom_target(generate_expected_layernorm
         DEPENDS ${GEN_LAYERNORM_HEADER})
 
+set(GEN_LAYERNORM_SYM_HEADER ${CMAKE_CURRENT_BINARY_DIR}/expected_layernorm_sym.h)
+add_custom_command(
+        OUTPUT ${GEN_LAYERNORM_SYM_HEADER}
+        COMMAND uv run ${CMAKE_CURRENT_SOURCE_DIR}/generate_expected_layernorm_sym.py
+                --out ${GEN_LAYERNORM_SYM_HEADER}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/generate_expected_layernorm_sym.py
+        COMMENT "Generating expected_layernorm_sym.h via PyTorch"
+        VERBATIM
+)
+add_custom_target(generate_expected_layernorm_sym
+        DEPENDS ${GEN_LAYERNORM_SYM_HEADER})
+
 add_elastic_ai_unit_test(
         LIB_UNDER_TEST
         LayerNorm
@@ -224,4 +236,5 @@ add_elastic_ai_unit_test(
         StorageApi
 )
 add_dependencies(UnitTestLayerNorm generate_expected_layernorm)
+add_dependencies(UnitTestLayerNorm generate_expected_layernorm_sym)
 target_include_directories(UnitTestLayerNorm PRIVATE ${CMAKE_CURRENT_BINARY_DIR})

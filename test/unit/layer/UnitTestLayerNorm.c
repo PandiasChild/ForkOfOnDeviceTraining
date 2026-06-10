@@ -17,6 +17,7 @@
 #include "unity.h"
 
 #include "expected_layernorm.h"
+#include "expected_layernorm_sym.h"
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -823,6 +824,118 @@ static void runGoldBackward(size_t numDims, const size_t *dims, const float *xVa
     }
 }
 
+/* SYM gold runner: forward over generated fixtures, then assert
+ * (a) mantissas within +-mantissaTol of the float64 emulation (float32 stats
+ *     noise can flip a rounding boundary; tol = 2*max|gamma_q|+1),
+ * (b) output scale within 1e-4 relative of the emulated s_y,
+ * (c) dequantized output within dequantTol of F.layer_norm on the same
+ *     dequantized inputs,
+ * (d) for gamma=1/beta=0 fixtures: dequant within 3e-5 of PyTorch xhat (the
+ *     spec-verified tolerance; generator guarantees absmax(xhat) <= 1.9), and
+ * (e) per-group dequant variance within 5e-3 of var/(var+eps). */
+static void runSymGoldForward(size_t numDims, const size_t *dims, size_t numNormDims,
+                              const size_t *normShapeIn, const float *xVals, const float *gammaVals,
+                              const float *betaVals, const int32_t *expMantissas, float expScale,
+                              int32_t mantissaTol, const float *expDequant, float dequantTol,
+                              const float *expXhat, const float *expGroupVarRatio, size_t groups,
+                              size_t count) {
+    TEST_ASSERT_TRUE_MESSAGE(count > 0 && count <= 64, "fixture exceeds capture buffer");
+    size_t normCount = count / groups;
+
+    tensor_t *in = buildSymInt32TensorND(numDims, dims, xVals);
+    tensor_t *out = buildSymInt32TensorND(numDims, dims, NULL);
+    parameter_t *gamma = buildSymParam(numNormDims, normShapeIn, gammaVals);
+    parameter_t *beta = buildSymParam(numNormDims, normShapeIn, betaVals);
+    size_t *normShape = reserveMemory(numNormDims * sizeof(size_t));
+    for (size_t i = 0; i < numNormDims; i++) {
+        normShape[i] = normShapeIn[i];
+    }
+    quantization_t *fq = quantizationInitSymInt32(HTE);
+    quantization_t *bq = quantizationInitFloat();
+    layerNormConfig_t cfg;
+    initLayerNormConfig(&cfg, gamma, beta, normShape, numNormDims, 1e-5f, fq, bq);
+    layerConfig_t lcfg;
+    layer_t layer = makeLayerNormLayer(&cfg, &lcfg);
+
+    layerNormForward(&layer, in, out);
+
+    int32_t m[64];
+    for (size_t i = 0; i < count; i++) {
+        m[i] = ((int32_t *)out->data)[i];
+    }
+    float scale = symScaleOf(out);
+
+    freeQuantization(bq);
+    freeQuantization(fq);
+    freeReservedMemory(normShape);
+    freeParameter(beta);
+    freeParameter(gamma);
+    freeTensor(out);
+    freeTensor(in);
+
+    for (size_t i = 0; i < count; i++) {
+        TEST_ASSERT_INT_WITHIN(mantissaTol, expMantissas[i], m[i]);
+    }
+    TEST_ASSERT_FLOAT_WITHIN(expScale * 1e-4f, expScale, scale);
+    for (size_t i = 0; i < count; i++) {
+        float deq = (float)m[i] * scale;
+        TEST_ASSERT_FLOAT_WITHIN(dequantTol, expDequant[i], deq);
+        if (expXhat != NULL) {
+            TEST_ASSERT_FLOAT_WITHIN(3e-5f, expXhat[i], deq);
+        }
+    }
+    if (expGroupVarRatio != NULL) {
+        for (size_t g = 0; g < groups; g++) {
+            float mean = 0.f;
+            for (size_t j = 0; j < normCount; j++) {
+                mean += (float)m[g * normCount + j] * scale;
+            }
+            mean /= (float)normCount;
+            float var = 0.f;
+            for (size_t j = 0; j < normCount; j++) {
+                float d = (float)m[g * normCount + j] * scale - mean;
+                var += d * d;
+            }
+            var /= (float)normCount;
+            TEST_ASSERT_FLOAT_WITHIN(5e-3f, expGroupVarRatio[g], var);
+        }
+    }
+}
+
+void testSymGoldParityMultiGroup(void) {
+    size_t dims[] = {3, 4};
+    size_t ns[] = {4};
+    runSymGoldForward(2, dims, 1, ns, input_layerNormSym_symParity, gamma_layerNormSym_symParity,
+                      beta_layerNormSym_symParity, expectedMantissas_layerNormSym_symParity,
+                      expectedScale_layerNormSym_symParity, mantissaTol_layerNormSym_symParity,
+                      expectedDequant_layerNormSym_symParity, dequantTol_layerNormSym_symParity,
+                      expectedXhat_layerNormSym_symParity,
+                      expectedGroupVarRatio_layerNormSym_symParity, 3,
+                      expectedMantissas_layerNormSym_symParity_len);
+}
+
+void testSymGoldAffine(void) {
+    size_t dims[] = {2, 4};
+    size_t ns[] = {4};
+    runSymGoldForward(2, dims, 1, ns, input_layerNormSym_symAffine, gamma_layerNormSym_symAffine,
+                      beta_layerNormSym_symAffine, expectedMantissas_layerNormSym_symAffine,
+                      expectedScale_layerNormSym_symAffine, mantissaTol_layerNormSym_symAffine,
+                      expectedDequant_layerNormSym_symAffine, dequantTol_layerNormSym_symAffine,
+                      NULL, NULL, 2, expectedMantissas_layerNormSym_symAffine_len);
+}
+
+void testSymGoldSigmaRatio10x(void) {
+    size_t dims[] = {2, 4};
+    size_t ns[] = {4};
+    runSymGoldForward(
+        2, dims, 1, ns, input_layerNormSym_symSigmaRatio, gamma_layerNormSym_symSigmaRatio,
+        beta_layerNormSym_symSigmaRatio, expectedMantissas_layerNormSym_symSigmaRatio,
+        expectedScale_layerNormSym_symSigmaRatio, mantissaTol_layerNormSym_symSigmaRatio,
+        expectedDequant_layerNormSym_symSigmaRatio, dequantTol_layerNormSym_symSigmaRatio,
+        expectedXhat_layerNormSym_symSigmaRatio, expectedGroupVarRatio_layerNormSym_symSigmaRatio,
+        2, expectedMantissas_layerNormSym_symSigmaRatio_len);
+}
+
 /* Small-variance fixture: var (1.25e-6) is comparable to eps (1e-5), so this
  * test distinguishes sqrt(var+eps) from the wrong sqrt(var)+eps — the O(1)-
  * variance fixtures cannot (relative difference ~5e-6, below tolerance).
@@ -1063,6 +1176,131 @@ void testSymForwardConstantInputAppliesBeta(void) {
     }
 }
 
+/* var ~ eps fixture (codebase_eps_mutation_vacuity): with var == eps == 1e-5
+ * the reconstructed output variance is var/(var+eps) == 0.5 — the ONLY regime
+ * where eps placement and the input scale are visible:
+ *   sqrt(var)+eps   -> ratio ~ 0.994 (not 0.5)
+ *   eps omitted     -> ratio ~ 1.0
+ *   s_x dropped     -> standardization is scale-invariant, so this mutation is
+ *                      invisible to every O(1)-variance test; here the
+ *                      mantissa-domain variance (~1.1e4) dwarfs eps -> ~1.0.
+ * d = sqrt(1.5e-5) so var = 2d^2/3 = 1e-5 exactly; N=3 (N=2 would saturate
+ * xhat to +-1 regardless of data). */
+void testSymForwardVarNearEpsReconstructsHalf(void) {
+    float d = 0.0038729833f; /* sqrt(1.5e-5) */
+    size_t dims[] = {3};
+    float vals[] = {1.0f - d, 1.0f, 1.0f + d};
+    tensor_t *in = buildSymInt32TensorND(1, dims, vals);
+    tensor_t *out = buildSymInt32TensorND(1, dims, NULL);
+
+    size_t ns[] = {3};
+    parameter_t *gamma = buildSymParam(1, ns, (float[]){1.f, 1.f, 1.f});
+    parameter_t *beta = buildSymParam(1, ns, (float[]){0.f, 0.f, 0.f});
+    size_t *normShape = reserveMemory(sizeof(size_t));
+    normShape[0] = 3;
+
+    quantization_t *fq = quantizationInitSymInt32(HTE);
+    quantization_t *bq = quantizationInitFloat();
+    layerNormConfig_t cfg;
+    initLayerNormConfig(&cfg, gamma, beta, normShape, 1, 1e-5f, fq, bq);
+    layerConfig_t lcfg;
+    layer_t layer = makeLayerNormLayer(&cfg, &lcfg);
+
+    layerNormForward(&layer, in, out);
+
+    float scale = symScaleOf(out);
+    float deq[3];
+    for (size_t i = 0; i < 3; i++) {
+        deq[i] = (float)((int32_t *)out->data)[i] * scale;
+    }
+
+    freeQuantization(bq);
+    freeQuantization(fq);
+    freeReservedMemory(normShape);
+    freeParameter(beta);
+    freeParameter(gamma);
+    freeTensor(out);
+    freeTensor(in);
+
+    float mean = (deq[0] + deq[1] + deq[2]) / 3.f;
+    float var = 0.f;
+    for (size_t i = 0; i < 3; i++) {
+        float dd = deq[i] - mean;
+        var += dd * dd;
+    }
+    var /= 3.f;
+
+    /* Input quantization perturbs d by <= s_x/2 ~ 1.5e-5 absolute (~0.4%
+     * of d) -> var ratio lands at 0.5 +- ~0.02; 0.05 tolerance is ample. */
+    TEST_ASSERT_FLOAT_WITHIN(0.05f, 0.5f, var);
+}
+
+/* Layout-agnosticism through quantization: same logical [2,4] content,
+ * contiguous vs physically transposed ([4,2] buffer + transposeTensor), must
+ * yield bit-identical mantissas at corresponding LOGICAL positions and the
+ * identical output scale (same float ops in the same order). Physical [4,2]
+ * buffer for logical [2,4]: buf[c*2 + r] = logical(r,c). */
+void testSymForwardTransposedMatchesContiguous(void) {
+    float gammaVals[] = {1.f, -0.5f, 2.f, 0.25f};
+    float betaVals[] = {0.1f, -0.2f, 0.3f, -0.4f};
+
+    size_t dims[] = {2, 4};
+    tensor_t *inC =
+        buildSymInt32TensorND(2, dims, (float[]){1.f, 2.f, 3.f, 4.f, 10.f, 20.f, 30.f, 40.f});
+    tensor_t *outC = buildSymInt32TensorND(2, dims, NULL);
+
+    size_t pdims[] = {4, 2};
+    tensor_t *inT =
+        buildSymInt32TensorND(2, pdims, (float[]){1.f, 10.f, 2.f, 20.f, 3.f, 30.f, 4.f, 40.f});
+    transposeTensor(inT, 0, 1); /* logical [2,4], physical unchanged */
+    tensor_t *outT = buildSymInt32TensorND(2, pdims, NULL);
+    transposeTensor(outT, 0, 1);
+
+    size_t ns[] = {4};
+    parameter_t *gamma = buildSymParam(1, ns, gammaVals);
+    parameter_t *beta = buildSymParam(1, ns, betaVals);
+    size_t *normShape = reserveMemory(sizeof(size_t));
+    normShape[0] = 4;
+
+    quantization_t *fq = quantizationInitSymInt32(HTE);
+    quantization_t *bq = quantizationInitFloat();
+    layerNormConfig_t cfg;
+    initLayerNormConfig(&cfg, gamma, beta, normShape, 1, 1e-5f, fq, bq);
+    layerConfig_t lcfg;
+    layer_t layer = makeLayerNormLayer(&cfg, &lcfg);
+
+    layerNormForward(&layer, inC, outC);
+    layerNormForward(&layer, inT, outT);
+
+    int32_t mC[8];
+    int32_t mT[8];
+    int32_t *ocd = (int32_t *)outC->data;
+    int32_t *otd = (int32_t *)outT->data;
+    for (size_t r = 0; r < 2; r++) {
+        for (size_t c = 0; c < 4; c++) {
+            mC[r * 4 + c] = ocd[r * 4 + c]; /* contiguous: phys == logical */
+            mT[r * 4 + c] = otd[c * 2 + r]; /* transposed: logical (r,c) -> phys c*2+r */
+        }
+    }
+    float scaleC = symScaleOf(outC);
+    float scaleT = symScaleOf(outT);
+
+    freeQuantization(bq);
+    freeQuantization(fq);
+    freeReservedMemory(normShape);
+    freeParameter(beta);
+    freeParameter(gamma);
+    freeTensor(outT);
+    freeTensor(inT);
+    freeTensor(outC);
+    freeTensor(inC);
+
+    TEST_ASSERT_EQUAL_FLOAT(scaleC, scaleT);
+    for (size_t i = 0; i < 8; i++) {
+        TEST_ASSERT_EQUAL_INT(mC[i], mT[i]);
+    }
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testConfigStructIsPopulated);
@@ -1091,5 +1329,10 @@ int main(void) {
     RUN_TEST(testSymForwardConstantInputEmitsZeros);
     RUN_TEST(testSymForwardMantissaInvariantsViaOnesGamma);
     RUN_TEST(testSymForwardConstantInputAppliesBeta);
+    RUN_TEST(testSymGoldParityMultiGroup);
+    RUN_TEST(testSymGoldAffine);
+    RUN_TEST(testSymGoldSigmaRatio10x);
+    RUN_TEST(testSymForwardVarNearEpsReconstructsHalf);
+    RUN_TEST(testSymForwardTransposedMatchesContiguous);
     return UNITY_END();
 }
