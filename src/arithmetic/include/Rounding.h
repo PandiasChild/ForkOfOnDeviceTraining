@@ -56,6 +56,6 @@ float clamp(float input, float min, float max);
  * @param max Upper saturation bound.
  * @return Saturated difference.
  */
-int32_t saturatingSubstraction(int32_t minuend, int32_t subtrahend, int32_t min, size_t int32_t);
+int32_t saturatingSubstraction(int32_t minuend, int32_t subtrahend, int32_t min, int32_t int32_t);
 
 #endif // ROUNDING_H

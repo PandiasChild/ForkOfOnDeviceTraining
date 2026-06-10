@@ -19,6 +19,10 @@
 
 tensor_t *tensorInitInt32(int32_t *data, size_t *dims, size_t numberOfDims, sparsity_t *sparsity) {
     quantization_t *q = reserveMemory(sizeof(quantization_t));
+	if(q == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
     initInt32Quantization(q);
 
     return initTensorWithQInt32(data, dims, numberOfDims, q, sparsity);
@@ -26,6 +30,10 @@ tensor_t *tensorInitInt32(int32_t *data, size_t *dims, size_t numberOfDims, spar
 
 tensor_t *tensorInitFloat(float *data, size_t *dims, size_t numberOfDims, sparsity_t *sparsity) {
     quantization_t *q = reserveMemory(sizeof(quantization_t));
+	if(q == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
     initFloat32Quantization(q);
 
     return initTensorWithQFloat(data, dims, numberOfDims, q, sparsity);
@@ -44,9 +52,17 @@ tensor_t *tensorInitSymInt32(float *data, size_t *dims, size_t numberOfDims,
 tensor_t *tensorInitAsym(float *data, size_t *dims, size_t numberOfDims, uint8_t qBits,
                          roundingMode_t roundingMode, sparsity_t *sparsity) {
     asymQConfig_t *asymQC = reserveMemory(sizeof(asymQConfig_t));
+	if(asymQC == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
     asymQC->qBits = qBits;
     asymQC->roundingMode = roundingMode;
     quantization_t *asymQ = reserveMemory(sizeof(quantization_t));
+	if(asymQ == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
     asymQ->type = ASYM;
     asymQ->qConfig = asymQC;
 
@@ -64,6 +80,10 @@ tensor_t *tensorInit(float *data, size_t *dims, size_t numberOfDims, quantizatio
             size += dims[i];
         }
         int32_t *dataInt = reserveMemory(size * sizeof(int32_t));
+	if(dataInt == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
         for (size_t i = 0; i < size; i++) {
             dataInt[i] = (int32_t)data[i];
         }
@@ -72,6 +92,8 @@ tensor_t *tensorInit(float *data, size_t *dims, size_t numberOfDims, quantizatio
         return initTensorWithQSymInt32(data, dims, numberOfDims, quantization, sparsity);
     case ASYM:
         return initTensorWithQAsym(data, dims, numberOfDims, quantization, sparsity);
+    case DELTA:
+        return initTensorWithSymQDelta(data, dims, numberOfDims, quantization, sparsity);
     default:
         PRINT_ERROR("Unknown QType");
         exit(1);
@@ -80,6 +102,10 @@ tensor_t *tensorInit(float *data, size_t *dims, size_t numberOfDims, quantizatio
 
 tensor_t *initTensor(shape_t *shape, quantization_t *quantization, sparsity_t *sparsity) {
     tensor_t *tensor = reserveMemory(sizeof(tensor_t));
+	if(tensor == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
     tensor->shape = shape;
     tensor->quantization = quantization;
     tensor->sparsity = sparsity;
@@ -294,11 +320,19 @@ tensor_t *gradInitAsym(tensor_t *param, uint8_t qBits, roundingMode_t roundingMo
     return initTensor(getShapeLike(param->shape), quantizationInitAsym(qBits, roundingMode),
                       sparsity);
 }
+tensor_t *gradInitSymQDelta(tensor_t *param, uint8_t qBits, roundingMode_t roundingMode, sparsity_t *sparsity, uint8_t deltabits) {
+    return initTensor(getShapeLike(param->shape), quantizationInitSymQDelta(qBits, roundingMode, deltabits), sparsity);
+}
+
 
 // getLike
 
 shape_t *getShapeLike(shape_t *shape) {
     shape_t *likeShape = reserveMemory(sizeof(shape_t));
+	if(likeShape == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
 
     size_t numberOfDims = shape->numberOfDimensions;
 
@@ -312,9 +346,31 @@ shape_t *getShapeLike(shape_t *shape) {
 
     return likeShape;
 }
+char *AAquantTypeToString(qtype_t t) {
+    switch (t) {
+    case INT32:
+        return "INT32";
+    case FLOAT32:
+        return "FLOAT32";
+    case SYM_INT32:
+        return "SYMINT32";
+    case SYM:
+        return "SYM";
+    case ASYM:
+        return "ASYM";
+    case DELTA:
+        return "DELTA";
+    default:
+        return "UNKNOWN";
+    }
+}
 
 quantization_t *getQLike(quantization_t *quantization) {
     quantization_t *likeQ = reserveMemory(sizeof(quantization_t));
+	if(likeQ == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
     switch (quantization->type) {
     case FLOAT32:
         initFloat32Quantization(likeQ);
@@ -324,6 +380,10 @@ quantization_t *getQLike(quantization_t *quantization) {
         break;
     case SYM_INT32:
         symInt32QConfig_t *likeSymInt32QC = reserveMemory(sizeof(symInt32QConfig_t));
+	if(likeSymInt32QC == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
         symInt32QConfig_t *symInt32QC = quantization->qConfig;
 
         initSymInt32QConfig(symInt32QC->roundingMode, likeSymInt32QC);
@@ -331,10 +391,25 @@ quantization_t *getQLike(quantization_t *quantization) {
         break;
     case ASYM:
         asymQConfig_t *likeAsymQC = reserveMemory(sizeof(asymQConfig_t));
+	if(likeAsymQC == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
         asymQConfig_t *asymQC = quantization->qConfig;
 
         initAsymQConfig(asymQC->qBits, asymQC->roundingMode, likeAsymQC);
         initAsymQuantization(likeAsymQC, likeQ);
+        break;
+    case DELTA:
+        symQDeltaConfig_t *likeDeltaQC = reserveMemory(sizeof(symQDeltaConfig_t));
+	if(likeDeltaQC == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
+        symQDeltaConfig_t *deltaQC = quantization->qConfig;
+
+        initSymQDeltaConfig(deltaQC->qBits, deltaQC->roundingMode, deltaQC->deltabits, likeDeltaQC);
+        initSymQDeltaQuantization(likeDeltaQC,likeQ);
         break;
     default:
         PRINT_ERROR("Unknown QType");
@@ -356,6 +431,11 @@ uint8_t *getDataLike(quantization_t *quantization, size_t numberOfValues) {
         size_t totalBits = numberOfValues * asymQC->qBits;
         size_t totalBytes = (totalBits + 7) / 8;
         return reserveMemory(totalBytes);
+    case DELTA:
+        symQDeltaConfig_t *deltaQC = quantization->qConfig;
+        size_t totalBitAmount = ((numberOfValues-1) * deltaQC->deltabits) + sizeof(int32_t)*8;
+        size_t totalByteAmount = (totalBitAmount + 7) / 8;
+        return reserveMemory(totalByteAmount);
     default:
         PRINT_ERROR("Unknown QType");
         exit(1);
@@ -371,6 +451,10 @@ sparsity_t *getSparsityLike(sparsity_t *sparsity) {
 
 tensor_t *getTensorLike(tensor_t *tensor) {
     tensor_t *likeTensor = reserveMemory(sizeof(tensor_t));
+	if(likeTensor == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
     size_t numberOfValues = calcNumberOfElementsByShape(tensor->shape);
     likeTensor->data = getDataLike(tensor->quantization, numberOfValues);
     likeTensor->quantization = getQLike(tensor->quantization);
@@ -384,6 +468,10 @@ tensor_t *getTensorLike(tensor_t *tensor) {
 
 parameter_t *parameterInit(tensor_t *param, tensor_t *grad) {
     parameter_t *parameter = reserveMemory(sizeof(parameter_t));
+	if(parameter == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
     parameter->param = param;
     parameter->grad = grad;
 
@@ -427,10 +515,18 @@ void freeParameter(parameter_t *parameter) {
 
 static tensor_t *initTensorWithQInt32(int32_t *data, size_t *dims, size_t numberOfDims,
                                       quantization_t *quantization, sparsity_t *sparsity) {
-    tensor_t *tensor = malloc(sizeof(tensor_t));
+    tensor_t *tensor = reserveMemory(sizeof(tensor_t));
+	if(tensor == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
     tensor->data = (uint8_t *)data;
     shape_t *shape = reserveMemory(sizeof(shape_t));
     size_t *order = reserveMemory(numberOfDims * sizeof(size_t));
+    if( shape == NULL || order == NULL){
+        PRINT_ERROR("Memory Allocation Failed");
+        exit(1);
+    }
     setOrderOfDimsForNewTensor(numberOfDims, order);
     setShape(shape, dims, numberOfDims, order);
     tensor->shape = shape;
@@ -443,11 +539,19 @@ static tensor_t *initTensorWithQInt32(int32_t *data, size_t *dims, size_t number
 static tensor_t *initTensorWithQFloat(float *data, size_t *dims, size_t numberOfDims,
                                       quantization_t *quantization, sparsity_t *sparsity) {
     tensor_t *tensor = reserveMemory(sizeof(tensor_t));
+	if(tensor == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
 
     tensor->data = (uint8_t *)data;
 
     shape_t *shape = reserveMemory(sizeof(shape_t));
     size_t *order = reserveMemory(numberOfDims * sizeof(size_t));
+    if( shape == NULL || order == NULL){
+        PRINT_ERROR("Memory Allocation Failed");
+        exit(1);
+    }
     setOrderOfDimsForNewTensor(numberOfDims, order);
     setShape(shape, dims, numberOfDims, order);
     tensor->shape = shape;
@@ -462,6 +566,10 @@ static tensor_t *initTensorWithQSymInt32(float *data, size_t *dims, size_t numbe
 
     shape_t *shape = reserveMemory(sizeof(shape_t));
     size_t *order = reserveMemory(numberOfDims * sizeof(size_t));
+    if( shape == NULL || order == NULL){
+        PRINT_ERROR("Memory Allocation Failed");
+        exit(1);
+    }
     setOrderOfDimsForNewTensor(numberOfDims, order);
     setShape(shape, dims, numberOfDims, order);
 
@@ -493,6 +601,10 @@ static tensor_t *initTensorWithQAsym(float *data, size_t *dims, size_t numberOfD
 
     shape_t *shape = reserveMemory(sizeof(shape_t));
     size_t *order = reserveMemory(numberOfDims * sizeof(size_t));
+    if( shape == NULL || order == NULL){
+        PRINT_ERROR("Memory Allocation Failed");
+        exit(1);
+    }
     setOrderOfDimsForNewTensor(numberOfDims, order);
     setShape(shape, dims, numberOfDims, order);
 
@@ -522,6 +634,68 @@ static tensor_t *initTensorWithQAsym(float *data, size_t *dims, size_t numberOfD
 
     return asymTensor;
 }
+
+static tensor_t *initTensorWithSymQDelta(float *data, size_t *dims, size_t numberOfDims,
+                                         quantization_t *quantization, sparsity_t *sparsity) {
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    size_t *order = reserveMemory(numberOfDims * sizeof(size_t));
+    if( shape == NULL || order == NULL){
+        PRINT_ERROR("Memory Allocation Failed");
+        exit(1);
+    }
+    setOrderOfDimsForNewTensor(numberOfDims, order);
+    setShape(shape, dims, numberOfDims, order);
+
+    tensor_t floatTensor;
+    quantization_t floatQ;
+    initFloat32Quantization(&floatQ);
+
+    floatTensor.data = (uint8_t *)data;
+    floatTensor.shape = shape;
+    floatTensor.quantization = &floatQ;
+    floatTensor.sparsity = sparsity;
+    symQDeltaConfig_t *deltaConfig = quantization->qConfig;
+    roundingMode_t roundingMode = deltaConfig->roundingMode;
+
+    tensor_t symInt32Tensor;
+    symInt32QConfig_t symInt32QConfig;
+    quantization_t symInt32Q;
+    initSymInt32QConfig(roundingMode, &symInt32QConfig);
+    initSymInt32Quantization(&symInt32QConfig, &symInt32Q);
+
+
+    symInt32Tensor.data = (uint8_t *)data;
+    symInt32Tensor.shape = shape;
+    symInt32Tensor.quantization = &symInt32Q;
+    symInt32Tensor.sparsity = sparsity;
+    convertTensor(&floatTensor, &symInt32Tensor);
+
+    tensor_t *symQDeltaTensor = reserveMemory(sizeof(tensor_t));
+	if(symQDeltaTensor == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
+
+    size_t numberOfValues = calcNumberOfElementsByTensor(&symInt32Tensor);
+    uint8_t *symQDeltaData = reserveMemory(sizeof(int32_t) + ceil((numberOfValues-1) * deltaConfig->deltabits/8));
+	if(symQDeltaData == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
+    symQDeltaTensor->data = symQDeltaData;
+    symQDeltaTensor->shape = shape;
+    symQDeltaTensor->quantization = quantization;
+
+    convertTensor(&symInt32Tensor, symQDeltaTensor);
+    symQDeltaTensor->sparsity = sparsity;
+
+    return symQDeltaTensor;
+}
+
+
+
+
+
 
 static void freeTensorPointer(tensor_t *tensor) {
     freeReservedMemory((uint8_t *)tensor);

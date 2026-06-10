@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from prepare_audio_data import DATA_DIR, RAW_DIR, _download_if_missing, _split, read_wav
+from prepare_audio_data import DATA_DIR, RAW_DIR, _split, read_wav
 import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -63,8 +63,22 @@ def _load_dataset() -> tuple[np.ndarray, np.ndarray]:
 
     return X, y
 
+def _download_if_missing(archive_path: Path, zip_url: str) -> None:
+    RAW_DIR.mkdir(parents=True, exist_ok=True)
+
+    if not archive_path.exists():
+        print(f"downloading {zip_url}")
+        urllib.request.urlretrieve(zip_url, archive_path)
+
+    if not EXTRACTED_DIR.exists():
+        EXTRACTED_DIR.mkdir(parents=True, exist_ok=True)
+        print("extracting archive...")
+        import tarfile
+        with tarfile.open(archive_path, "r:gz") as tar:
+            tar.extractall(EXTRACTED_DIR, filter="data")
+
 def main() -> None:
-    _download_if_missing(ARCHIVE_PATH, EXTRACTED_DIR, ZIP_URL)
+    _download_if_missing(ARCHIVE_PATH, ZIP_URL)
     NPY_DIRECTORY.mkdir(parents=True, exist_ok=True)
 
     X, y = _load_dataset()

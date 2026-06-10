@@ -115,9 +115,9 @@ static tensorArray_t *buildOneHotLabels(tensorArray_t *intLabels) {
     for (size_t i = 0; i < intLabels->size; ++i) {
         size_t *dims = reserveMemory(1 * sizeof(size_t));
         size_t *order = reserveMemory(1 * sizeof(size_t));
+        shape_t *shape = reserveMemory(sizeof(shape_t));
         dims[0] = NUM_CLASSES;
         order[0] = 0;
-        shape_t *shape = reserveMemory(sizeof(shape_t));
         shape->dimensions = dims;
         shape->orderOfDimensions = order;
         shape->numberOfDimensions = 1;

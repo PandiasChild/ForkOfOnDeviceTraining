@@ -3,6 +3,8 @@
 #include "QuantizationApi.h"
 #include "QuantizationApiInternal.h"
 #include "StorageApi.h"
+#include "stdlib.h"
+#include "Common.h"
 
 quantization_t *quantizationInitFloat() {
     quantization_t *q = reserveMemory(sizeof(quantization_t));
@@ -19,6 +21,10 @@ quantization_t *quantizationInitInt32() {
 quantization_t *quantizationInitSymInt32(roundingMode_t roundingMode) {
     quantization_t *q = reserveMemory(sizeof(quantization_t));
     symInt32QConfig_t *qC = reserveMemory(sizeof(symInt32QConfig_t));
+    if( qC == NULL || q == NULL){
+        PRINT_ERROR("Memory Allocation Failed");
+        exit(1);
+    }
     initSymInt32QConfig(roundingMode, qC);
     initSymInt32Quantization(qC, q);
     return q;
@@ -43,6 +49,10 @@ quantization_t *quantizationInitSym(uint8_t qBits, roundingMode_t roundingMode) 
 quantization_t *quantizationInitAsym(uint8_t qBits, roundingMode_t roundingMode) {
     quantization_t *q = reserveMemory(sizeof(quantization_t));
     asymQConfig_t *qC = reserveMemory(sizeof(asymQConfig_t));
+    if( qC == NULL || q == NULL){
+        PRINT_ERROR("Memory Allocation Failed");
+        exit(1);
+    }
     initAsymQConfig(qBits, roundingMode, qC);
     initAsymQuantization(qC, q);
     return q;
@@ -51,5 +61,17 @@ quantization_t *quantizationInitAsym(uint8_t qBits, roundingMode_t roundingMode)
 quantization_t *quantizationInitBool(void) {
     quantization_t *q = reserveMemory(sizeof(quantization_t));
     initBoolQuantization(q);
+    return q;
+}
+
+quantization_t *quantizationInitSymQDelta(uint8_t qBits, roundingMode_t roundingMode, uint8_t deltabits) {
+    quantization_t *q = reserveMemory(sizeof(quantization_t));
+    symQDeltaConfig_t *qC = reserveMemory(sizeof(symQDeltaConfig_t));
+    if( qC == NULL || q == NULL){
+        PRINT_ERROR("Memory Allocation Failed");
+        exit(1);
+    }
+    initSymQDeltaConfig(qBits, roundingMode, deltabits, qC);
+    initSymQDeltaQuantization(qC, q);
     return q;
 }

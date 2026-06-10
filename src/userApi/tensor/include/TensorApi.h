@@ -251,9 +251,13 @@ void freeData(tensor_t *tensor);
  * \param shape: Pointer to shape
  */
 void freeShape(shape_t *shape);
-/*! Frees quantization of tensor.
+/*!
+ * @brief Deinitializes the quantization and releases all associated resources.
  *
- * \param quantization: Pointer to quantization
+ * This function cleans up the given quantization instance and frees all
+ * dependent resources, including the quantization configuration (qConfig)
+ *
+ * @param q[in] Pointer to the quantization instance to deinitialize.
  */
 void freeQuantization(quantization_t *quantization);
 

@@ -10,6 +10,7 @@
 #include "TensorApi.h"
 #include "TrainingEpochDefault.h"
 #include "TrainingLoopApi.h"
+#include "stdlib.h"
 
 void freeTrainingStats(trainingStats_t *trainingStats) {
     freeTensor(trainingStats->output);
@@ -153,6 +154,10 @@ static epochStats_t evaluateEpochInternal(layer_t **model, size_t modelSize,
     size_t *tp = reserveMemory(numClasses * sizeof(size_t));
     size_t *predCount = reserveMemory(numClasses * sizeof(size_t));
     size_t *actualCount = reserveMemory(numClasses * sizeof(size_t));
+    if( tp == NULL || predCount == NULL || actualCount == NULL){
+        PRINT_ERROR("Memory Allocation Failed");
+        exit(1);
+    }
 
     for (size_t c = 0; c < numClasses; c++) {
         tp[c] = 0;

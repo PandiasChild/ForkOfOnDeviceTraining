@@ -42,8 +42,20 @@ void initSymInt32QConfigWithQMaxBits(roundingMode_t roundingMode,
                                      symInt32QConfig_t *symInt32QConfig, uint8_t qMaxBits);
 void initSymQConfig(uint8_t qBits, roundingMode_t roundingMode, symQConfig_t *symQConfig);
 void initAsymQConfig(uint8_t qBits, roundingMode_t roundingMode, asymQConfig_t *asymQConfig);
-
-void initInt32Quantization(quantization_t *quantization);
+/**
+ * @brief Initializes a symmetric delta quantization configuration.
+ *
+ * This function sets up a symQDeltaConfig_t structure used for delta-based quantization.
+ * It configures the number of Q-format fractional bits, the rounding mode, and the number
+ * of delta bits. The scale is initialized to 1.0f by default.
+ *
+ * @param qBits[in]            Number of fractional bits used in the Q-format representation.
+ * @param roundingMode[in]     Specifies the rounding mode used during quantization.
+ * @param deltabits[in]        Number of bits used for delta encoding.
+ * @param symQDeltaConfig[out] Pointer to the configuration structure to be initialized.
+ */
+void initSymQDeltaConfig(uint8_t qBits, roundingMode_t roundingMode, uint8_t deltabits, symQDeltaConfig_t *symQDeltaConfig);
+    void initInt32Quantization(quantization_t *quantization);
 void initFloat32Quantization(quantization_t *quantization);
 void initBoolQuantization(quantization_t *quantization);
 
