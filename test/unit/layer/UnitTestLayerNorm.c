@@ -2,6 +2,7 @@
 
 #include <math.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
 
 #include "Arithmetic.h"
@@ -45,6 +46,37 @@ static parameter_t *buildFloatParam(size_t numDims, const size_t *dimsIn, const 
     tensor_t *p = buildFloatTensorND(numDims, dimsIn, vals);
     tensor_t *g = gradInitFloat(p, NULL);
     return parameterInit(p, g);
+}
+
+/* Build a SYM_INT32 (HTE, qMaxBits=16) tensor; float vals are quantized via
+ * tensorFillFromFloatBuffer -> convertFloatTensorToSymInt32Tensor (absmax ->
+ * scale, round-clamp; absmax==0 -> scale 1.0). NULL vals -> zero mantissas,
+ * default scale 1.0. Caller frees via freeTensor. */
+static tensor_t *buildSymInt32TensorND(size_t numDims, const size_t *dimsIn, const float *vals) {
+    size_t *dims = reserveMemory(numDims * sizeof(size_t));
+    for (size_t i = 0; i < numDims; i++) {
+        dims[i] = dimsIn[i];
+    }
+    size_t *order = reserveMemory(numDims * sizeof(size_t));
+    setOrderOfDimsForNewTensor(numDims, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, numDims, order);
+    tensor_t *t = initTensor(shape, quantizationInitSymInt32(HTE), NULL);
+    if (vals != NULL) {
+        tensorFillFromFloatBuffer(t, vals, calcNumberOfElementsByShape(shape));
+    }
+    return t;
+}
+
+/* SYM_INT32 parameter with SYM_INT32 grad (grads unused in forward-only tests). */
+static parameter_t *buildSymParam(size_t numDims, const size_t *dimsIn, const float *vals) {
+    tensor_t *p = buildSymInt32TensorND(numDims, dimsIn, vals);
+    tensor_t *g = gradInitSymInt32(p, HTE, NULL);
+    return parameterInit(p, g);
+}
+
+static float symScaleOf(tensor_t *t) {
+    return ((symInt32QConfig_t *)t->quantization->qConfig)->scale;
 }
 
 void testConfigStructIsPopulated(void) {
@@ -115,6 +147,66 @@ static layer_t makeLayerNormLayer(layerNormConfig_t *cfg, layerConfig_t *lcfg) {
     lcfg->layerNorm = cfg;
     layer_t layer = {.type = LAYERNORM, .config = lcfg};
     return layer;
+}
+
+/* Dequant-domain invariants (gamma=1, beta=0): per-group dequantized mean ~ 0,
+ * per-group dequantized variance ~ var/(var+eps) (PyTorch eps behavior).
+ * Affine-stable: with gamma=ones the dequantized values are unchanged by the
+ * Task-3 affine stage (mantissa*32767 and scale/32767 cancel). */
+void testSymForwardDequantInvariantsMultiGroup(void) {
+    size_t dims[] = {2, 4};
+    tensor_t *in =
+        buildSymInt32TensorND(2, dims, (float[]){1.f, 2.f, 3.f, 4.f, 10.f, 20.f, 30.f, 40.f});
+    tensor_t *out = buildSymInt32TensorND(2, dims, NULL);
+
+    size_t ns[] = {4};
+    parameter_t *gamma = buildSymParam(1, ns, (float[]){1.f, 1.f, 1.f, 1.f});
+    parameter_t *beta = buildSymParam(1, ns, (float[]){0.f, 0.f, 0.f, 0.f});
+    size_t *normShape = reserveMemory(sizeof(size_t));
+    normShape[0] = 4;
+
+    quantization_t *fq = quantizationInitSymInt32(HTE);
+    quantization_t *bq = quantizationInitFloat();
+    layerNormConfig_t cfg;
+    initLayerNormConfig(&cfg, gamma, beta, normShape, 1, 1e-5f, fq, bq);
+    layerConfig_t lcfg;
+    layer_t layer = makeLayerNormLayer(&cfg, &lcfg);
+
+    layerNormForward(&layer, in, out);
+
+    float scale = symScaleOf(out);
+    int32_t *m = (int32_t *)out->data;
+    float groupMean[2];
+    float groupVar[2];
+    for (size_t g = 0; g < 2; g++) {
+        float mean = 0.f;
+        for (size_t j = 0; j < 4; j++) {
+            mean += (float)m[g * 4 + j] * scale;
+        }
+        mean /= 4.f;
+        float var = 0.f;
+        for (size_t j = 0; j < 4; j++) {
+            float d = (float)m[g * 4 + j] * scale - mean;
+            var += d * d;
+        }
+        groupMean[g] = mean;
+        groupVar[g] = var / 4.f;
+    }
+
+    freeQuantization(bq);
+    freeQuantization(fq);
+    freeReservedMemory(normShape);
+    freeParameter(beta);
+    freeParameter(gamma);
+    freeTensor(out);
+    freeTensor(in);
+
+    /* var/(var+eps): row0 1.25/(1.25+1e-5)=0.999992; row1 125/(125+1e-5)~1.0.
+     * Tolerances absorb input quantization noise (s_x = 40/32767 ~ 1.2e-3). */
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0.f, groupMean[0]);
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0.f, groupMean[1]);
+    TEST_ASSERT_FLOAT_WITHIN(5e-3f, 0.999992f, groupVar[0]);
+    TEST_ASSERT_FLOAT_WITHIN(5e-3f, 1.0f, groupVar[1]);
 }
 
 /* Derivation for testForwardFloatSingleGroup:
@@ -820,6 +912,157 @@ void testGoldBackwardFullRank(void) {
                     gamma_layerNorm_fullRank_len);
 }
 
+/* Constant input -> yhat == 0 exactly in every group (identical mantissas), so
+ * the GLOBAL absmax is 0. Guard: all-zero mantissas, normalization-stage scale
+ * 1.0 (convertFloatTensorToSymInt32Tensor absMax==0 idiom). */
+void testSymForwardConstantInputEmitsZeros(void) {
+    size_t dims[] = {2, 3};
+    tensor_t *in = buildSymInt32TensorND(2, dims, (float[]){7.f, 7.f, 7.f, 7.f, 7.f, 7.f});
+    tensor_t *out = buildSymInt32TensorND(2, dims, NULL);
+
+    size_t ns[] = {3};
+    parameter_t *gamma = buildSymParam(1, ns, (float[]){1.f, 1.f, 1.f});
+    parameter_t *beta = buildSymParam(1, ns, (float[]){0.f, 0.f, 0.f});
+    size_t *normShape = reserveMemory(sizeof(size_t));
+    normShape[0] = 3;
+
+    quantization_t *fq = quantizationInitSymInt32(HTE);
+    quantization_t *bq = quantizationInitFloat();
+    layerNormConfig_t cfg;
+    initLayerNormConfig(&cfg, gamma, beta, normShape, 1, 1e-5f, fq, bq);
+    layerConfig_t lcfg;
+    layer_t layer = makeLayerNormLayer(&cfg, &lcfg);
+
+    layerNormForward(&layer, in, out);
+
+    int32_t mantissas[6];
+    for (size_t i = 0; i < 6; i++) {
+        mantissas[i] = ((int32_t *)out->data)[i];
+    }
+    float scale = symScaleOf(out);
+
+    freeQuantization(bq);
+    freeQuantization(fq);
+    freeReservedMemory(normShape);
+    freeParameter(beta);
+    freeParameter(gamma);
+    freeTensor(out);
+    freeTensor(in);
+
+    for (size_t i = 0; i < 6; i++) {
+        TEST_ASSERT_EQUAL_INT(0, mantissas[i]);
+    }
+    TEST_ASSERT_TRUE(scale > 0.0f);
+}
+
+/* The affine with gamma=ones multiplies every normalized mantissa by exactly
+ * 32767. Recover qNorm = y_q/32767 (remainder must be 0 — pins that the gamma
+ * multiply actually happened) and assert the normalization-stage invariants:
+ * full-range stretch (max |qNorm| == 32767) and near-zero per-group mantissa
+ * sums (Σ n == 0 exactly in real arithmetic; rounding adds <= 0.5/element). */
+void testSymForwardMantissaInvariantsViaOnesGamma(void) {
+    size_t dims[] = {2, 4};
+    tensor_t *in =
+        buildSymInt32TensorND(2, dims, (float[]){1.f, 2.f, 3.f, 4.f, 10.f, 20.f, 30.f, 40.f});
+    tensor_t *out = buildSymInt32TensorND(2, dims, NULL);
+
+    size_t ns[] = {4};
+    parameter_t *gamma = buildSymParam(1, ns, (float[]){1.f, 1.f, 1.f, 1.f});
+    parameter_t *beta = buildSymParam(1, ns, (float[]){0.f, 0.f, 0.f, 0.f});
+    size_t *normShape = reserveMemory(sizeof(size_t));
+    normShape[0] = 4;
+
+    quantization_t *fq = quantizationInitSymInt32(HTE);
+    quantization_t *bq = quantizationInitFloat();
+    layerNormConfig_t cfg;
+    initLayerNormConfig(&cfg, gamma, beta, normShape, 1, 1e-5f, fq, bq);
+    layerConfig_t lcfg;
+    layer_t layer = makeLayerNormLayer(&cfg, &lcfg);
+
+    layerNormForward(&layer, in, out);
+
+    int32_t m[8];
+    for (size_t i = 0; i < 8; i++) {
+        m[i] = ((int32_t *)out->data)[i];
+    }
+
+    freeQuantization(bq);
+    freeQuantization(fq);
+    freeReservedMemory(normShape);
+    freeParameter(beta);
+    freeParameter(gamma);
+    freeTensor(out);
+    freeTensor(in);
+
+    int32_t qNorm[8];
+    int32_t maxAbs = 0;
+    for (size_t i = 0; i < 8; i++) {
+        TEST_ASSERT_EQUAL_INT(0, m[i] % 32767);
+        qNorm[i] = m[i] / 32767;
+        int32_t a = (qNorm[i] < 0) ? -qNorm[i] : qNorm[i];
+        if (a > maxAbs) {
+            maxAbs = a;
+        }
+    }
+    TEST_ASSERT_EQUAL_INT(32767, maxAbs);
+    for (size_t g = 0; g < 2; g++) {
+        int32_t sum = 0;
+        for (size_t j = 0; j < 4; j++) {
+            sum += qNorm[g * 4 + j];
+        }
+        TEST_ASSERT_TRUE(sum >= -4 && sum <= 4);
+    }
+}
+
+/* Constant input + nonzero beta: y = gamma*0 + beta. Pins (a) the affine runs
+ * AFTER the constant guard, (b) the beta-rescale idiom (raw beta_q would
+ * dequantize to 2x the right value here since s_beta = 0.5/32767 != s_y), and
+ * (c) the post-affine output scale s_y = s_norm * s_gamma = 1/32767. */
+void testSymForwardConstantInputAppliesBeta(void) {
+    size_t dims[] = {2, 3};
+    tensor_t *in = buildSymInt32TensorND(2, dims, (float[]){7.f, 7.f, 7.f, 7.f, 7.f, 7.f});
+    tensor_t *out = buildSymInt32TensorND(2, dims, NULL);
+
+    size_t ns[] = {3};
+    parameter_t *gamma = buildSymParam(1, ns, (float[]){1.f, 1.f, 1.f});
+    parameter_t *beta = buildSymParam(1, ns, (float[]){0.5f, -0.25f, 0.125f});
+    size_t *normShape = reserveMemory(sizeof(size_t));
+    normShape[0] = 3;
+
+    quantization_t *fq = quantizationInitSymInt32(HTE);
+    quantization_t *bq = quantizationInitFloat();
+    layerNormConfig_t cfg;
+    initLayerNormConfig(&cfg, gamma, beta, normShape, 1, 1e-5f, fq, bq);
+    layerConfig_t lcfg;
+    layer_t layer = makeLayerNormLayer(&cfg, &lcfg);
+
+    layerNormForward(&layer, in, out);
+
+    float deq[6];
+    float scale = symScaleOf(out);
+    for (size_t i = 0; i < 6; i++) {
+        deq[i] = (float)((int32_t *)out->data)[i] * scale;
+    }
+
+    freeQuantization(bq);
+    freeQuantization(fq);
+    freeReservedMemory(normShape);
+    freeParameter(beta);
+    freeParameter(gamma);
+    freeTensor(out);
+    freeTensor(in);
+
+    float expectedScale = 1.0f / 32767.0f;
+    TEST_ASSERT_FLOAT_WITHIN(expectedScale * 1e-4f, expectedScale, scale);
+    float expBeta[] = {0.5f, -0.25f, 0.125f};
+    for (size_t g = 0; g < 2; g++) {
+        for (size_t j = 0; j < 3; j++) {
+            /* total error <= s_beta/2 (beta storage) + s_y/2 (seed rounding) */
+            TEST_ASSERT_FLOAT_WITHIN(2.0f * expectedScale, expBeta[j], deq[g * 3 + j]);
+        }
+    }
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testConfigStructIsPopulated);
@@ -844,5 +1087,9 @@ int main(void) {
     RUN_TEST(testGoldBackwardD2MultiGroup);
     RUN_TEST(testGoldForwardFullRank);
     RUN_TEST(testGoldBackwardFullRank);
+    RUN_TEST(testSymForwardDequantInvariantsMultiGroup);
+    RUN_TEST(testSymForwardConstantInputEmitsZeros);
+    RUN_TEST(testSymForwardMantissaInvariantsViaOnesGamma);
+    RUN_TEST(testSymForwardConstantInputAppliesBeta);
     return UNITY_END();
 }

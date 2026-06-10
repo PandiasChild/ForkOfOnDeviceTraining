@@ -72,6 +72,7 @@ target_link_libraries(LayerNorm PRIVATE
         DTypes
         Tensor
         Arithmetic
+        Rounding
         Layer
         Common
 )
