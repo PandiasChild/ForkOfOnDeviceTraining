@@ -19,9 +19,17 @@ dataLoader_t *dataLoaderInit(getSampleFn_t getSample, getDatasetSizeFn_t getData
     }
 
     dataLoader_t *dataLoader = reserveMemory(sizeof(dataLoader_t));
+	if(dataLoader == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
 
     size_t numberOfIndices = getDatasetSize();
     size_t *indices = reserveMemory(numberOfIndices * sizeof(size_t));
+	if(indices == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
 
     initDataLoader(dataLoader, getSample, getDatasetSize, getBatch, batchSize, transform,
                    targetTransform, shuffle, shuffleSeed, indices, dropLast);
@@ -50,6 +58,10 @@ static sample_t *getSampleByIndex(dataLoader_t *dataLoader, size_t index) {
 
 static batch_t *getBatch(dataLoader_t *dataLoader, size_t index) {
     batch_t *batch = reserveMemory(sizeof(batch_t));
+	if(batch == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
 
     size_t batchSize = dataLoader->batchSize;
     batch->size = batchSize;

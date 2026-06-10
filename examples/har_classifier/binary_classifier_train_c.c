@@ -11,17 +11,14 @@
 #include "AvgPool1d.h"
 #include "CalculateGradsSequential.h"
 #include "Common.h"
-#include "Conv1dApi.h"
 #include "DataLoader.h"
 #include "DataLoaderApi.h"
 #include "Distributions.h"
 #include "FlattenApi.h"
 #include "InferenceApi.h"
-#include "Kernel.h"
 #include "Layer.h"
 #include "LinearApi.h"
 #include "LossFunction.h"
-#include "MaxPool1d.h"
 #include "NPYLoaderApi.h"
 #include "Quantization.h"
 #include "QuantizationApi.h"
@@ -30,9 +27,11 @@
 #include "SoftmaxApi.h"
 #include "StorageApi.h"
 #include "Tensor.h"
+#include "TensorConversion.h"
 #include "TensorApi.h"
 #include "TrainingLoopApi.h"
 
+#include "../../src/userApi/tensor/include/TensorApi.h"
 #include "npy_writer.h"
 
 #define EPOCHS 20
@@ -46,15 +45,14 @@
 #define IN_CHANNELS 9
 #define LEN_INPUT 128
 
-#define C1_OUT 16
-#define C1_K 7
-#define C2_OUT 32
-#define C2_K 5
-#define C3_OUT 64
-#define C3_K 3
+#define L1_OUT 32
+// #define L2_OUT NUM_CLASSES
 
-/* 3 x (Conv1d + ReLU + Pool) + Flatten + Linear + Softmax = 12 layers */
-#define MODEL_SIZE 12
+#define MODEL_SIZE 5
+#define ROUNDING_MODE HTE
+
+// har_classifier: FINAL test_loss=0.3498 test_acc=0.9046
+
 
 /* ------------------------------------------------------------------------- */
 /* Datasets and dataloader thunks (mirrors example/MnistExperiment.c).       */
@@ -64,11 +62,13 @@ static dataset_t g_trainDataset;
 static dataset_t g_valDataset;
 static dataset_t g_testDataset;
 
-/* Per-sample shape after npyLoad strips the leading N dim is [9, 128] (rank-2)
+/*! @brief Per-sample shape after npyLoad strips the leading N dim is [9, 128] (rank-2)
  * for items and rank-0 (single int32 value) for labels. The C model expects
  * rank-3 inputs [B=1, 9, 128] for Conv1d and rank-1 one-hot float labels [6]
- * for CrossEntropy. We rebuild both at load time. */
-
+ * for CrossEntropy. We rebuild both at load time.
+ *
+ * @param[in/out] items to reshape
+ * */
 static void reshapeItemsAddBatchDim(tensorArray_t *items) {
     /* items->array[i] currently has shape [9, 128] rank-2. Replace with
      * [1, 9, 128] rank-3. Data layout is row-major and unchanged, so we only
@@ -96,7 +96,6 @@ static void reshapeItemsAddBatchDim(tensorArray_t *items) {
         t->shape->numberOfDimensions = newRank;
     }
 }
-
 static tensorArray_t *buildOneHotLabels(tensorArray_t *intLabels) {
     /* intLabels->array[i] is a rank-0 int32 tensor (single class index 0..5).
      * We allocate a brand-new tensorArray_t whose entries are rank-1 float32
@@ -130,24 +129,30 @@ static tensorArray_t *buildOneHotLabels(tensorArray_t *intLabels) {
     return out;
 }
 
+
+
 static void initDataSets(void) {
     tensorArray_t *trainItems = npyLoad("examples/har_classifier/data/train_x.npy");
     tensorArray_t *trainLabelsRaw = npyLoad("examples/har_classifier/data/train_y.npy");
     reshapeItemsAddBatchDim(trainItems);
     g_trainDataset.items = trainItems;
     g_trainDataset.labels = buildOneHotLabels(trainLabelsRaw);
+    freeTensorArray(trainLabelsRaw);
+    printTensor(g_trainDataset.labels->array[0]);
 
     tensorArray_t *valItems = npyLoad("examples/har_classifier/data/val_x.npy");
     tensorArray_t *valLabelsRaw = npyLoad("examples/har_classifier/data/val_y.npy");
     reshapeItemsAddBatchDim(valItems);
     g_valDataset.items = valItems;
     g_valDataset.labels = buildOneHotLabels(valLabelsRaw);
+    freeTensorArray(valLabelsRaw);
 
     tensorArray_t *testItems = npyLoad("examples/har_classifier/data/test_x.npy");
     tensorArray_t *testLabelsRaw = npyLoad("examples/har_classifier/data/test_y.npy");
     reshapeItemsAddBatchDim(testItems);
     g_testDataset.items = testItems;
     g_testDataset.labels = buildOneHotLabels(testLabelsRaw);
+    freeTensorArray(testLabelsRaw);
 }
 
 static sample_t *getTrainSample(size_t id) {
@@ -174,134 +179,71 @@ static size_t getTestSize(void) {
 /* Model parameters (file-static — must outlive buildModel).                 */
 /* ------------------------------------------------------------------------- */
 
-/* Conv1d weights: [Cout, Cin, K]. Bias: [Cout] rank-1 (matches Conv1d.c). */
-static float c1_w_data[C1_OUT * IN_CHANNELS * C1_K];
-static size_t c1_w_dims[3] = {C1_OUT, IN_CHANNELS, C1_K};
-static float c1_b_data[C1_OUT];
-static size_t c1_b_dims[1] = {C1_OUT};
+static float weight0Data[L1_OUT*LEN_INPUT] = {0};
+static size_t weight0Dims[] = {L1_OUT, LEN_INPUT};
 
-static float c2_w_data[C2_OUT * C1_OUT * C2_K];
-static size_t c2_w_dims[3] = {C2_OUT, C1_OUT, C2_K};
-static float c2_b_data[C2_OUT];
-static size_t c2_b_dims[1] = {C2_OUT};
+static float bias0Data[20] = {0};
+static size_t bias0Dims[] = {1, L1_OUT};
 
-static float c3_w_data[C3_OUT * C2_OUT * C3_K];
-static size_t c3_w_dims[3] = {C3_OUT, C2_OUT, C3_K};
-static float c3_b_data[C3_OUT];
-static size_t c3_b_dims[1] = {C3_OUT};
+static float weight1Data[NUM_CLASSES*L1_OUT] = {0};
+static size_t weight1Dims[2] = {NUM_CLASSES, L1_OUT};
 
-/* Linear weights: [outFeat, inFeat]. Bias: [1, outFeat]. */
-static float fc_w_data[NUM_CLASSES * C3_OUT];
-static size_t fc_w_dims[2] = {NUM_CLASSES, C3_OUT};
-static float fc_b_data[NUM_CLASSES];
-static size_t fc_b_dims[2] = {1, NUM_CLASSES};
+static float bias1Data[NUM_CLASSES] = {0};
+static size_t bias1Dims[2] = {1, NUM_CLASSES};
 
-static parameter_t *buildParam(distributionType_t dist, float *data, size_t *dims, size_t ndim,
+static parameter_t *buildParam(distributionType_t dist, quantization_t *q, float *data, size_t *dims, size_t ndim,
                                size_t fanIn, size_t fanOut) {
-    quantization_t *q = quantizationInitFloat();
     tensor_t *p = tensorInitWithDistribution(dist, data, dims, ndim, q, NULL, fanIn, fanOut);
     tensor_t *g = gradInitFloat(p, NULL);
     return parameterInit(p, g);
 }
 
-/* MaxPool1d/AvgPool1d have no userApi; we mirror UnitTestMaxPool1d.c, but use
- * reserveMemory for backing storage (since these helpers may run more than once
- * and need addresses that survive across calls). */
 
-static layer_t *buildMaxPool1dLayer(size_t kSize, size_t stride, size_t outC, size_t outLen) {
-    quantization_t *q = quantizationInitFloat();
-
-    kernel_t *kernel = reserveMemory(sizeof(kernel_t));
-    initKernel(kernel, kSize, VALID, /*dilation*/ 1, stride);
-
-    /* Argmax buffer is sized for B=1 (training_batch iterates microbatch-by-
-     * microbatch), shape [1, outC, outLen]. */
-    size_t numArgmax = 1 * outC * outLen;
-    int32_t *argmaxBuf = reserveMemory(numArgmax * sizeof(int32_t));
-    size_t *argmaxDims = reserveMemory(3 * sizeof(size_t));
-    argmaxDims[0] = 1;
-    argmaxDims[1] = outC;
-    argmaxDims[2] = outLen;
-    tensor_t *argmax = tensorInitInt32(argmaxBuf, argmaxDims, 3, NULL);
-
-    maxPool1dConfig_t *cfg = reserveMemory(sizeof(maxPool1dConfig_t));
-    initMaxPool1dConfig(cfg, kernel, argmax, q, q);
-
-    layer_t *layer = reserveMemory(sizeof(layer_t));
-    layerConfig_t *lc = reserveMemory(sizeof(layerConfig_t));
-    layer->type = MAXPOOL1D;
-    lc->maxPool1d = cfg;
-    layer->config = lc;
-    return layer;
-}
-
-static layer_t *buildAvgPool1dLayer(size_t kSize, size_t stride) {
-    quantization_t *q = quantizationInitFloat();
-
-    kernel_t *kernel = reserveMemory(sizeof(kernel_t));
-    initKernel(kernel, kSize, VALID, /*dilation*/ 1, stride);
-
-    avgPool1dConfig_t *cfg = reserveMemory(sizeof(avgPool1dConfig_t));
-    initAvgPool1dConfig(cfg, kernel, q, q);
-
-    layer_t *layer = reserveMemory(sizeof(layer_t));
-    layerConfig_t *lc = reserveMemory(sizeof(layerConfig_t));
-    layer->type = AVGPOOL1D;
-    lc->avgPool1d = cfg;
-    layer->config = lc;
-    return layer;
-}
-
-//hier model
-// 1x linear + softmax und dann trainieren lassen
 static void buildModel(layer_t **model) {
-    quantization_t *q1 = quantizationInitFloat();
-    quantization_t *q2 = quantizationInitFloat();
-    quantization_t *q3 = quantizationInitFloat();
-    quantization_t *q4 = quantizationInitFloat();
+    uint8_t qBits = 16;
+    roundingMode_t roundingMode = ROUNDING_MODE;
+    uint8_t deltabits = qBits - 2;
+    quantization_t *q1 = quantizationInitSymInt32(roundingMode);
+    quantization_t *q2 = quantizationInitSymInt32(roundingMode);
+    quantization_t *q3 = quantizationInitSymInt32(roundingMode);
+    quantization_t *q4 = quantizationInitSymInt32(roundingMode);
+    quantization_t *q5 = quantizationInitSymInt32(roundingMode);
+    quantization_t *q6 = quantizationInitSymInt32(roundingMode);
+    quantization_t *q7 = quantizationInitSymInt32(roundingMode);
+    quantization_t *q8 = quantizationInitSymInt32(roundingMode);
+    quantization_t *q9 = quantizationInitSymInt32(roundingMode);
+    quantization_t *q0 = quantizationInitSymInt32(roundingMode);
 
-    /* Block 1: Conv1d(9->16, K=7, padding=SAME), ReLU, MaxPool(K=2,S=2). */
-    kernel_t *k1 = reserveMemory(sizeof(kernel_t));
-    initKernel(k1, C1_K, SAME, 1, 1);
-    parameter_t *c1_w =
-        buildParam(XAVIER_UNIFORM, c1_w_data, c1_w_dims, 3, IN_CHANNELS * C1_K, C1_OUT * C1_K);
-    parameter_t *c1_b = buildParam(ZEROS, c1_b_data, c1_b_dims, 1, 1, C1_OUT);
-    model[0] = conv1dLayerInitLegacy(c1_w, c1_b, k1, q1, q2, q3, q4);
-    model[1] = reluLayerInitLegacy(quantizationInitFloat(), quantizationInitFloat());
-    model[2] = buildMaxPool1dLayer(2, 2, C1_OUT, LEN_INPUT / 2);
+    quantization_t *dq1 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
+    quantization_t *dq2 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
+    quantization_t *dq3 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
+    quantization_t *dq4 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
+    quantization_t *dq5 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
+    quantization_t *dq6 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
 
-    /* Block 2: Conv1d(16->32, K=5, padding=SAME), ReLU, MaxPool(K=2,S=2). */
-    kernel_t *k2 = reserveMemory(sizeof(kernel_t));
-    initKernel(k2, C2_K, SAME, 1, 1);
-    parameter_t *c2_w =
-        buildParam(XAVIER_UNIFORM, c2_w_data, c2_w_dims, 3, C1_OUT * C2_K, C2_OUT * C2_K);
-    parameter_t *c2_b = buildParam(ZEROS, c2_b_data, c2_b_dims, 1, 1, C2_OUT);
-    model[3] =
-        conv1dLayerInitLegacy(c2_w, c2_b, k2, quantizationInitFloat(), quantizationInitFloat(),
-                              quantizationInitFloat(), quantizationInitFloat());
-    model[4] = reluLayerInitLegacy(quantizationInitFloat(), quantizationInitFloat());
-    model[5] = buildMaxPool1dLayer(2, 2, C2_OUT, LEN_INPUT / 4);
+    model[0] = flattenLayerInit();
 
-    /* Block 3: Conv1d(32->64, K=3, padding=SAME), ReLU, AvgPool(K=32,S=32). */
-    kernel_t *k3 = reserveMemory(sizeof(kernel_t));
-    initKernel(k3, C3_K, SAME, 1, 1);
-    parameter_t *c3_w =
-        buildParam(XAVIER_UNIFORM, c3_w_data, c3_w_dims, 3, C2_OUT * C3_K, C3_OUT * C3_K);
-    parameter_t *c3_b = buildParam(ZEROS, c3_b_data, c3_b_dims, 1, 1, C3_OUT);
-    model[6] =
-        conv1dLayerInitLegacy(c3_w, c3_b, k3, quantizationInitFloat(), quantizationInitFloat(),
-                              quantizationInitFloat(), quantizationInitFloat());
-    model[7] = reluLayerInitLegacy(quantizationInitFloat(), quantizationInitFloat());
-    model[8] = buildAvgPool1dLayer(LEN_INPUT / 4, LEN_INPUT / 4);
+    // Linear 128→32
+    parameter_t *weight0 = buildParam(XAVIER_UNIFORM, dq1, weight0Data, weight0Dims, 2,
+                                      LEN_INPUT, L1_OUT);
 
-    /* Head: Flatten, Linear(64 -> 6), Softmax. */
-    model[9] = flattenLayerInit();
-    parameter_t *fc_w = buildParam(XAVIER_UNIFORM, fc_w_data, fc_w_dims, 2, C3_OUT, NUM_CLASSES);
-    parameter_t *fc_b = buildParam(ZEROS, fc_b_data, fc_b_dims, 2, 1, NUM_CLASSES);
-    model[10] = linearLayerInitLegacy(fc_w, fc_b, quantizationInitFloat(), quantizationInitFloat(),
-                                      quantizationInitFloat(), quantizationInitFloat());
-    model[11] = softmaxLayerInitLegacy(quantizationInitFloat(), quantizationInitFloat());
+    parameter_t *bias0 = buildParam(ZEROS, dq2, bias0Data, bias0Dims, 2, 1, L1_OUT);
+
+    model[1] = linearLayerInit(weight0, bias0, dq3, q1, q2, q3);
+
+    // ReLU
+    model[2] = reluLayerInit(q4, q5);
+    // Linear 32→6
+    parameter_t *weight1 = buildParam(XAVIER_UNIFORM, dq4, weight1Data, weight1Dims, 2,
+                                      L1_OUT, NUM_CLASSES);
+
+    parameter_t *bias1 = buildParam(ZEROS, dq5, bias1Data, bias1Dims, 2, 1, 1);
+
+    model[3] = linearLayerInit(weight1, bias1, dq6, q6, q7, q8);
+    // Softmax
+    model[4] = softmaxLayerInit(q9, q0);
 }
+
 
 /* ------------------------------------------------------------------------- */
 /* Per-epoch JSON log writer + epoch callback.                               */
@@ -366,10 +308,11 @@ int main(void) {
                                               /*dropLast*/ true);
 
     layer_t *model[MODEL_SIZE];
+    printf("main: start buildModel\n");
     buildModel(model);
-
+    printf("main: start sgdMCreateOptim\n");
     optimizer_t *sgd =
-        sgdMCreateOptim(LEARNING_RATE, MOMENTUM, /*weightDecay*/ 0.0f, model, MODEL_SIZE, FLOAT32);
+        sgdMCreateOptim(LEARNING_RATE, MOMENTUM, /*weightDecay*/ 0.0f, model, MODEL_SIZE, SYM_INT32);
 
     g_log_file = fopen("examples/har_classifier/logs/c.json", "w");
     if (!g_log_file) {
@@ -387,13 +330,14 @@ int main(void) {
     fflush(g_log_file);
 
     clock_gettime(CLOCK_MONOTONIC, &g_epoch_t0);
-
+    printf("main: start trainingRun\n");
     trainingRunResult_t result = trainingRun(
         model, MODEL_SIZE,
         (lossConfig_t){
             .funcType = CROSS_ENTROPY, .backwardReduction = REDUCTION_MEAN, .classWeights = NULL},
         trainLoader, valLoader, sgd, EPOCHS, calculateGradsSequential, inferenceWithLoss,
         epochCallback);
+    printf("main: trainingRun done\n");
     (void)result;
 
     epochStats_t testStats = evaluationEpochWithMetrics(

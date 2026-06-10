@@ -77,6 +77,10 @@ static void initBufferOutput(tensor_t *buffer, layer_t *currentLayer, shape_t *i
     shape_t *outShape = reserveMemory(sizeof(shape_t));
     size_t *outDims = reserveMemory(sizeDims * sizeof(size_t));
     size_t *outOrder = reserveMemory(sizeDims * sizeof(size_t));
+    if( outShape == NULL || outDims == NULL || outOrder == NULL ){
+        PRINT_ERROR("Memory Allocation Failed");
+        exit(1);
+    }
 
     outShape->dimensions = outDims;
     outShape->numberOfDimensions = sizeDims;
@@ -88,8 +92,11 @@ static void initBufferOutput(tensor_t *buffer, layer_t *currentLayer, shape_t *i
     size_t numValues = calcNumberOfElementsByShape(outShape);
     size_t sizeData = calcNumberOfBytesForData(currentQ, numValues);
     uint8_t *data = reserveMemory(sizeData);
-
     quantization_t *q = reserveMemory(sizeof(quantization_t));
+    if(data == NULL || q == NULL){
+        PRINT_ERROR("Memory Allocation Failed");
+        exit(1);
+    }
     switch (currentQ->type) {
     case FLOAT32:
         initFloat32Quantization(q);
@@ -97,6 +104,10 @@ static void initBufferOutput(tensor_t *buffer, layer_t *currentLayer, shape_t *i
     case SYM_INT32:
         symInt32QConfig_t *currentQC = currentQ->qConfig;
         symInt32QConfig_t *symInt32QC = reserveMemory(sizeof(symInt32QConfig_t));
+	if(symInt32QC == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
 
         initSymInt32QConfig(currentQC->roundingMode, symInt32QC);
         initSymInt32Quantization(symInt32QC, q);
@@ -118,6 +129,10 @@ static void initBufferInput(tensor_t *input, tensor_t *buffer) {
     shape_t *outShape = reserveMemory(sizeof(shape_t));
     size_t *outDims = reserveMemory(sizeDims * sizeof(size_t));
     size_t *outOrder = reserveMemory(sizeDims * sizeof(size_t));
+    if( outShape == NULL || outDims == NULL || outOrder == NULL ){
+        PRINT_ERROR("Memory Allocation Failed");
+        exit(1);
+    }
 
     outShape->dimensions = outDims;
     outShape->numberOfDimensions = sizeDims;
@@ -126,8 +141,11 @@ static void initBufferInput(tensor_t *input, tensor_t *buffer) {
     size_t numValues = calcNumberOfElementsByTensor(input);
     size_t sizeData = calcNumberOfBytesForData(currentQ, numValues);
     uint8_t *data = reserveMemory(sizeData);
-
     quantization_t *q = reserveMemory(sizeof(quantization_t));
+    if( data == NULL || q == NULL){
+        PRINT_ERROR("Memory Allocation Failed");
+        exit(1);
+    }
     switch (currentQ->type) {
     case FLOAT32:
         q->type = FLOAT32;
@@ -137,6 +155,10 @@ static void initBufferInput(tensor_t *input, tensor_t *buffer) {
         q->type = SYM_INT32;
         symInt32QConfig_t *currentQC = currentQ->qConfig;
         symInt32QConfig_t *symInt32QC = reserveMemory(sizeof(symInt32QConfig_t));
+	if(symInt32QC == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
         symInt32QC->roundingMode = currentQC->roundingMode;
         q->qConfig = symInt32QC;
         break;
@@ -193,6 +215,10 @@ tensor_t **inferenceBatched(layer_t **model, size_t numberOfLayers, batch_t *bat
 
 inferenceStats_t *reserveInferenceStats(tensor_t *label) {
     inferenceStats_t *inferenceStats = reserveMemory(sizeof(inferenceStats_t));
+	if(inferenceStats == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
 
     shape_t *outputShape = getShapeLike(label->shape);
     quantization_t *outputQ = getQLike(label->quantization);

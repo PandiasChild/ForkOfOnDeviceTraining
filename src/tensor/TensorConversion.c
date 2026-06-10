@@ -391,15 +391,18 @@ void convertAsymTensorToSymTensor(tensor_t *inputTensor, tensor_t *outputTensor)
 
 void convertSymInt32TensorToSymQDeltaTensor(tensor_t *inputTensor, tensor_t *outputTensor) {
     size_t numberOfElements = calcNumberOfElementsByTensor(inputTensor);
-    size_t sizeOfUInt8TDataArray =  numberOfElements * sizeof(int32_t);
+    symQDeltaConfig_t *symQDeltaConfig = outputTensor->quantization->qConfig;
+    //TODO: next änderungen vergleichen
+    size_t deltabits = symQDeltaConfig->deltabits;
+    size_t totalBitAmountOfUInt8TDataArray = ((numberOfElements-1) * deltabits) + sizeof(int32_t)*8;
+    size_t sizeOfUInt8TDataArray =  (totalBitAmountOfUInt8TDataArray + 7) / 8;
     size_t sizeOfInt32DataArray = sizeOfUInt8TDataArray/sizeof(int32_t);
 
     int32_t dataInInt32[sizeOfInt32DataArray];
     readBytesAsInt32Array(sizeOfInt32DataArray, inputTensor->data, dataInInt32);
-    symQDeltaConfig_t *symQDeltaConfig = outputTensor->quantization->qConfig;
-    size_t y = symQDeltaConfig->deltabits;
-    int32_t dMax = pow(2, y) - 1;
-    int32_t dMin = - pow(2, y) ;
+
+    int32_t dMax = pow(2, deltabits) - 1;
+    int32_t dMin = - pow(2, deltabits) ;
     int32_t deltasInInt32[sizeOfInt32DataArray];
     deltasInInt32[0] = readBytesAsInt32(&inputTensor->data[0]);
     for (int i= 1; i < sizeOfInt32DataArray; i++){
@@ -417,27 +420,29 @@ void convertSymInt32TensorToSymQDeltaTensor(tensor_t *inputTensor, tensor_t *out
     symQDeltaConfig->scale = symInt32QConfig->scale;
     symQDeltaConfig->roundingMode = symInt32QConfig->roundingMode;
     symQDeltaConfig->qBits = symInt32QConfig->qMaxBits;
+    copyDimsAndSparsityToTensor(inputTensor, outputTensor);
 }
 
 void convertSymQDeltaTensorToSymInt32Tensor(
     tensor_t *inputTensor,
-    tensor_t *outputTensor)
-{
+    tensor_t *outputTensor){
+    //calcBytesPerElement???
     size_t numberOfElements = calcNumberOfElementsByTensor(outputTensor);
     symQDeltaConfig_t *symQDeltaConfig = inputTensor->quantization->qConfig;
-    size_t sizeOfUInt8TDataArray =  sizeof(int32_t) + ((numberOfElements-1) * symQDeltaConfig->deltabits);
+    size_t totalBitAmountOfUInt8TDataArray = ((numberOfElements-1) * symQDeltaConfig->deltabits) + sizeof(int32_t);
+    size_t sizeOfUInt8TDataArray =  (totalBitAmountOfUInt8TDataArray + 7) / 8;
     size_t sizeOfInt32DataArray = sizeOfUInt8TDataArray/sizeof(int32_t);
-
+    printf("convertSymQDeltaTensorToSymInt32Tensor\n");
+// TODO: next hier gucken was hier abgeht!
     uint8_t deltasInByteArray[sizeOfUInt8TDataArray];
-
     for (int i = 0; i < sizeof(int32_t); i++) {
         deltasInByteArray[i] = inputTensor->data[i];
     }
-
+    uint8_t indexOfSecondElement = sizeof(int32_t) - 1;
     byteConversion(
-        &inputTensor->data[sizeof(int32_t) - 1],
+        &inputTensor->data[indexOfSecondElement],
         symQDeltaConfig->deltabits,
-        &deltasInByteArray[sizeof(int32_t) - 1],
+        &deltasInByteArray[indexOfSecondElement],
         32,
         sizeOfInt32DataArray - 1);
 
@@ -468,6 +473,8 @@ void convertSymQDeltaTensorToSymInt32Tensor(
     symInt32QConfig->scale = symQDeltaConfig->scale;
     symInt32QConfig->roundingMode = symQDeltaConfig->roundingMode;
     symInt32QConfig->qMaxBits = symQDeltaConfig->qBits;
+
+    copyDimsAndSparsityToTensor(inputTensor, outputTensor);
 }
 
 

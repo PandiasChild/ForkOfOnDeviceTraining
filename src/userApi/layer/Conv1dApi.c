@@ -2,6 +2,7 @@
 
 #include <stdbool.h>
 #include <stdlib.h>
+#include <std.io>
 
 #include "Common.h"
 #include "Conv1d.h"
@@ -25,6 +26,10 @@ layer_t *conv1dLayerInitLegacy(parameter_t *weights, parameter_t *bias, kernel_t
                                quantization_t *biasGradQ, quantization_t *propLossQ) {
     layer_t *conv1dLayer = reserveMemory(sizeof(layer_t));
     layerConfig_t *layerConfig = reserveMemory(sizeof(layerConfig_t));
+    if( conv1dLayer == NULL || layerConfig == NULL){
+        PRINT_ERROR("Memory Allocation Failed");
+        exit(1);
+    }
     conv1dConfig_t *conv1dConfig = reserveMemory(sizeof(conv1dConfig_t));
 
     initConv1dConfigWithWeightsAndBias(conv1dConfig, kernel, weights, bias, 1u, forwardQ,

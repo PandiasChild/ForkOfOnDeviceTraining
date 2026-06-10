@@ -14,6 +14,7 @@
 #include "StorageApi.h"
 #include "Tensor.h"
 #include "TensorApi.h"
+#include "Common.h"
 
 layer_t *linearLayerInitLegacy(parameter_t *weights, parameter_t *bias, quantization_t *forwardQ,
                                quantization_t *weightGradsQ, quantization_t *biasGradsQ,
@@ -24,6 +25,10 @@ layer_t *linearLayerInitLegacy(parameter_t *weights, parameter_t *bias, quantiza
 
     layerConfig_t *layerConfig = reserveMemory(sizeof(layerConfig_t));
     linearConfig_t *linearConfig = reserveMemory(sizeof(linearConfig_t));
+    if( layerConfig == NULL || linearConfig == NULL){
+        PRINT_ERROR("Memory Allocation Failed");
+        exit(1);
+    }
     layerConfig->linear = linearConfig;
 
     linearConfig->weights = weights;
@@ -47,6 +52,10 @@ layer_t *linearLayerInitNonTrainableLegacy(tensor_t *weights, tensor_t *bias,
 
     layerConfig_t *layerConfig = reserveMemory(sizeof(layerConfig_t));
     linearConfig_t *linearConfig = reserveMemory(sizeof(linearConfig_t));
+    if( layerConfig == NULL || linearConfig == NULL){
+        PRINT_ERROR("Memory Allocation Failed");
+        exit(1);
+    }
     layerConfig->linear = linearConfig;
 
     linearConfig->weights = parameterInit(weights, NULL);

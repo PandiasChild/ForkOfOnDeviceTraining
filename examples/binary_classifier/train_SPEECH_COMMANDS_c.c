@@ -133,22 +133,16 @@ static tensorArray_t *buildOneHotLabels(tensorArray_t *intLabels) {
 
 static void initDataSets(void) {
     tensorArray_t *trainItems = npyLoad("examples/binary_classifier/data/SPEECH_COMMANDS_one_label/train_x.npy");
-    tensorArray_t *trainLabelsRaw = npyLoad("examples/binary_classifier/data/SPEECH_COMMANDS_one_label/train_y.npy");
-    reshapeItemsAddBatchDim(trainItems);
+    tensorArray_t *trainLabels = npyLoad("examples/binary_classifier/data/SPEECH_COMMANDS_one_label/train_y.npy");
     g_trainDataset.items = trainItems;
-    g_trainDataset.labels = buildOneHotLabels(trainLabelsRaw);
 
     tensorArray_t *valItems = npyLoad("examples/binary_classifier/data/SPEECH_COMMANDS_one_label/val_x.npy");
-    tensorArray_t *valLabelsRaw = npyLoad("examples/binary_classifier/data/SPEECH_COMMANDS_one_label/val_y.npy");
-    reshapeItemsAddBatchDim(valItems);
+    tensorArray_t *valLabels = npyLoad("examples/binary_classifier/data/SPEECH_COMMANDS_one_label/val_y.npy");
     g_valDataset.items = valItems;
-    g_valDataset.labels = buildOneHotLabels(valLabelsRaw);
 
     tensorArray_t *testItems = npyLoad("examples/binary_classifier/data/SPEECH_COMMANDS_one_label/test_x.npy");
-    tensorArray_t *testLabelsRaw = npyLoad("examples/binary_classifier/data/SPEECH_COMMANDS_one_label/test_y.npy");
-    reshapeItemsAddBatchDim(testItems);
+    tensorArray_t *testLabels = npyLoad("examples/binary_classifier/data/SPEECH_COMMANDS_one_label/test_y.npy");
     g_testDataset.items = testItems;
-    g_testDataset.labels = buildOneHotLabels(testLabelsRaw);
 }
 
 static sample_t *getTrainSample(size_t id) {
@@ -174,35 +168,18 @@ static size_t getTestSize(void) {
 /* ------------------------------------------------------------------------- */
 /* Model parameters (file-static — must outlive buildModel).                 */
 /* ------------------------------------------------------------------------- */
+static float fc_w_data[NUM_CLASSES * LEN_INPUT]; //32000
+static size_t fc_w_dims[2] = {NUM_CLASSES, LEN_INPUT};
 
-/* Conv1d weights: [Cout, Cin, K]. Bias: [Cout] rank-1 (matches Conv1d.c). */
-static float c1_w_data[C1_OUT * IN_CHANNELS * C1_K];
-static size_t c1_w_dims[3] = {C1_OUT, IN_CHANNELS, C1_K};
-static float c1_b_data[C1_OUT];
-static size_t c1_b_dims[1] = {C1_OUT};
-
-static float c2_w_data[C2_OUT * C1_OUT * C2_K];
-static size_t c2_w_dims[3] = {C2_OUT, C1_OUT, C2_K};
-static float c2_b_data[C2_OUT];
-static size_t c2_b_dims[1] = {C2_OUT};
-
-static float c3_w_data[C3_OUT * C2_OUT * C3_K];
-static size_t c3_w_dims[3] = {C3_OUT, C2_OUT, C3_K};
-static float c3_b_data[C3_OUT];
-static size_t c3_b_dims[1] = {C3_OUT};
-
-/* Linear weights: [outFeat, inFeat]. Bias: [1, outFeat]. */
-static float fc_w_data[NUM_CLASSES * C3_OUT];
-static size_t fc_w_dims[2] = {NUM_CLASSES, C3_OUT};
-static float fc_b_data[NUM_CLASSES];
-static size_t fc_b_dims[2] = {1, NUM_CLASSES};
+static float fc_b_data[NUM_CLASSES]; //2
+static size_t fc_b_dims[1] = {NUM_CLASSES};
 
 static parameter_t *buildParam(distributionType_t dist, float *data, size_t *dims, size_t ndim,
                                size_t fanIn, size_t fanOut) {
-    quantization_t *q = quantizationInitFloat();
-    tensor_t *p = tensorInitWithDistribution(dist, data, dims, ndim, q, NULL, fanIn, fanOut);
-    tensor_t *g = gradInitFloat(p, NULL);
-    return parameterInit(p, g);
+    quantization_t *deltaQuantization = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
+    tensor_t *parameter = tensorInitWithDistribution(dist, data, dims, ndim, deltaQuantization, NULL, fanIn, fanOut);
+    tensor_t *gradients = gradInitFloat(parameter, NULL);
+    return parameterInit(parameter, gradients);
 }
 
 /* MaxPool1d/AvgPool1d have no userApi; we mirror UnitTestMaxPool1d.c, but use
@@ -252,6 +229,55 @@ static layer_t *buildAvgPool1dLayer(size_t kSize, size_t stride) {
     layer->config = lc;
     return layer;
 }
+//TODO: next
+static void buildModel(layer_t **model) {
+    quantization_t *q = quantizationInitFloat();
+
+    // Flatten [1, 28, 28] -> [1, 784]
+    model[0] = flattenLayerInit();
+
+    // Linear 784→20
+    static float weight0Data[20 * 28 * 28] = {0};
+    static size_t weight0Dims[] = {20, 28 * 28};
+    tensor_t *weight0Param = tensorInitWithDistribution(XAVIER_UNIFORM, weight0Data, weight0Dims, 2,
+                                                        q, NULL, 28 * 28, 20);
+    //AUF GAR KEINEN FALL NOCH GRAD INIT ALS DELTA tensor_t *weight0Grad = gradInitSymQDelta(weight0Param, NULL);
+    parameter_t *weight0 = parameterInit(weight0Param, weight0Grad);
+
+    static float bias0Data[20] = {0};
+    static size_t bias0Dims[] = {1, 20};
+    tensor_t *bias0Param =
+        tensorInitWithDistribution(ZEROS, bias0Data, bias0Dims, 2, q, NULL, 1, 20);
+    tensor_t *bias0Grad = gradInitFloat(bias0Param, NULL);
+    parameter_t *bias0 = parameterInit(bias0Param, bias0Grad);
+
+    model[1] = linearLayerInit(weight0, bias0, q, q, q, q);
+
+    // ReLU
+    model[2] = reluLayerInit(q, q);
+
+    // Linear 20→10
+    static float weight1Data[10 * 20] = {0};
+    static size_t weight1Dims[] = {10, 20};
+    tensor_t *weight1Param =
+        tensorInitWithDistribution(XAVIER_UNIFORM, weight1Data, weight1Dims, 2, q, NULL, 20, 10);
+    tensor_t *weight1Grad = gradInitFloat(weight1Param, NULL);
+    parameter_t *weight1 = parameterInit(weight1Param, weight1Grad);
+
+    static float bias1Data[10] = {0};
+    static size_t bias1Dims[] = {1, 10};
+    tensor_t *bias1Param =
+        tensorInitWithDistribution(ZEROS, bias1Data, bias1Dims, 2, q, NULL, 1, 10);
+    tensor_t *bias1Grad = gradInitFloat(bias1Param, NULL);
+    parameter_t *bias1 = parameterInit(bias1Param, bias1Grad);
+
+    model[3] = linearLayerInit(weight1, bias1, q, q, q, q);
+
+    // Softmax
+    model[4] = softmaxLayerInit(q, q);
+}
+
+
 
 static void buildModel(layer_t **model) {
     quantization_t *q1 = quantizationInitFloat();
@@ -259,12 +285,16 @@ static void buildModel(layer_t **model) {
     quantization_t *q3 = quantizationInitFloat();
     quantization_t *q4 = quantizationInitFloat();
 
-    /* Block 1: Conv1d(9->16, K=7, padding=SAME), ReLU, MaxPool(K=2,S=2). */
-    kernel_t *k1 = reserveMemory(sizeof(kernel_t));
-    initKernel(k1, C1_K, SAME, 1, 1);
-    parameter_t *c1_w =
-        buildParam(XAVIER_UNIFORM, c1_w_data, c1_w_dims, 3, IN_CHANNELS * C1_K, C1_OUT * C1_K);
-    parameter_t *c1_b = buildParam(ZEROS, c1_b_data, c1_b_dims, 1, 1, C1_OUT);
+/*
+    static float fc_w_data[NUM_CLASSES * LEN_INPUT]; //32000
+    static size_t fc_w_dims[2] = {NUM_CLASSES, LEN_INPUT};
+
+    static float fc_b_data[NUM_CLASSES]; //2
+    static size_t fc_b_dims[2] = {1, NUM_CLASSES};
+     Block 1: Conv1d(9->16, padding=SAME), ReLU, MaxPool(K=2,S=2). */
+    parameter_t *fc_w =
+        buildParam(XAVIER_UNIFORM, fc_w_data, fc_w_dims, 2, IN_CHANNELS, C1_OUT);
+    parameter_t *fc_b = buildParam(ZEROS, fc_b_data, fc_b_dims, 1, 1, C1_OUT);
     model[0] = conv1dLayerInit(c1_w, c1_b, k1, q1, q2, q3, q4);
     model[1] = reluLayerInit(quantizationInitFloat(), quantizationInitFloat());
     model[2] = buildMaxPool1dLayer(2, 2, C1_OUT, LEN_INPUT / 2);
@@ -343,10 +373,10 @@ static int ensureDir(const char *p) {
 }
 
 int main(void) {
-    if (ensureDir("examples/har_classifier/logs") != 0) {
+    if (ensureDir("examples/bin_classifier/logs") != 0) {
         return 1;
     }
-    if (ensureDir("examples/har_classifier/outputs") != 0) {
+    if (ensureDir("examples/bin_classifier/outputs") != 0) {
         return 1;
     }
 
@@ -368,7 +398,7 @@ int main(void) {
     optimizer_t *sgd =
         sgdMCreateOptim(LEARNING_RATE, MOMENTUM, /*weightDecay*/ 0.0f, model, MODEL_SIZE, FLOAT32);
 
-    g_log_file = fopen("examples/har_classifier/logs/c.json", "w");
+    g_log_file = fopen("examples/bin_classifier/logs/c.json", "w");
     if (!g_log_file) {
         fprintf(stderr, "ERROR: cannot open log file for writing\n");
         return 1;
@@ -376,7 +406,7 @@ int main(void) {
     fprintf(g_log_file,
             "{\n"
             "  \"impl\": \"c\",\n"
-            "  \"example\": \"har_classifier\",\n"
+            "  \"example\": \"bin_classifier\",\n"
             "  \"config\": {\"epochs\": %d, \"batch\": %d, \"lr\": %.6f, "
             "\"momentum\": %.6f, \"seed\": %d, \"shuffle_seed\": %d},\n"
             "  \"epochs\": [\n",
@@ -436,7 +466,7 @@ int main(void) {
 
     size_t outShape[] = {numTest};
     int status = 0;
-    int rc = npyWriteInt32("examples/har_classifier/outputs/c_predictions.npy", predictions,
+    int rc = npyWriteInt32("examples/bin_classifier/outputs/c_predictions.npy", predictions,
                            outShape, 1);
     if (rc != 0) {
         fprintf(stderr, "ERROR: npyWriteInt32 failed (rc=%d)\n", rc);

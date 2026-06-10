@@ -20,6 +20,10 @@ tensorArray_t *npyLoad(char *path) {
 
     uint32_t headerSize = readHeaderSize(f);
     char *header = reserveMemory(headerSize + 1);
+	if(header == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
     readHeader(header, headerSize, f);
 
     dtype_t dtype = getDTypeFromHeader(header);
@@ -55,10 +59,22 @@ tensorArray_t *npyLoad(char *path) {
 
     for (size_t i = 0; i < numberOfTensors; i++) {
         size_t *dims = reserveMemory(rowNumberOfDims * sizeof(size_t));
+	if(dims == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
         memcpy(dims, rowDims, rowNumberOfDims * sizeof(size_t));
         size_t *order = reserveMemory(rowNumberOfDims * sizeof(size_t));
+	if(order == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
         setOrderOfDimsForNewTensor(rowNumberOfDims, order);
         shape_t *shape = reserveMemory(sizeof(shape_t));
+	if(shape == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
         setShape(shape, dims, rowNumberOfDims, order);
 
         /* Fresh quantization clone per tensor: every array entry now owns its
@@ -132,6 +148,10 @@ tensor_t *npyLoadFlat(char *path) {
 
 sample_t *npyGetSample(dataset_t *dataset, size_t index) {
     sample_t *sample = reserveMemory(sizeof(sample_t));
+	if(sample == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
     sample->item = dataset->items->array[index];
     sample->label = dataset->labels->array[index];
 
