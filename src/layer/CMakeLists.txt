@@ -71,6 +71,9 @@ target_include_directories(LayerNorm PUBLIC include)
 target_link_libraries(LayerNorm PRIVATE
         DTypes
         Tensor
+        TensorConversion
+        Quantization
+        Add
         Arithmetic
         Rounding
         Layer

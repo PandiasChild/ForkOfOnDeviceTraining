@@ -338,3 +338,24 @@ grads, block/group scaling, …) → implement or improve a **published** techni
 Tracked as a separate research task. This note is intentionally public (not
 buried in a private spec) so contributors hitting accuracy issues in quantized
 training know this is a known, expected limitation rather than a bug.
+
+### Two accumulation schemes in-tree (both intentional)
+
+- **Strategy A (dynamic-rescale)** — Linear SYM weight grads and LayerNorm
+  gamma/beta grads: per-microbatch `addSymInt32TensorsInplace` (dequantize
+  both operands with their own scales, float-add, requantize the running sum
+  to a fresh absmax scale). Not float-free.
+- **Fixed-scale integer accumulation** — Linear SYM bias grads
+  (`linearCalcBiasGradsSymInt32`): increments are rescaled into the running
+  grad's EXISTING scale and added in integer arithmetic; the scale is never
+  re-derived during accumulation (float-free, following M. Deutel, F. Hannig,
+  C. Mutschler, J. Teich, "On-Device Training of Fully Quantized Deep Neural
+  Networks on Cortex-M Microcontrollers", IEEE TCAD, vol. 44, no. 4,
+  pp. 1250-1261, Apr. 2025, doi:10.1109/TCAD.2024.3484354, arXiv:2407.10734 —
+  the same paper #137 builds on). The coarser resolution (LSB pinned by the
+  running scale) is part of that design.
+
+This is a research framework: deliberate scheme differences like this one
+MUST be documented here, so experimental design stays separable from
+accidental inconsistency. LayerNorm uses strategy A for BOTH gamma and beta
+per the 2026-06-05 LayerNorm spec.
