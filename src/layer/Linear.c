@@ -182,6 +182,14 @@ void linearCalcPropLossFloatWithConversion(linearConfig_t *linearConfig, tensor_
     tensor_t *l = loss;
     tensor_t *pL = propLoss;
 
+    /* #187: the inputs are converted below, but the result is written RAW into
+     * the caller's propLoss. A non-FLOAT32 propLoss would receive float bits
+     * into an int32 buffer — silent garbage. Fail fast (Matmul convention). */
+    if (propLoss->quantization->type != FLOAT32) {
+        PRINT_ERROR("Linear backward: propLossQ is FLOAT32 but the propLoss tensor is not (#187)");
+        exit(1);
+    }
+
     tensor_t weightsFloat;
     size_t sizeWeights = calcNumberOfElementsByTensor(w);
     float weightsFloatData[sizeWeights];
@@ -382,6 +390,15 @@ void linearCalcPropLossSymInt32WithConversion(linearConfig_t *linearConfig, tens
 
     tensor_t *w = getParamFromParameter(linearConfig->weights);
     tensor_t *l = loss;
+
+    /* #187: matmulSymInt32Tensors writes the result scale through propLoss's
+     * qConfig; a FLOAT32 propLoss has qConfig == NULL -> segfault. Fail fast
+     * (Matmul convention). */
+    if (propLoss->quantization->type != SYM_INT32) {
+        PRINT_ERROR(
+            "Linear backward: propLossQ is SYM_INT32 but the propLoss tensor is not (#187)");
+        exit(1);
+    }
 
     tensor_t wSymInt32;
     size_t sizeWeights = calcNumberOfElementsByTensor(w);
