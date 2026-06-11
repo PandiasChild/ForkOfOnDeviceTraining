@@ -18,6 +18,7 @@
 
 #include "expected_layernorm.h"
 #include "expected_layernorm_sym.h"
+#include "expected_layernorm_sym_bwd.h"
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -902,6 +903,162 @@ static void runSymGoldForward(size_t numDims, const size_t *dims, size_t numNorm
     }
 }
 
+/* SYM backward gold runner: hand-built layer with backwardQ = SYM_INT32, fresh
+ * (zero, scale-1.0) grads, backward through the vtable. Asserts:
+ * (a) dgamma/dbeta grad mantissas within gradMantissaTol of the float64
+ *     emulation (quantize-increment + addSymInt32TensorsInplace),
+ * (b) grad scales within 1e-4 relative of the emulated scales,
+ * (c) dequantized grads within gradDequantTol of float64 torch-autograd,
+ * (d) when expDx != NULL: dx mantissas/scale/dequant likewise (dequant asserts
+ *     are the scale-blindness catchers: a dropped s_dy/s_gamma/s_x leaves
+ *     mantissas IDENTICAL and shows up only in the scale).
+ * Fixtures are contiguous default-order: physical offset == g*N + j. */
+static void runSymGoldBackward(
+    size_t numDims, const size_t *dims, size_t numNormDims, const size_t *normShapeIn,
+    const float *xVals, const float *gammaVals, const float *lossGradVals, const int32_t *expDx,
+    float expDxScale, int32_t dxMantissaTol, const float *expDxDequant, float dxDequantTol,
+    const int32_t *expDgamma, float expDgammaScale, const int32_t *expDbeta, float expDbetaScale,
+    int32_t gradMantissaTol, const float *expDgammaDequant, const float *expDbetaDequant,
+    float gradDequantTol, size_t count, size_t normCount) {
+    TEST_ASSERT_TRUE_MESSAGE(count > 0 && count <= 64, "fixture exceeds capture buffer");
+    TEST_ASSERT_TRUE_MESSAGE(normCount > 0 && normCount <= 64, "fixture exceeds capture buffer");
+
+    tensor_t *fwdIn = buildSymInt32TensorND(numDims, dims, xVals);
+    tensor_t *loss = buildSymInt32TensorND(numDims, dims, lossGradVals);
+    tensor_t *propLoss = buildSymInt32TensorND(numDims, dims, NULL);
+    parameter_t *gamma = buildSymParam(numNormDims, normShapeIn, gammaVals);
+    parameter_t *beta = buildSymParam(numNormDims, normShapeIn, NULL); /* zeros; unused in bwd */
+    size_t *normShape = reserveMemory(numNormDims * sizeof(size_t));
+    for (size_t i = 0; i < numNormDims; i++) {
+        normShape[i] = normShapeIn[i];
+    }
+    quantization_t *fq = quantizationInitSymInt32(HTE);
+    quantization_t *bq = quantizationInitSymInt32(HTE);
+    layerNormConfig_t cfg;
+    initLayerNormConfig(&cfg, gamma, beta, normShape, numNormDims, 1e-5f, fq, bq);
+    layerConfig_t lcfg;
+    layer_t layer = makeLayerNormLayer(&cfg, &lcfg);
+
+    layerFunctions[LAYERNORM].backward(&layer, fwdIn, loss, propLoss);
+
+    int32_t dgm[64], dbm[64], dxm[64];
+    for (size_t i = 0; i < normCount; i++) {
+        dgm[i] = ((int32_t *)gamma->grad->data)[i];
+        dbm[i] = ((int32_t *)beta->grad->data)[i];
+    }
+    for (size_t i = 0; i < count; i++) {
+        dxm[i] = ((int32_t *)propLoss->data)[i];
+    }
+    float dgScale = symScaleOf(gamma->grad);
+    float dbScale = symScaleOf(beta->grad);
+    float dxScale = symScaleOf(propLoss);
+
+    freeQuantization(bq);
+    freeQuantization(fq);
+    freeReservedMemory(normShape);
+    freeParameter(beta);
+    freeParameter(gamma);
+    freeTensor(propLoss);
+    freeTensor(loss);
+    freeTensor(fwdIn);
+
+    for (size_t i = 0; i < normCount; i++) {
+        TEST_ASSERT_INT_WITHIN(gradMantissaTol, expDgamma[i], dgm[i]);
+        TEST_ASSERT_INT_WITHIN(gradMantissaTol, expDbeta[i], dbm[i]);
+    }
+    TEST_ASSERT_FLOAT_WITHIN(expDgammaScale * 1e-4f, expDgammaScale, dgScale);
+    TEST_ASSERT_FLOAT_WITHIN(expDbetaScale * 1e-4f, expDbetaScale, dbScale);
+    for (size_t i = 0; i < normCount; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(gradDequantTol, expDgammaDequant[i], (float)dgm[i] * dgScale);
+        TEST_ASSERT_FLOAT_WITHIN(gradDequantTol, expDbetaDequant[i], (float)dbm[i] * dbScale);
+    }
+    if (expDx != NULL) {
+        for (size_t i = 0; i < count; i++) {
+            TEST_ASSERT_INT_WITHIN(dxMantissaTol, expDx[i], dxm[i]);
+        }
+        TEST_ASSERT_FLOAT_WITHIN(expDxScale * 1e-4f, expDxScale, dxScale);
+        for (size_t i = 0; i < count; i++) {
+            TEST_ASSERT_FLOAT_WITHIN(dxDequantTol, expDxDequant[i], (float)dxm[i] * dxScale);
+        }
+    }
+}
+
+void testSymBackwardGoldMultiGroup(void) {
+    size_t dims[] = {3, 4};
+    size_t ns[] = {4};
+    runSymGoldBackward(
+        2, dims, 1, ns, input_layerNormSymBwd_bwdBase, gamma_layerNormSymBwd_bwdBase,
+        lossGrad_layerNormSymBwd_bwdBase, expectedDx_layerNormSymBwd_bwdBase,
+        expectedDxScale_layerNormSymBwd_bwdBase, dxMantissaTol_layerNormSymBwd_bwdBase,
+        expectedDxDequant_layerNormSymBwd_bwdBase, dxDequantTol_layerNormSymBwd_bwdBase,
+        expectedDgamma_layerNormSymBwd_bwdBase, expectedDgammaScale_layerNormSymBwd_bwdBase,
+        expectedDbeta_layerNormSymBwd_bwdBase, expectedDbetaScale_layerNormSymBwd_bwdBase,
+        gradMantissaTol_layerNormSymBwd_bwdBase, expectedDgammaDequant_layerNormSymBwd_bwdBase,
+        expectedDbetaDequant_layerNormSymBwd_bwdBase, gradDequantTol_layerNormSymBwd_bwdBase, 12,
+        4);
+}
+
+/* dy == 0: dx must be all-zero mantissas with the NEUTRAL scale 1.0 (the
+ * absmax==0 idiom), and the fresh zero grads must stay EXACTLY zero with
+ * scale 1.0 (zero increments quantize to zeros/scale-1.0 and 0+0 == 0 through
+ * the strategy-A add). Zero propagates exactly through float products/sums
+ * even under -ffp-contract=fast — no integer pre-check needed (unlike the
+ * forward's constant-input cancellation). */
+void testSymBackwardZeroLossGradEmitsZerosNeutralScale(void) {
+    size_t dims[] = {2, 4};
+    tensor_t *fwdIn =
+        buildSymInt32TensorND(2, dims, (float[]){1.f, 2.f, 3.f, 4.f, 10.f, 20.f, 30.f, 40.f});
+    tensor_t *loss = buildSymInt32TensorND(2, dims, NULL); /* zero mantissas, scale 1.0 */
+    tensor_t *propLoss = buildSymInt32TensorND(2, dims, NULL);
+
+    size_t ns[] = {4};
+    parameter_t *gamma = buildSymParam(1, ns, (float[]){2.f, 1.f, -1.f, 0.5f});
+    parameter_t *beta = buildSymParam(1, ns, NULL);
+    size_t *normShape = reserveMemory(sizeof(size_t));
+    normShape[0] = 4;
+
+    quantization_t *fq = quantizationInitSymInt32(HTE);
+    quantization_t *bq = quantizationInitSymInt32(HTE);
+    layerNormConfig_t cfg;
+    initLayerNormConfig(&cfg, gamma, beta, normShape, 1, 1e-5f, fq, bq);
+    layerConfig_t lcfg;
+    layer_t layer = makeLayerNormLayer(&cfg, &lcfg);
+
+    layerNormBackward(&layer, fwdIn, loss, propLoss);
+
+    int32_t dxm[8], dgm[4], dbm[4];
+    for (size_t i = 0; i < 8; i++) {
+        dxm[i] = ((int32_t *)propLoss->data)[i];
+    }
+    for (size_t i = 0; i < 4; i++) {
+        dgm[i] = ((int32_t *)gamma->grad->data)[i];
+        dbm[i] = ((int32_t *)beta->grad->data)[i];
+    }
+    float dxScale = symScaleOf(propLoss);
+    float dgScale = symScaleOf(gamma->grad);
+    float dbScale = symScaleOf(beta->grad);
+
+    freeQuantization(bq);
+    freeQuantization(fq);
+    freeReservedMemory(normShape);
+    freeParameter(beta);
+    freeParameter(gamma);
+    freeTensor(propLoss);
+    freeTensor(loss);
+    freeTensor(fwdIn);
+
+    for (size_t i = 0; i < 8; i++) {
+        TEST_ASSERT_EQUAL_INT(0, dxm[i]);
+    }
+    TEST_ASSERT_EQUAL_FLOAT(1.0f, dxScale);
+    for (size_t i = 0; i < 4; i++) {
+        TEST_ASSERT_EQUAL_INT(0, dgm[i]);
+        TEST_ASSERT_EQUAL_INT(0, dbm[i]);
+    }
+    TEST_ASSERT_EQUAL_FLOAT(1.0f, dgScale);
+    TEST_ASSERT_EQUAL_FLOAT(1.0f, dbScale);
+}
+
 void testSymGoldParityMultiGroup(void) {
     size_t dims[] = {3, 4};
     size_t ns[] = {4};
@@ -1382,6 +1539,293 @@ void testFactoryOwningSymInt32DeepCopiesQuantizations(void) {
     TEST_ASSERT_TRUE(owns);
 }
 
+/* Spec-mandated freeze-the-scale test: the propLoss scale is data-dependent
+ * and must be RE-derived on every call. Two backwards with dy2 = 10x dy1 on
+ * the same layer/propLoss; each call must match its own golds. */
+void testSymBackwardPropLossScaleRefreshedEveryCall(void) {
+    size_t dims[] = {2, 4};
+    tensor_t *fwdIn = buildSymInt32TensorND(2, dims, input_layerNormSymBwd_bwdTwoCalls);
+    tensor_t *loss1 = buildSymInt32TensorND(2, dims, lossGrad_layerNormSymBwd_bwdTwoCalls);
+    tensor_t *loss2 = buildSymInt32TensorND(2, dims, lossGrad2_layerNormSymBwd_bwdTwoCalls);
+    tensor_t *propLoss = buildSymInt32TensorND(2, dims, NULL);
+
+    size_t ns[] = {4};
+    parameter_t *gamma = buildSymParam(1, ns, gamma_layerNormSymBwd_bwdTwoCalls);
+    parameter_t *beta = buildSymParam(1, ns, NULL);
+    size_t *normShape = reserveMemory(sizeof(size_t));
+    normShape[0] = 4;
+
+    quantization_t *fq = quantizationInitSymInt32(HTE);
+    quantization_t *bq = quantizationInitSymInt32(HTE);
+    layerNormConfig_t cfg;
+    initLayerNormConfig(&cfg, gamma, beta, normShape, 1, 1e-5f, fq, bq);
+    layerConfig_t lcfg;
+    layer_t layer = makeLayerNormLayer(&cfg, &lcfg);
+
+    layerNormBackward(&layer, fwdIn, loss1, propLoss);
+    int32_t dx1[8];
+    for (size_t i = 0; i < 8; i++) {
+        dx1[i] = ((int32_t *)propLoss->data)[i];
+    }
+    float s1 = symScaleOf(propLoss);
+
+    layerNormBackward(&layer, fwdIn, loss2, propLoss);
+    int32_t dx2[8];
+    for (size_t i = 0; i < 8; i++) {
+        dx2[i] = ((int32_t *)propLoss->data)[i];
+    }
+    float s2 = symScaleOf(propLoss);
+
+    freeQuantization(bq);
+    freeQuantization(fq);
+    freeReservedMemory(normShape);
+    freeParameter(beta);
+    freeParameter(gamma);
+    freeTensor(propLoss);
+    freeTensor(loss2);
+    freeTensor(loss1);
+    freeTensor(fwdIn);
+
+    for (size_t i = 0; i < 8; i++) {
+        TEST_ASSERT_INT_WITHIN(dxMantissaTol_layerNormSymBwd_bwdTwoCalls,
+                               expectedDx_layerNormSymBwd_bwdTwoCalls[i], dx1[i]);
+        TEST_ASSERT_INT_WITHIN(dxMantissaTol_layerNormSymBwd_bwdTwoCalls,
+                               expectedDx2_layerNormSymBwd_bwdTwoCalls[i], dx2[i]);
+    }
+    TEST_ASSERT_FLOAT_WITHIN(expectedDxScale_layerNormSymBwd_bwdTwoCalls * 1e-4f,
+                             expectedDxScale_layerNormSymBwd_bwdTwoCalls, s1);
+    TEST_ASSERT_FLOAT_WITHIN(expectedDxScale2_layerNormSymBwd_bwdTwoCalls * 1e-4f,
+                             expectedDxScale2_layerNormSymBwd_bwdTwoCalls, s2);
+}
+
+/* Strategy-A accumulation across microbatch calls: grads after two backwards
+ * must match the emulated two-call accumulation (incl. the intermediate
+ * requant) and stay within the analytic dequant bound of autograd's sum. */
+void testSymBackwardGradsAccumulateAcrossCalls(void) {
+    size_t dims[] = {2, 4};
+    tensor_t *fwdIn = buildSymInt32TensorND(2, dims, input_layerNormSymBwd_bwdTwoCalls);
+    tensor_t *loss1 = buildSymInt32TensorND(2, dims, lossGrad_layerNormSymBwd_bwdTwoCalls);
+    tensor_t *loss2 = buildSymInt32TensorND(2, dims, lossGrad2_layerNormSymBwd_bwdTwoCalls);
+    tensor_t *propLoss = buildSymInt32TensorND(2, dims, NULL);
+
+    size_t ns[] = {4};
+    parameter_t *gamma = buildSymParam(1, ns, gamma_layerNormSymBwd_bwdTwoCalls);
+    parameter_t *beta = buildSymParam(1, ns, NULL);
+    size_t *normShape = reserveMemory(sizeof(size_t));
+    normShape[0] = 4;
+
+    quantization_t *fq = quantizationInitSymInt32(HTE);
+    quantization_t *bq = quantizationInitSymInt32(HTE);
+    layerNormConfig_t cfg;
+    initLayerNormConfig(&cfg, gamma, beta, normShape, 1, 1e-5f, fq, bq);
+    layerConfig_t lcfg;
+    layer_t layer = makeLayerNormLayer(&cfg, &lcfg);
+
+    layerNormBackward(&layer, fwdIn, loss1, propLoss);
+    layerNormBackward(&layer, fwdIn, loss2, propLoss);
+
+    int32_t dgm[4], dbm[4];
+    for (size_t i = 0; i < 4; i++) {
+        dgm[i] = ((int32_t *)gamma->grad->data)[i];
+        dbm[i] = ((int32_t *)beta->grad->data)[i];
+    }
+    float dgScale = symScaleOf(gamma->grad);
+    float dbScale = symScaleOf(beta->grad);
+
+    freeQuantization(bq);
+    freeQuantization(fq);
+    freeReservedMemory(normShape);
+    freeParameter(beta);
+    freeParameter(gamma);
+    freeTensor(propLoss);
+    freeTensor(loss2);
+    freeTensor(loss1);
+    freeTensor(fwdIn);
+
+    for (size_t i = 0; i < 4; i++) {
+        TEST_ASSERT_INT_WITHIN(gradMantissaTol_layerNormSymBwd_bwdTwoCalls,
+                               expectedDgammaAfter2_layerNormSymBwd_bwdTwoCalls[i], dgm[i]);
+        TEST_ASSERT_INT_WITHIN(gradMantissaTol_layerNormSymBwd_bwdTwoCalls,
+                               expectedDbetaAfter2_layerNormSymBwd_bwdTwoCalls[i], dbm[i]);
+    }
+    TEST_ASSERT_FLOAT_WITHIN(expectedDgammaScaleAfter2_layerNormSymBwd_bwdTwoCalls * 1e-4f,
+                             expectedDgammaScaleAfter2_layerNormSymBwd_bwdTwoCalls, dgScale);
+    TEST_ASSERT_FLOAT_WITHIN(expectedDbetaScaleAfter2_layerNormSymBwd_bwdTwoCalls * 1e-4f,
+                             expectedDbetaScaleAfter2_layerNormSymBwd_bwdTwoCalls, dbScale);
+    for (size_t i = 0; i < 4; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(gradDequantTol2_layerNormSymBwd_bwdTwoCalls,
+                                 expectedDgammaDequant2_layerNormSymBwd_bwdTwoCalls[i],
+                                 (float)dgm[i] * dgScale);
+        TEST_ASSERT_FLOAT_WITHIN(gradDequantTol2_layerNormSymBwd_bwdTwoCalls,
+                                 expectedDbetaDequant2_layerNormSymBwd_bwdTwoCalls[i],
+                                 (float)dbm[i] * dbScale);
+    }
+}
+
+/* var == eps == 1e-5 (codebase memory eps-mutation vacuity): the ONLY regime
+ * where eps placement inside the backward's recomputed invSigma is visible —
+ * O(1)-variance fixtures see a ~5e-6 relative shift (far below 1 dx-LSB).
+ * Here sqrt(var)+eps vs sqrt(var+eps) shifts invSigma ~41%. */
+void testSymBackwardVarNearEpsGold(void) {
+    size_t dims[] = {3};
+    size_t ns[] = {3};
+    runSymGoldBackward(
+        1, dims, 1, ns, input_layerNormSymBwd_bwdVarEps, gamma_layerNormSymBwd_bwdVarEps,
+        lossGrad_layerNormSymBwd_bwdVarEps, expectedDx_layerNormSymBwd_bwdVarEps,
+        expectedDxScale_layerNormSymBwd_bwdVarEps, dxMantissaTol_layerNormSymBwd_bwdVarEps,
+        expectedDxDequant_layerNormSymBwd_bwdVarEps, dxDequantTol_layerNormSymBwd_bwdVarEps,
+        expectedDgamma_layerNormSymBwd_bwdVarEps, expectedDgammaScale_layerNormSymBwd_bwdVarEps,
+        expectedDbeta_layerNormSymBwd_bwdVarEps, expectedDbetaScale_layerNormSymBwd_bwdVarEps,
+        gradMantissaTol_layerNormSymBwd_bwdVarEps, expectedDgammaDequant_layerNormSymBwd_bwdVarEps,
+        expectedDbetaDequant_layerNormSymBwd_bwdVarEps, gradDequantTol_layerNormSymBwd_bwdVarEps, 3,
+        3);
+}
+
+/* Layout-agnosticism: run bwdBase contiguous, then with forwardInput AND
+ * propLoss physically transposed ([4,3] buffers + transposeTensor) while dy
+ * stays natural — three DIVERGENT maps. Same logical iteration order => same
+ * float ops => mantissas (at logical positions), scales, and grads must be
+ * BIT-identical. Catches: x read through the wrong map, dy read through x's
+ * map, dx scattered row-major instead of through propLoss's map.
+ * (PR-1's testBackwardFloatDivergentLayouts is the float precedent.) */
+void testSymBackwardDivergentLayoutsBitIdentical(void) {
+    size_t dims[] = {3, 4};
+    size_t ns[] = {4};
+
+    /* --- contiguous run --- */
+    tensor_t *fwdC = buildSymInt32TensorND(2, dims, input_layerNormSymBwd_bwdBase);
+    tensor_t *lossC = buildSymInt32TensorND(2, dims, lossGrad_layerNormSymBwd_bwdBase);
+    tensor_t *propC = buildSymInt32TensorND(2, dims, NULL);
+    parameter_t *gammaC = buildSymParam(1, ns, gamma_layerNormSymBwd_bwdBase);
+    parameter_t *betaC = buildSymParam(1, ns, NULL);
+    size_t *normShapeC = reserveMemory(sizeof(size_t));
+    normShapeC[0] = 4;
+    quantization_t *fqC = quantizationInitSymInt32(HTE);
+    quantization_t *bqC = quantizationInitSymInt32(HTE);
+    layerNormConfig_t cfgC;
+    initLayerNormConfig(&cfgC, gammaC, betaC, normShapeC, 1, 1e-5f, fqC, bqC);
+    layerConfig_t lcfgC;
+    layer_t layerC = makeLayerNormLayer(&cfgC, &lcfgC);
+    layerNormBackward(&layerC, fwdC, lossC, propC);
+
+    /* --- divergent run: x and propLoss physical [4,3], logical [3,4] --- */
+    float xT[12];
+    for (size_t r = 0; r < 3; r++) {
+        for (size_t c = 0; c < 4; c++) {
+            xT[c * 3 + r] = input_layerNormSymBwd_bwdBase[r * 4 + c];
+        }
+    }
+    size_t pdims[] = {4, 3};
+    tensor_t *fwdT = buildSymInt32TensorND(2, pdims, xT);
+    transposeTensor(fwdT, 0, 1); /* logical [3,4], physical unchanged */
+    tensor_t *lossT = buildSymInt32TensorND(2, dims, lossGrad_layerNormSymBwd_bwdBase);
+    tensor_t *propT = buildSymInt32TensorND(2, pdims, NULL);
+    transposeTensor(propT, 0, 1);
+    parameter_t *gammaT = buildSymParam(1, ns, gamma_layerNormSymBwd_bwdBase);
+    parameter_t *betaT = buildSymParam(1, ns, NULL);
+    size_t *normShapeT = reserveMemory(sizeof(size_t));
+    normShapeT[0] = 4;
+    quantization_t *fqT = quantizationInitSymInt32(HTE);
+    quantization_t *bqT = quantizationInitSymInt32(HTE);
+    layerNormConfig_t cfgT;
+    initLayerNormConfig(&cfgT, gammaT, betaT, normShapeT, 1, 1e-5f, fqT, bqT);
+    layerConfig_t lcfgT;
+    layer_t layerT = makeLayerNormLayer(&cfgT, &lcfgT);
+    layerNormBackward(&layerT, fwdT, lossT, propT);
+
+    int32_t dxC[12], dxT[12], dgC[4], dgT[4], dbC[4], dbT[4];
+    int32_t *pcd = (int32_t *)propC->data;
+    int32_t *ptd = (int32_t *)propT->data;
+    for (size_t r = 0; r < 3; r++) {
+        for (size_t c = 0; c < 4; c++) {
+            dxC[r * 4 + c] = pcd[r * 4 + c]; /* contiguous: phys == logical */
+            dxT[r * 4 + c] = ptd[c * 3 + r]; /* transposed: logical (r,c) -> phys c*3+r */
+        }
+    }
+    for (size_t i = 0; i < 4; i++) {
+        dgC[i] = ((int32_t *)gammaC->grad->data)[i];
+        dgT[i] = ((int32_t *)gammaT->grad->data)[i];
+        dbC[i] = ((int32_t *)betaC->grad->data)[i];
+        dbT[i] = ((int32_t *)betaT->grad->data)[i];
+    }
+    float sC = symScaleOf(propC);
+    float sT = symScaleOf(propT);
+    float dgsC = symScaleOf(gammaC->grad);
+    float dgsT = symScaleOf(gammaT->grad);
+
+    freeQuantization(bqT);
+    freeQuantization(fqT);
+    freeReservedMemory(normShapeT);
+    freeParameter(betaT);
+    freeParameter(gammaT);
+    freeTensor(propT);
+    freeTensor(lossT);
+    freeTensor(fwdT);
+    freeQuantization(bqC);
+    freeQuantization(fqC);
+    freeReservedMemory(normShapeC);
+    freeParameter(betaC);
+    freeParameter(gammaC);
+    freeTensor(propC);
+    freeTensor(lossC);
+    freeTensor(fwdC);
+
+    TEST_ASSERT_EQUAL_FLOAT(sC, sT);
+    TEST_ASSERT_EQUAL_FLOAT(dgsC, dgsT);
+    for (size_t i = 0; i < 12; i++) {
+        TEST_ASSERT_EQUAL_INT(dxC[i], dxT[i]);
+    }
+    for (size_t i = 0; i < 4; i++) {
+        TEST_ASSERT_EQUAL_INT(dgC[i], dgT[i]);
+        TEST_ASSERT_EQUAL_INT(dbC[i], dbT[i]);
+    }
+}
+
+/* Full-SYM profile (forwardMath = backwardMath = storage = SYM_INT32) through
+ * the Borrowing factory: gradInit must yield SYM_INT32 grads (PR-0 plumbing),
+ * and a vtable backward on factory-built params must accumulate into them.
+ * (The new validation rules are death paths — liveness-checked in this task's
+ * inversion step, not Unity-testable.) */
+void testFactoryFullSymProfileTrainsSymGrads(void) {
+    size_t normShape[] = {4};
+    layerNormInit_t init = {.normalizedShape = normShape, .numNormDims = 1, .eps = 1e-5f};
+
+    quantization_t *symQ = quantizationInitSymInt32(HTE);
+    layerQuant_t lq = {
+        .forwardMath = symQ, .backwardMath = symQ, .weightStorage = symQ, .biasStorage = symQ};
+    layer_t *layer = layerNormLayerInit(&init, &lq);
+    layerNormConfig_t *cfg = layer->config->layerNorm;
+
+    bool gradsSym = (cfg->gamma->grad->quantization->type == SYM_INT32) &&
+                    (cfg->beta->grad->quantization->type == SYM_INT32);
+
+    size_t dims[] = {2, 4};
+    tensor_t *fwdIn =
+        buildSymInt32TensorND(2, dims, (float[]){1.f, 2.f, 3.f, 4.f, 10.f, 20.f, 30.f, 40.f});
+    tensor_t *loss = buildSymInt32TensorND(
+        2, dims, (float[]){0.5f, -1.f, 0.25f, 0.75f, -0.5f, 1.5f, -0.25f, 1.f});
+    tensor_t *propLoss = buildSymInt32TensorND(2, dims, NULL);
+
+    layerFunctions[LAYERNORM].backward(layer, fwdIn, loss, propLoss);
+
+    int32_t dbSum = 0;
+    for (size_t i = 0; i < 4; i++) {
+        int32_t v = ((int32_t *)cfg->beta->grad->data)[i];
+        dbSum += (v < 0) ? -v : v;
+    }
+    float dxScale = symScaleOf(propLoss);
+
+    freeTensor(propLoss);
+    freeTensor(loss);
+    freeTensor(fwdIn);
+    freeLayerNormLayer(layer);
+    freeQuantization(symQ);
+
+    TEST_ASSERT_TRUE(gradsSym);
+    TEST_ASSERT_TRUE_MESSAGE(dbSum > 0, "backward must accumulate into the factory SYM grads");
+    TEST_ASSERT_TRUE(dxScale > 0.0f && dxScale != 1.0f);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testConfigStructIsPopulated);
@@ -1417,5 +1861,12 @@ int main(void) {
     RUN_TEST(testSymForwardTransposedMatchesContiguous);
     RUN_TEST(testFactorySymInt32StorageQuantizesGammaBeta);
     RUN_TEST(testFactoryOwningSymInt32DeepCopiesQuantizations);
+    RUN_TEST(testSymBackwardGoldMultiGroup);
+    RUN_TEST(testSymBackwardZeroLossGradEmitsZerosNeutralScale);
+    RUN_TEST(testSymBackwardPropLossScaleRefreshedEveryCall);
+    RUN_TEST(testSymBackwardGradsAccumulateAcrossCalls);
+    RUN_TEST(testSymBackwardVarNearEpsGold);
+    RUN_TEST(testSymBackwardDivergentLayoutsBitIdentical);
+    RUN_TEST(testFactoryFullSymProfileTrainsSymGrads);
     return UNITY_END();
 }
