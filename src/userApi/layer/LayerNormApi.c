@@ -130,6 +130,19 @@ static void validateLayerQuantForLayerNorm(layerQuant_t *lq) {
         PRINT_ERROR("layerNormLayerInit: gamma/beta storage type must match forwardMath");
         exit(1);
     }
+    if (lq->backwardMath->type != FLOAT32 && lq->backwardMath->type != SYM_INT32) {
+        PRINT_ERROR("layerNormLayerInit: backwardMath must be FLOAT32 or SYM_INT32");
+        exit(1);
+    }
+    /* The SYM_INT32 backward recomputes group stats from forwardInput's int32
+     * mantissas and reads gamma mantissas; with a FLOAT32 forward those
+     * buffers hold float bits — silent garbage. The REVERSE (SYM forwardMath +
+     * FLOAT32 backwardMath) stays constructible: it is the inference-only
+     * profile, and the runtime backward guard rejects training it. */
+    if (lq->backwardMath->type == SYM_INT32 && lq->forwardMath->type != SYM_INT32) {
+        PRINT_ERROR("layerNormLayerInit: SYM_INT32 backwardMath requires SYM_INT32 forwardMath");
+        exit(1);
+    }
 }
 
 /* Shared scaffolding for both factories: validate, allocate the layer/config
