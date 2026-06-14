@@ -1544,7 +1544,7 @@ void testConversionSymInt32ToSymQDelta_basic() {
 
     // Input SymInt32
     symInt32QConfig_t symInt32QConfig;
-    initSymInt32QConfig(HTE, &symInt32QConfig);
+    initSymInt32QConfig(HALF_AWAY, &symInt32QConfig);
     symInt32QConfig.scale = 1.f;
 
     quantization_t symIntQ;
@@ -1619,7 +1619,7 @@ void testConversionSymQDelta_roundtrip() {
 
     // target SymInt32
     symInt32QConfig_t symInt32QConfig;
-    initSymInt32QConfig(HTE, &symInt32QConfig);
+    initSymInt32QConfig(HALF_AWAY, &symInt32QConfig);
 
     quantization_t symIntQ;
     initSymInt32Quantization(&symInt32QConfig, &symIntQ);
@@ -1665,7 +1665,7 @@ void testSymInt32ToSymQDelta_positiveOverflowSaturation() {
     };
 
     symInt32QConfig_t cfg;
-    initSymInt32QConfig(HTE, &cfg);
+    initSymInt32QConfig(HALF_AWAY, &cfg);
     cfg.scale = 1.f;
 
     quantization_t qInt;

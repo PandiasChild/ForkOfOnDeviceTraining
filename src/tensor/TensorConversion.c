@@ -391,9 +391,8 @@ void convertAsymTensorToSymTensor(tensor_t *inputTensor, tensor_t *outputTensor)
 
 void convertSymInt32TensorToSymQDeltaTensor(tensor_t *inputTensor, tensor_t *outputTensor) {
     size_t numberOfElements = calcNumberOfElementsByTensor(inputTensor);
-    symQDeltaConfig_t *symQDeltaConfig = outputTensor->quantization->qConfig;
     //TODO: next änderungen vergleichen
-    size_t deltabits = symQDeltaConfig->deltabits;
+    size_t deltabits = calcBitsPerElement(outputTensor->quantization);
     size_t totalBitAmountOfUInt8TDataArray = ((numberOfElements-1) * deltabits) + sizeof(int32_t)*8;
     size_t sizeOfUInt8TDataArray =  (totalBitAmountOfUInt8TDataArray + 7) / 8;
     size_t sizeOfInt32DataArray = sizeOfUInt8TDataArray/sizeof(int32_t);
@@ -408,6 +407,7 @@ void convertSymInt32TensorToSymQDeltaTensor(tensor_t *inputTensor, tensor_t *out
     for (int i= 1; i < sizeOfInt32DataArray; i++){
         deltasInInt32[i] = saturatingSubstraction(dataInInt32[i-1] ,dataInInt32[i], dMin, dMax);
     }
+    symQDeltaConfig_t *symQDeltaConfig = outputTensor->quantization->qConfig;
     symInt32QConfig_t *symInt32QConfig = inputTensor->quantization->qConfig;
     uint8_t deltasInByteArray[sizeOfUInt8TDataArray];
     writeInt32ArrayToByteArray(sizeOfInt32DataArray, deltasInInt32, deltasInByteArray);
@@ -476,6 +476,12 @@ void convertSymQDeltaTensorToSymInt32Tensor(
 
     copyDimsAndSparsityToTensor(inputTensor, outputTensor);
 }
+
+void convertFloatTensorToSymQDeltaTensor(tensor_t *inputTensor, tensor_t *outputTensor) {
+    convertFloatTensorToSymInt32Tensor(inputTensor, outputTensor);
+    convertSymInt32TensorToSymQDeltaTensor(inputTensor, outputTensor);
+}
+
 
 
 char *quantTypeToString(qtype_t t) {
@@ -584,7 +590,7 @@ conversionFunction_t conversionMatrix[7][7]  = {
                  [SYM] = unsupportedConversionTypes,
                  [ASYM] = convertFloatTensorToAsymTensor,
                  [BOOL] = unsupportedConversionTypes,
-                 [DELTA]= unsupportedConversionTypes},
+                 [DELTA]= convertFloatTensorToSymQDeltaTensor },
     [SYM_INT32] = {[INT32] = extractInt32TensorFromSymInt32Tensor,
                    [FLOAT32] = convertSymInt32TensorToFloat32Tensor,
                    [SYM_INT32] = requantSymInt32Tensor,

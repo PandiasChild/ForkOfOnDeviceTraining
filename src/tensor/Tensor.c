@@ -74,6 +74,10 @@ size_t calcBitsPerElement(quantization_t *quantization) {
         return asymQConfig->qBits;
     case BOOL:
         return 1;
+    case DELTA:
+        symQDeltaConfig_t *symQDeltaConfig = quantization->qConfig;
+        return symQDeltaConfig->deltabits;
+
     default:
         PRINT_ERROR("Unknown QType!");
         exit(1);
@@ -106,6 +110,12 @@ size_t calcNumberOfBytesForData(quantization_t *q, size_t numberOfElements) {
         return (bitsPerElement * numberOfElements + 7) / 8;
     case BOOL:
         return (numberOfElements + 7) / 8;
+    case DELTA:
+        size_t deltabits = calcBitsPerElement(q);
+        size_t sizeOfDeltas = (deltabits * (numberOfElements-1) + 7) / 8;
+        size_t sizeOfFirstElementInFullPrecision = sizeof(int32_t);
+        size_t totalNumberOfBytes = sizeOfFirstElementInFullPrecision + sizeOfDeltas;
+        return totalNumberOfBytes;
     default:
         PRINT_ERROR("Unknown QType!");
         exit(1);

@@ -113,7 +113,10 @@ tensor_t *initTensor(shape_t *shape, quantization_t *quantization, sparsity_t *s
     size_t numberOfElements = calcNumberOfElementsByShape(shape);
     size_t bytes = calcNumberOfBytesForData(quantization, numberOfElements);
     tensor->data = reserveMemory(bytes);
-
+    if(tensor->data == NULL){
+        PRINT_ERROR("Memory Allocation Failed");
+        exit(1);
+    }
     return tensor;
 }
 
@@ -342,24 +345,6 @@ shape_t *getShapeLike(shape_t *shape) {
 
     return likeShape;
 }
-char *AAquantTypeToString(qtype_t t) {
-    switch (t) {
-    case INT32:
-        return "INT32";
-    case FLOAT32:
-        return "FLOAT32";
-    case SYM_INT32:
-        return "SYMINT32";
-    case SYM:
-        return "SYM";
-    case ASYM:
-        return "ASYM";
-    case DELTA:
-        return "DELTA";
-    default:
-        return "UNKNOWN";
-    }
-}
 
 quantization_t *getQLike(quantization_t *quantization) {
     quantization_t *likeQ = reserveMemory(sizeof(quantization_t));
@@ -418,21 +403,46 @@ quantization_t *getQLike(quantization_t *quantization) {
 uint8_t *getDataLike(quantization_t *quantization, size_t numberOfValues) {
     switch (quantization->type) {
     case FLOAT32:
-        return reserveMemory(numberOfValues * sizeof(float));
+        uint8_t *returnValFloat32 = reserveMemory(numberOfValues * sizeof(float));
+        if(returnValFloat32 == NULL){
+            PRINT_ERROR("Memory Allocation Failed");
+            exit(1);
+        }
+        return returnValFloat32;
     case INT32:
-        return reserveMemory(numberOfValues * sizeof(int32_t));
+        uint8_t *returnValInt32 = reserveMemory(numberOfValues * sizeof(int32_t));
+            if(returnValInt32 == NULL){
+            PRINT_ERROR("Memory Allocation Failed");
+            exit(1);
+        }
+        return returnValInt32;
     case SYM_INT32:
-        return reserveMemory(numberOfValues * sizeof(int32_t));
+        uint8_t *returnValSymInt32 = reserveMemory(numberOfValues * sizeof(int32_t));
+            if(returnValSymInt32 == NULL){
+            PRINT_ERROR("Memory Allocation Failed");
+            exit(1);
+        }
+        return returnValSymInt32;
     case ASYM:
         asymQConfig_t *asymQC = quantization->qConfig;
         size_t totalBits = numberOfValues * asymQC->qBits;
         size_t totalBytes = (totalBits + 7) / 8;
-        return reserveMemory(totalBytes);
+        uint8_t *returnValAsym = reserveMemory(totalBytes);
+            if(returnValAsym == NULL){
+            PRINT_ERROR("Memory Allocation Failed");
+            exit(1);
+        }
+        return returnValAsym;
     case DELTA:
         symQDeltaConfig_t *deltaQC = quantization->qConfig;
         size_t totalBitAmount = ((numberOfValues-1) * deltaQC->deltabits) + sizeof(int32_t)*8;
         size_t totalByteAmount = (totalBitAmount + 7) / 8;
-        return reserveMemory(totalByteAmount);
+        uint8_t *returnValDelta = reserveMemory(totalByteAmount);
+        if(returnValDelta == NULL){
+            PRINT_ERROR("Memory Allocation Failed");
+            exit(1);
+        }
+        return returnValDelta;
     default:
         PRINT_ERROR("Unknown QType");
         exit(1);
@@ -440,10 +450,13 @@ uint8_t *getDataLike(quantization_t *quantization, size_t numberOfValues) {
 }
 
 sparsity_t *getSparsityLike(sparsity_t *sparsity) {
-    if (sparsity != NULL) {
-        return reserveMemory(sizeof(sparsity_t));
+    if (sparsity == NULL) {return NULL;}
+    sparsity_t *returnVal = reserveMemory(sizeof(sparsity_t));
+    if(returnVal == NULL){
+        PRINT_ERROR("Memory Allocation Failed");
+        exit(1);
     }
-    return NULL;
+    return returnVal;
 }
 
 tensor_t *getTensorLike(tensor_t *tensor) {

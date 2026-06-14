@@ -249,8 +249,10 @@ trainingRunResult_t trainingRun(layer_t **model, size_t modelSize, lossConfig_t 
     const reduction_t forwardReduction = REDUCTION_MEAN;
 
     for (size_t epoch = 0; epoch < numberOfEpochs; epoch++) {
+        printf("trainingRun: start trainingEpochDefault\n");
         float trainLoss = trainingEpochDefault(model, modelSize, lossConfig, trainDataLoader,
                                                optimizer, calculateGradsFn, forwardReduction);
+        printf("trainingRun: start evaluateEpochInternal\n");
         epochStats_t evalStats =
             evaluateEpochInternal(model, modelSize, lossConfig.funcType, evalDataLoader,
                                   inferenceFn, NULL, numClasses, forwardReduction);

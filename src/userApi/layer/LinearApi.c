@@ -52,7 +52,7 @@ layer_t *linearLayerInitNonTrainableLegacy(tensor_t *weights, tensor_t *bias,
 
     layerConfig_t *layerConfig = reserveMemory(sizeof(layerConfig_t));
     linearConfig_t *linearConfig = reserveMemory(sizeof(linearConfig_t));
-    if( layerConfig == NULL || linearConfig == NULL){
+    if( layerConfig == NULL || linearConfig == NULL ){
         PRINT_ERROR("Memory Allocation Failed");
         exit(1);
     }

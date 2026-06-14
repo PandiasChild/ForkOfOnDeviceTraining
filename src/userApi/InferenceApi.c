@@ -91,6 +91,7 @@ static void initBufferOutput(tensor_t *buffer, layer_t *currentLayer, shape_t *i
 
     size_t numValues = calcNumberOfElementsByShape(outShape);
     size_t sizeData = calcNumberOfBytesForData(currentQ, numValues);
+
     uint8_t *data = reserveMemory(sizeData);
     quantization_t *q = reserveMemory(sizeof(quantization_t));
     if(data == NULL || q == NULL){

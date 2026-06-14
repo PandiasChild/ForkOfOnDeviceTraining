@@ -39,6 +39,7 @@ trainingStats_t *calculateGradsSequential(layer_t **model, size_t modelSize,
     tensor_t *layerOutputs[modelSize + 1];
     layerOutputs[0] = input;
     setDropoutLayersTraining(model, modelSize, true);
+
     initLayerOutputs(layerOutputs, model, modelSize);
 
     // Forward pass
@@ -46,7 +47,9 @@ trainingStats_t *calculateGradsSequential(layer_t **model, size_t modelSize,
         layer_t *currentLayer = model[i];
         layerType_t currentLayerType = currentLayer->type;
         forwardFn_t forward = layerFunctions[currentLayerType].forward;
+
         forward(currentLayer, layerOutputs[i], layerOutputs[i + 1]);
+
     }
 
     trainingStats_t *trainingStats = initTrainingStats(layerOutputs[modelSize]);
@@ -176,12 +179,23 @@ static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t si
             q->type = SYM_INT32;
             symInt32QConfig_t *currentQC = currentQ->qConfig;
             symInt32QConfig_t *qC = reserveMemory(sizeof(symInt32QConfig_t));
-	if(qC == NULL){
+	    if(qC == NULL){
 		PRINT_ERROR("Memory Allocation Failed");
 		exit(1);
-	}
+	    }
             initSymInt32QConfig(currentQC->roundingMode, qC);
             initSymInt32Quantization(qC, q);
+            break;
+        case DELTA:
+            q->type = DELTA;
+            symQDeltaConfig_t *currentQConfig = currentQ->qConfig;
+            symQDeltaConfig_t *qConfig = reserveMemory(sizeof(symQDeltaConfig_t));
+            if(qConfig == NULL){
+                PRINT_ERROR("Memory Allocation Failed");
+                exit(1);
+            }
+            initSymQDeltaConfig(currentQConfig->qBits, currentQConfig->roundingMode, currentQConfig->deltabits, qConfig);
+            initSymQDeltaQuantization(qConfig, q);
             break;
         default:
             PRINT_ERROR("Unknown QType!");

@@ -45,11 +45,16 @@
 #define IN_CHANNELS 9
 #define LEN_INPUT 128
 
-#define L1_OUT 32
-// #define L2_OUT NUM_CLASSES
 
+#define L1_OUT 32
+#define WEIGHT_NDIM_0 2
+#define WEIGHT_NDIM_1 2
+#define BIAS_NDIM_0 1
+#define BIAS_NDIM_1 1
+// #define L2_OUT NUM_CLASSES
+#define FLATTEN_SIZE (IN_CHANNELS * LEN_INPUT)
 #define MODEL_SIZE 5
-#define ROUNDING_MODE HTE
+#define ROUNDING_MODE HALF_AWAY
 
 // har_classifier: FINAL test_loss=0.3498 test_acc=0.9046
 
@@ -138,7 +143,6 @@ static void initDataSets(void) {
     g_trainDataset.items = trainItems;
     g_trainDataset.labels = buildOneHotLabels(trainLabelsRaw);
     freeTensorArray(trainLabelsRaw);
-    printTensor(g_trainDataset.labels->array[0]);
 
     tensorArray_t *valItems = npyLoad("examples/har_classifier/data/val_x.npy");
     tensorArray_t *valLabelsRaw = npyLoad("examples/har_classifier/data/val_y.npy");
@@ -179,21 +183,56 @@ static size_t getTestSize(void) {
 /* Model parameters (file-static — must outlive buildModel).                 */
 /* ------------------------------------------------------------------------- */
 
-static float weight0Data[L1_OUT*LEN_INPUT] = {0};
-static size_t weight0Dims[] = {L1_OUT, LEN_INPUT};
+static float weight0Data[L1_OUT*FLATTEN_SIZE] = {0};
+static size_t weight0Dims[WEIGHT_NDIM_0] = {L1_OUT, FLATTEN_SIZE};
 
-static float bias0Data[20] = {0};
-static size_t bias0Dims[] = {1, L1_OUT};
+static float bias0Data[L1_OUT] = {0};
+static size_t bias0Dims[BIAS_NDIM_0] = {L1_OUT};
 
 static float weight1Data[NUM_CLASSES*L1_OUT] = {0};
-static size_t weight1Dims[2] = {NUM_CLASSES, L1_OUT};
+static size_t weight1Dims[WEIGHT_NDIM_1] = {NUM_CLASSES, L1_OUT};
 
 static float bias1Data[NUM_CLASSES] = {0};
-static size_t bias1Dims[2] = {1, NUM_CLASSES};
+static size_t bias1Dims[BIAS_NDIM_1] = {NUM_CLASSES};
 
-static parameter_t *buildParam(distributionType_t dist, quantization_t *q, float *data, size_t *dims, size_t ndim,
-                               size_t fanIn, size_t fanOut) {
-    tensor_t *p = tensorInitWithDistribution(dist, data, dims, ndim, q, NULL, fanIn, fanOut);
+static parameter_t *buildParam(distributionType_t dist, quantization_t *q, float *data, size_t *dims, size_t ndim) {
+    size_t *order = reserveMemory(ndim * sizeof(size_t));
+    size_t *orderFloat = reserveMemory(ndim * sizeof(size_t));
+    size_t *dimensionsFloat = reserveMemory(ndim * sizeof(size_t));
+
+    if( order == NULL || orderFloat == NULL || dimensionsFloat == NULL){
+        PRINT_ERROR("Memory Allocation Failed");
+        exit(1);
+    }
+    for (size_t i = 0; i < ndim; i++) {
+        order[i] = i;
+        orderFloat[i] = i;
+        dimensionsFloat[i] = dims[i];
+    }
+
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    shape_t *shapeFloat = reserveMemory(sizeof(shape_t));
+    if( shape == NULL || shapeFloat == NULL){
+        PRINT_ERROR("Memory Allocation Failed");
+        exit(1);
+    }
+
+    shape->dimensions = dims;
+    shape->orderOfDimensions = order;
+    shape->numberOfDimensions = ndim;
+
+    shapeFloat->dimensions = dimensionsFloat;
+    shapeFloat->orderOfDimensions = orderFloat;
+    shapeFloat->numberOfDimensions = ndim;
+
+    quantization_t *floatq = quantizationInitFloat();
+    tensor_t *floatTensor = initTensor(shapeFloat, floatq, NULL);
+    initDistribution(floatTensor, &dist);
+
+    tensor_t *p = initTensor(shape, q, NULL);
+    convertTensor(floatTensor, p);
+    freeTensor(floatTensor);
+    printf("alles in ordnung\n");
     tensor_t *g = gradInitFloat(p, NULL);
     return parameterInit(p, g);
 }
@@ -203,6 +242,7 @@ static void buildModel(layer_t **model) {
     uint8_t qBits = 16;
     roundingMode_t roundingMode = ROUNDING_MODE;
     uint8_t deltabits = qBits - 2;
+    quantization_t *q0 = quantizationInitSymInt32(roundingMode);
     quantization_t *q1 = quantizationInitSymInt32(roundingMode);
     quantization_t *q2 = quantizationInitSymInt32(roundingMode);
     quantization_t *q3 = quantizationInitSymInt32(roundingMode);
@@ -212,36 +252,43 @@ static void buildModel(layer_t **model) {
     quantization_t *q7 = quantizationInitSymInt32(roundingMode);
     quantization_t *q8 = quantizationInitSymInt32(roundingMode);
     quantization_t *q9 = quantizationInitSymInt32(roundingMode);
-    quantization_t *q0 = quantizationInitSymInt32(roundingMode);
+    quantization_t *q10 = quantizationInitSymInt32(roundingMode);
+    quantization_t *q11 = quantizationInitSymInt32(roundingMode);
 
     quantization_t *dq1 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
     quantization_t *dq2 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
     quantization_t *dq3 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
     quantization_t *dq4 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
-    quantization_t *dq5 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
-    quantization_t *dq6 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
 
+    quantization_t *q12 = quantizationInitSymInt32(roundingMode);
+    quantization_t *q13 = quantizationInitSymInt32(roundingMode);
+    quantization_t *q14 = quantizationInitSymInt32(roundingMode);
+    quantization_t *q15 = quantizationInitSymInt32(roundingMode);
+
+
+    // 128 -> 1152
     model[0] = flattenLayerInit();
 
     // Linear 128→32
-    parameter_t *weight0 = buildParam(XAVIER_UNIFORM, dq1, weight0Data, weight0Dims, 2,
-                                      LEN_INPUT, L1_OUT);
-
-    parameter_t *bias0 = buildParam(ZEROS, dq2, bias0Data, bias0Dims, 2, 1, L1_OUT);
-
-    model[1] = linearLayerInit(weight0, bias0, dq3, q1, q2, q3);
+    /* parameter_t *weight0 = buildParam(XAVIER_UNIFORM, dq1, weight0Data, weight0Dims, WEIGHT_NDIM_0);
+    parameter_t *bias0 = buildParam(ZEROS, dq2, bias0Data, bias0Dims, BIAS_NDIM_0);
+*/
+    parameter_t *weight0 = buildParam(XAVIER_UNIFORM, q14, weight0Data, weight0Dims, WEIGHT_NDIM_0);
+    parameter_t *bias0 = buildParam(ZEROS, q15, bias0Data, bias0Dims, BIAS_NDIM_0);
+    model[1] = linearLayerInitLegacy(weight0, bias0, q0, q1, q2, q3);
 
     // ReLU
-    model[2] = reluLayerInit(q4, q5);
+    model[2] = reluLayerInitLegacy(q4, q5);
     // Linear 32→6
-    parameter_t *weight1 = buildParam(XAVIER_UNIFORM, dq4, weight1Data, weight1Dims, 2,
-                                      L1_OUT, NUM_CLASSES);
+    /* parameter_t *weight1 = buildParam(XAVIER_UNIFORM, dq3, weight1Data, weight1Dims, WEIGHT_NDIM_1);
+    parameter_t *bias1 = buildParam(ZEROS, dq4, bias1Data, bias1Dims, BIAS_NDIM_1);
+    */
+    parameter_t *weight1 = buildParam(XAVIER_UNIFORM, q12, weight1Data, weight1Dims, WEIGHT_NDIM_1);
+    parameter_t *bias1 = buildParam(ZEROS, q13, bias1Data, bias1Dims, BIAS_NDIM_1);
 
-    parameter_t *bias1 = buildParam(ZEROS, dq5, bias1Data, bias1Dims, 2, 1, 1);
-
-    model[3] = linearLayerInit(weight1, bias1, dq6, q6, q7, q8);
+    model[3] = linearLayerInitLegacy(weight1, bias1, q6, q7, q8, q9);
     // Softmax
-    model[4] = softmaxLayerInit(q9, q0);
+    model[4] = softmaxLayerInitLegacy(q10, q11);
 }
 
 
