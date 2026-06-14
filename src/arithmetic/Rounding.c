@@ -32,7 +32,7 @@ float randfloat() {
 }
 /**
  * Performs stochastic rounding with half-to-even behavior.
- * Adds a random offset in [-0.5, 0.5) before applying roundHTE().
+ * Adds a random offset in [-0.5, 0.5) before applying roundHalfAway().
  *
  * @return The stochastically rounded integer value.
  */
