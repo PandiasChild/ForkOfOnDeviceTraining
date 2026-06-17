@@ -2,7 +2,9 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 
+#include "Common.h"
 #include "RNG.h"
 #include "Rounding.h"
 
@@ -27,6 +29,22 @@ int32_t roundByMode(const float input, const roundingMode_t roundingMode) {
         return roundSRHalfAway(input);
     }
     return 0;
+}
+
+int32_t rescaleIntoAccumulatorScale(int32_t paramQ, float paramScale, float accumulatorScale,
+                                    roundingMode_t roundingMode) {
+    float rescaled = (float)paramQ * paramScale / accumulatorScale;
+#ifdef ODT_SEED_GUARD
+    /* !(x <= T), NOT (x > T): also catches NaN (0*inf when accumulatorScale
+     * underflows to 0). Reserve the real worst int16 product 32768*32767
+     * (the -32768 case), not qMax*qMax. */
+    if (!(fabsf(rescaled) <= 2147483647.0f - 32768.0f * 32767.0f)) {
+        PRINT_ERROR("rescaleIntoAccumulatorScale: param scale incompatible with accumulator "
+                    "scale — seed overflows int32 (#189)");
+        exit(1);
+    }
+#endif
+    return roundByMode(rescaled, roundingMode);
 }
 
 float clamp(float input, float min, float max) {

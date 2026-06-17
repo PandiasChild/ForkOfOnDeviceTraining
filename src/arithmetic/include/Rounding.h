@@ -11,6 +11,21 @@ typedef enum roundingMode { HALF_AWAY, SR_HALF_AWAY } roundingMode_t;
 
 int32_t roundByMode(float input, roundingMode_t roundingMode);
 
+/*! @brief Rescale a SYM_INT32 parameter mantissa from its own scale into an
+ * accumulator's product-scale, returning the int32 seed to add into the
+ * integer accumulator (forward bias seed for Matmul/Conv, LayerNorm affine
+ * beta seed).
+ *
+ * The float->int32 cast is data-dependent and is UB on overflow
+ * (C17 6.3.1.4, #189). When compiled with -DODT_SEED_GUARD (unit-test/CI
+ * builds; off for release/MCU) the cast is guarded: it fails fast when the
+ * rescaled value leaves no int32 headroom for one worst-case int16xint16
+ * product (32768*32767). NaN-robust via !(x <= T): a 0*inf=NaN from an
+ * underflowed accumulator scale is caught, not bypassed. Release builds run
+ * the raw cast (UBSan #204 covers occurrences there). */
+int32_t rescaleIntoAccumulatorScale(int32_t paramQ, float paramScale, float accumulatorScale,
+                                    roundingMode_t roundingMode);
+
 float clamp(float input, float min, float max);
 
 #endif // ROUNDING_H
