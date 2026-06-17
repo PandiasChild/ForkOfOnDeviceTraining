@@ -10,7 +10,6 @@
 #define MATMUL_FUNC_SYM_INT32 matmulSymIntTensors
 #endif
 
-#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -19,6 +18,7 @@
 #include "DTypes.h"
 #include "Matmul.h"
 #include "Mul.h"
+#include "Rounding.h"
 #include "Tensor.h"
 
 size_t matmulInstructionCounter = 0;
@@ -247,17 +247,19 @@ void matmulSymInt32TensorsWithBias(tensor_t *aTensor, tensor_t *bTensor, tensor_
             exit(1);
         }
 
+        symInt32QConfig_t *biasQC = (symInt32QConfig_t *)bias->quantization->qConfig;
         float aScale = ((symInt32QConfig_t *)aTensor->quantization->qConfig)->scale;
         float bScale = ((symInt32QConfig_t *)bTensor->quantization->qConfig)->scale;
-        float biasScale = ((symInt32QConfig_t *)bias->quantization->qConfig)->scale;
+        float biasScale = biasQC->scale;
         float outputScale = aScale * bScale;
 
-        /* Rescale the bias into the accumulator's scale: one fixed-point op per
-         * output column (small: == outFeatures), outside the MAC loop. */
+        /* Rescale the bias into the accumulator's scale via the shared #189 helper
+         * (guarded float->int32 cast): one fixed-point op per output column. */
         int32_t seed[bColumns];
         for (size_t c = 0; c < bColumns; c++) {
             int32_t biasIntC = readBytesAsInt32(&bias->data[c * sizeof(int32_t)]);
-            seed[c] = (int32_t)roundf((float)biasIntC * biasScale / outputScale);
+            seed[c] =
+                rescaleIntoAccumulatorScale(biasIntC, biasScale, outputScale, biasQC->roundingMode);
         }
         matmulIntCore(aTensor, bTensor, outputTensor, seed);
     }

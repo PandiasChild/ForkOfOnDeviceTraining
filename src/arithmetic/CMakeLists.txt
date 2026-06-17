@@ -73,7 +73,7 @@ target_link_libraries(Matmul PRIVATE
         Tensor
         DTypes
         Mul
-        Common
+        Rounding
 )
 
 add_library(Mul Mul.c)
