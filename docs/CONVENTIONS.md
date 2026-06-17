@@ -372,3 +372,33 @@ This is a research framework: deliberate scheme differences like this one
 MUST be documented here, so experimental design stays separable from
 accidental inconsistency. LayerNorm uses strategy A for BOTH gamma and beta
 per the 2026-06-05 LayerNorm spec.
+
+## SYM_INT32 seed-rescale + the #189 guard
+
+A SYM_INT32 parameter that must enter an integer accumulator at a *different*
+scale — the forward bias seed (Matmul today; Conv when #45 lands) and the
+LayerNorm affine beta seed — is converted via `rescaleIntoAccumulatorScale`
+(`src/arithmetic/Rounding.c`): `seed = round(param_q * param_scale /
+accumulator_scale)`. The `float -> int32` cast is data-dependent and is UB on
+overflow (#189); the helper guards it NaN-robustly (`!(x <= T)`, reserving one
+worst-case int16 product `32768*32767` of headroom) under `-DODT_SEED_GUARD`
+(default ON; a future MCU/release build disables it, with UBSan #204 covering
+occurrences). All seed-rescale sites route through this one helper.
+
+This refold is deliberate, not a wart: it holds the real-valued bias **constant**
+under ODT's dynamic per-input activation scaling. A fixed integer added raw
+(`seed = b_int`, ignoring the bias scale) would apply the bias at
+`s_acc / s_bias` of its value (≈0.01-0.05% on real layers — effectively deleting
+it) and make it co-scale with input magnitude; the refold recomputes the seed
+each forward (`∝ 1/s_acc`) so the bias stays a constant offset. The bias stays
+SYM_INT32 (never a float master — the optimizer is single-dtype); a wide
+raw-integer bias (qMaxBits=32, scale=1) would need a structurally different
+scheme and is out of scope.
+
+## Vision: memory over float accuracy
+
+ODT is a memory-light on-device-training research framework. SYM_INT32 paths
+may be deliberately inaccurate with no float-matching — that is by design, not
+a defect. FLOAT32-twin comparisons are a **ballpark sanity check**, not a tight
+acceptance gate; SYM acceptance is "trains and converges to a useful model".
+This does not license UB — overflow/garbage is still a bug (hence the #189 guard).
