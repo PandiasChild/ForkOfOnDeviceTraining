@@ -177,12 +177,13 @@ static void layerNormGroupStatsSymInt32(tensor_t *t, size_t numNormDims, size_t 
  *            drop beta under dynamic per-tensor scales)
  *   y_q    = q * gamma_q,j + seed_j            (the product q*gamma_q <= qMax^2
  *            fits int32, but the rescaled seed is DATA-DEPENDENT and unbounded:
- *            |seed| ~ |beta| * qMax^2 / (absmax_n * absmax_gamma). The guard
- *            below fails fast outside the safe envelope instead of casting an
+ *            |seed| ~ |beta| * qMax^2 / (absmax_n * absmax_gamma). The shared
+ *            rescaleIntoAccumulatorScale helper (#189) fails fast (under
+ *            -DODT_SEED_GUARD) outside the safe envelope instead of casting an
  *            out-of-range float to int32 (UB). Spec errata: "int32 is safe
- *            throughout" holds only while the rescaled seed leaves qMax^2 of
- *            int32 headroom for the gamma-product, i.e. |beta| <~
- *            absmax_n * absmax_gamma.)
+ *            throughout" holds only while the rescaled seed leaves one worst-case
+ *            int16xint16 product (32768*32767) of int32 headroom for the
+ *            gamma-product, i.e. |beta| <~ absmax_n * absmax_gamma.)
  * gamma/beta are contiguous default-order rank-D tensors -> flat index j. */
 static void layerNormAffineSymInt32(layerNormConfig_t *cfg, tensor_t *output, float sNorm) {
     int32_t *out = (int32_t *)output->data;
@@ -193,32 +194,18 @@ static void layerNormAffineSymInt32(layerNormConfig_t *cfg, tensor_t *output, fl
     symInt32QConfig_t *betaQC = cfg->beta->param->quantization->qConfig;
 
     float sY = sNorm * gammaQC->scale;
-    float betaRescale = betaQC->scale / sY;
 
     size_t G, N;
     layerNormGroupSizes(output, cfg->numNormDims, &G, &N);
 
-    /* Seed-overflow guard: y_q = q*gamma_q + seed must fit int32. The product
-     * is bounded by qMax^2; the seed is not — fail fast before UB. */
-    const float qMax = powf(2, (float)outQC->qMaxBits - 1) - 1;
-    int32_t maxAbsBetaQ = 0;
-    for (size_t j = 0; j < N; j++) {
-        int32_t a = (betaQ[j] < 0) ? -betaQ[j] : betaQ[j];
-        if (a > maxAbsBetaQ) {
-            maxAbsBetaQ = a;
-        }
-    }
-    /* !(x <= T) instead of (x > T): also catches NaN (0 * inf when sY underflows). */
-    if (!(fabsf((float)maxAbsBetaQ * betaRescale) <= 2147483647.0f - qMax * qMax)) {
-        PRINT_ERROR("LayerNorm SYM_INT32 affine: rescaled beta leaves no int32 headroom for the "
-                    "gamma-product (|beta| exceeds ~absmax(n)*absmax(gamma) — see #189)");
-        exit(1);
-    }
-
+    /* Seed-rescale + flag-gated int32-overflow guard live in the shared #189 helper
+     * (rescaleIntoAccumulatorScale): beta is refolded from its own scale into the
+     * output (gamma-product) scale sY per element. */
     for (size_t g = 0; g < G; g++) {
         for (size_t j = 0; j < N; j++) {
             size_t off = layerNormPhysOffset(output, cfg->numNormDims, g, j);
-            int32_t seed = roundByMode((float)betaQ[j] * betaRescale, outQC->roundingMode);
+            int32_t seed =
+                rescaleIntoAccumulatorScale(betaQ[j], betaQC->scale, sY, outQC->roundingMode);
             out[off] = out[off] * gammaQ[j] + seed;
         }
     }
