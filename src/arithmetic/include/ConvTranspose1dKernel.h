@@ -37,4 +37,19 @@ void convTranspose1dKernelFloat32(tensor_t const *input, tensor_t const *weight,
                                   tensor_t const *bias, kernel_t const *kernel, size_t groups,
                                   size_t outputPadding, tensor_t *output);
 
+/*! Transposed 1D convolution forward (SYM_INT32). Integer scatter sibling of
+ *  convTranspose1dKernelFloat32: int32 accumulator, mulInt32s, per-output-channel
+ *  bias seed (refold) added in a separate pass. Output mantissas are raw
+ *  accumulator range at scale s_in*s_w. Same VALID/SAME/EXPLICIT geometry; used
+ *  as Conv1d's dx adjoint with bias==NULL (SAME/EXPLICIT branch), and as
+ *  Conv1dTransposed's forward in PR3.
+ *
+ *  @param input  [batch, in_channels, input_length], SYM_INT32
+ *  @param weight [in_channels, out_channels/groups, kernel_size], SYM_INT32
+ *  @param bias   [out_channels] or NULL, SYM_INT32
+ */
+void convTranspose1dKernelSymInt32(tensor_t const *input, tensor_t const *weight,
+                                   tensor_t const *bias, kernel_t const *kernel, size_t groups,
+                                   size_t outputPadding, tensor_t *output);
+
 #endif // ODT_CONV_TRANSPOSE_1D_KERNEL_H

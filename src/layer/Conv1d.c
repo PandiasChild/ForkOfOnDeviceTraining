@@ -2,11 +2,16 @@
 
 #include "Conv1d.h"
 
+#include "Add.h"
 #include "Common.h"
 #include "Conv1dKernel.h"
 #include "ConvTranspose1dKernel.h"
 #include "Layer.h"
+#include "Mul.h"
+#include "Quantization.h"
+#include "Rounding.h"
 #include "SlidingWindow1d.h"
+#include "StorageApi.h"
 #include "Tensor.h"
 
 void initConv1dConfigWithWeightsAndBias(conv1dConfig_t *conv1dConfig, kernel_t *kernel,
@@ -35,11 +40,22 @@ void conv1dForwardFloat(layer_t *conv1dLayer, tensor_t *input, tensor_t *output)
     conv1dKernelFloat32(input, weightTensor, biasTensor, cfg->kernel, cfg->groups, output);
 }
 
+void conv1dForwardSymInt32(layer_t *conv1dLayer, tensor_t *input, tensor_t *output) {
+    conv1dConfig_t *cfg = conv1dLayer->config->conv1d;
+    tensor_t *weightTensor = cfg->weights->param;
+    tensor_t *biasTensor = cfg->bias ? cfg->bias->param : NULL;
+
+    conv1dKernelSymInt32(input, weightTensor, biasTensor, cfg->kernel, cfg->groups, output);
+}
+
 void conv1dForward(layer_t *layer, tensor_t *input, tensor_t *output) {
     conv1dConfig_t *cfg = layer->config->conv1d;
     switch (cfg->forwardQ->type) {
     case FLOAT32:
         conv1dForwardFloat(layer, input, output);
+        break;
+    case SYM_INT32:
+        conv1dForwardSymInt32(layer, input, output);
         break;
     default:
         PRINT_ERROR("Conv1d forward: quantization type not implemented");
@@ -119,6 +135,106 @@ static void conv1dCalcBiasGradsFloat32(conv1dConfig_t *cfg, tensor_t *lossGrad) 
     }
 }
 
+void conv1dCalcWeightGradsSymInt32(conv1dConfig_t *cfg, tensor_t *forwardInput,
+                                   tensor_t *lossGrad) {
+    size_t batch = forwardInput->shape->dimensions[0];
+    size_t inChannels = forwardInput->shape->dimensions[1];
+    size_t inputLength = forwardInput->shape->dimensions[2];
+    size_t outChannels = lossGrad->shape->dimensions[1];
+    size_t outputLength = lossGrad->shape->dimensions[2];
+    size_t kernelSize = cfg->weights->param->shape->dimensions[2];
+
+    size_t groups = cfg->groups;
+    size_t inChPerGroup = inChannels / groups;
+    size_t outChPerGroup = outChannels / groups;
+
+    windowGeometry1d_t geom = windowGeometry1dCalc(inputLength, cfg->kernel);
+    if (geom.outputLength != outputLength) {
+        PRINT_ERROR("Conv1d backward (SYM weightGrad): lossGrad outputLength (%zu) does not "
+                    "match geometry derived from forwardInput (%zu)",
+                    outputLength, geom.outputLength);
+        exit(1);
+    }
+
+    float inScale = ((symInt32QConfig_t *)forwardInput->quantization->qConfig)->scale;
+    float lossScale = ((symInt32QConfig_t *)lossGrad->quantization->qConfig)->scale;
+
+    tensor_t *weightGrad = cfg->weights->grad;
+    size_t numberOfWeights = calcNumberOfElementsByTensor(weightGrad);
+
+    /* Fresh int32 intermediate at scale s_in*s_loss, allocated via reserveMemory
+     * (allocation-locality rule — NOT a stack VLA). reserveMemory zero-inits. */
+    int32_t *interData = reserveMemory(numberOfWeights * sizeof(int32_t));
+
+    symInt32QConfig_t interQC;
+    initSymInt32QConfig(((symInt32QConfig_t *)weightGrad->quantization->qConfig)->roundingMode,
+                        &interQC);
+    interQC.scale = inScale * lossScale;
+    quantization_t interQ;
+    initSymInt32Quantization(&interQC, &interQ);
+    tensor_t intermediate;
+    setTensorValues(&intermediate, (uint8_t *)interData, weightGrad->shape, &interQ, NULL);
+
+    int32_t const *xArr = (int32_t const *)forwardInput->data;
+    int32_t const *gyArr = (int32_t const *)lossGrad->data;
+
+    for (size_t b = 0; b < batch; b++) {
+        for (size_t g = 0; g < groups; g++) {
+            size_t inLo = g * inChPerGroup;
+            size_t outLo = g * outChPerGroup;
+
+            for (size_t ocOffset = 0; ocOffset < outChPerGroup; ocOffset++) {
+                size_t oc = outLo + ocOffset;
+                for (size_t outPos = 0; outPos < outputLength; outPos++) {
+                    windowSlice1d_t slice = windowSlice1dAt(&geom, outPos);
+                    int32_t gy = gyArr[(b * outChannels + oc) * outputLength + outPos];
+
+                    for (size_t icOffset = 0; icOffset < inChPerGroup; icOffset++) {
+                        size_t ic = inLo + icOffset;
+                        for (size_t i = 0; i < slice.validCount; i++) {
+                            size_t inputIdx = slice.firstValidInputIdx + i * geom.dilation;
+                            size_t kernelIdx = slice.firstValidKernelOffset + i;
+
+                            int32_t xv = xArr[(b * inChannels + ic) * inputLength + inputIdx];
+                            interData[(oc * inChPerGroup + icOffset) * kernelSize + kernelIdx] +=
+                                mulInt32s(xv, gy);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    addSymInt32TensorsInplace(weightGrad, &intermediate);
+    freeReservedMemory(interData);
+}
+
+void conv1dCalcBiasGradsSymInt32(conv1dConfig_t *cfg, tensor_t *lossGrad) {
+    size_t batch = lossGrad->shape->dimensions[0];
+    size_t outChannels = lossGrad->shape->dimensions[1];
+    size_t outputLength = lossGrad->shape->dimensions[2];
+
+    int32_t const *gyArr = (int32_t const *)lossGrad->data;
+    tensor_t *biasGrad = cfg->bias->grad;
+    int32_t *gbArr = (int32_t *)biasGrad->data;
+
+    float lossScale = ((symInt32QConfig_t *)lossGrad->quantization->qConfig)->scale;
+    symInt32QConfig_t *bgQC = (symInt32QConfig_t *)biasGrad->quantization->qConfig;
+    float bgScale = bgQC->scale;
+
+    for (size_t oc = 0; oc < outChannels; oc++) {
+        /* int32 accumulator (NO int64): loss mantissas are int16-range per the
+         * qMaxBits<=16 contract, so the batch*outputLength sum stays within int32. */
+        int32_t sum = 0;
+        for (size_t b = 0; b < batch; b++) {
+            for (size_t outPos = 0; outPos < outputLength; outPos++) {
+                sum += gyArr[(b * outChannels + oc) * outputLength + outPos];
+            }
+        }
+        gbArr[oc] += rescaleIntoAccumulatorScale(sum, lossScale, bgScale, bgQC->roundingMode);
+    }
+}
+
 void conv1dBackwardFloat(layer_t *layer, tensor_t *forwardInput, tensor_t *lossGrad,
                          tensor_t *propLoss) {
     conv1dConfig_t *cfg = layer->config->conv1d;
@@ -136,12 +252,51 @@ void conv1dBackwardFloat(layer_t *layer, tensor_t *forwardInput, tensor_t *lossG
 void conv1dBackward(layer_t *layer, tensor_t *forwardInput, tensor_t *lossGrad,
                     tensor_t *propLoss) {
     conv1dConfig_t *cfg = layer->config->conv1d;
+
     switch (cfg->weightGradQ->type) {
     case FLOAT32:
-        conv1dBackwardFloat(layer, forwardInput, lossGrad, propLoss);
+        conv1dCalcWeightGradsFloat32(cfg, forwardInput, lossGrad);
+        break;
+    case SYM_INT32:
+        conv1dCalcWeightGradsSymInt32(cfg, forwardInput, lossGrad);
         break;
     default:
-        PRINT_ERROR("Conv1d backward: quantization type not implemented");
+        PRINT_ERROR("Conv1d backward (weightGrad): quantization type not implemented");
+        exit(1);
+    }
+
+    switch (cfg->biasGradQ->type) {
+    case FLOAT32:
+        if (cfg->bias) {
+            conv1dCalcBiasGradsFloat32(cfg, lossGrad);
+        }
+        break;
+    case SYM_INT32:
+        if (cfg->bias) {
+            conv1dCalcBiasGradsSymInt32(cfg, lossGrad);
+        }
+        break;
+    default:
+        PRINT_ERROR("Conv1d backward (biasGrad): quantization type not implemented");
+        exit(1);
+    }
+
+    switch (cfg->propLossQ->type) {
+    case FLOAT32:
+        convTranspose1dKernelFloat32(lossGrad, cfg->weights->param, NULL, cfg->kernel, cfg->groups,
+                                     0u, propLoss);
+        break;
+    case SYM_INT32:
+        if (propLoss->quantization->type != SYM_INT32) {
+            PRINT_ERROR("Conv1d backward: propLossQ is SYM_INT32 but the propLoss tensor is "
+                        "not (#187)");
+            exit(1);
+        }
+        convTranspose1dKernelSymInt32(lossGrad, cfg->weights->param, NULL, cfg->kernel, cfg->groups,
+                                      0u, propLoss);
+        break;
+    default:
+        PRINT_ERROR("Conv1d backward (propLoss): quantization type not implemented");
         exit(1);
     }
 }

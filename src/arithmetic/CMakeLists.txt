@@ -147,6 +147,8 @@ target_link_libraries(Conv1dKernel PRIVATE
         Tensor
         Kernel
         SlidingWindow1d
+        Mul
+        Rounding
         Common
 )
 
@@ -156,5 +158,7 @@ target_link_libraries(ConvTranspose1dKernel PRIVATE
         Tensor
         Kernel
         SlidingWindow1d
+        Mul
+        Rounding
         Common
 )

@@ -6,6 +6,7 @@ add_custom_command(
         COMMAND uv run ${CMAKE_CURRENT_SOURCE_DIR}/generate_expected_conv1d.py
                 --out ${GEN_CONV1D_HEADER}
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/generate_expected_conv1d.py
+                ${CMAKE_CURRENT_SOURCE_DIR}/../goldgen/sym_gold.py
         COMMENT "Generating expected_conv1d.h via PyTorch"
         VERBATIM
 )
@@ -56,8 +57,9 @@ add_elastic_ai_unit_test(
         TensorApi
         QuantizationApi
         Conv1dApi
+        Conv1dKernel
+        ConvTranspose1dKernel
         Kernel
-        QuantizationApi
         StorageApi
 )
 add_dependencies(UnitTestConv1d generate_expected_conv1d)

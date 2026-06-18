@@ -4,6 +4,11 @@ target_link_libraries(Conv1d PRIVATE
         DTypes
         Tensor
         Arithmetic
+        Add
+        Mul
+        Quantization
+        Rounding
+        StorageApi
         Common
         Kernel
         SlidingWindow1d
