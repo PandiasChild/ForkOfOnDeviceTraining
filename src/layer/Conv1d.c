@@ -173,6 +173,8 @@ void conv1dCalcWeightGradsSymInt32(conv1dConfig_t *cfg, tensor_t *forwardInput,
     quantization_t interQ;
     initSymInt32Quantization(&interQC, &interQ);
     tensor_t intermediate;
+    /* intermediate borrows weightGrad->shape read-only (addSymInt32TensorsInplace
+     * only reads shapes); mirrors Linear.c backwardSymInt32. */
     setTensorValues(&intermediate, (uint8_t *)interData, weightGrad->shape, &interQ, NULL);
 
     int32_t const *xArr = (int32_t const *)forwardInput->data;
@@ -223,8 +225,9 @@ void conv1dCalcBiasGradsSymInt32(conv1dConfig_t *cfg, tensor_t *lossGrad) {
     float bgScale = bgQC->scale;
 
     for (size_t oc = 0; oc < outChannels; oc++) {
-        /* int32 accumulator (NO int64): loss mantissas are int16-range per the
-         * qMaxBits<=16 contract, so the batch*outputLength sum stays within int32. */
+        /* int32 accumulator (NO int64): loss mantissas are int12-range per the
+         * qMaxBits=12 operand contract, so the batch*outputLength sum stays
+         * well within int32 (even more headroom than the old int16 path). */
         int32_t sum = 0;
         for (size_t b = 0; b < batch; b++) {
             for (size_t outPos = 0; outPos < outputLength; outPos++) {

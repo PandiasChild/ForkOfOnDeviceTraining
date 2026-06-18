@@ -395,6 +395,69 @@ SYM_INT32 (never a float master — the optimizer is single-dtype); a wide
 raw-integer bias (qMaxBits=32, scale=1) would need a structurally different
 scheme and is out of scope.
 
+## Conv1d / Conv1dTransposed SYM_INT32 (#45)
+
+Two integer sliding-window cores live in `src/arithmetic/`, siblings of the
+FLOAT kernels with identical loop nest + `SlidingWindow1d` geometry:
+
+- `conv1dKernelSymInt32` — gather forward; Conv1d forward, and Conv1dTransposed's
+  `dx` adjoint in PR3.
+- `convTranspose1dKernelSymInt32` — scatter forward; Conv1d's `dx` adjoint, and
+  Conv1dTransposed's forward in PR3.
+
+Both emit **raw accumulator-range int32 mantissas** at output scale `s_in·s_w`
+(NOT range-restored). An explicitly-chained Quantization layer (#192) restores
+the operand width downstream — the same contract as Linear/LayerNorm. Per-output-
+channel bias is refolded into the product scale via `rescaleIntoAccumulatorScale`
+(the #189 guarded helper); never raw-added.
+
+Conv1d backward dispatches on **three independent qConfigs** (`weightGradQ`,
+`biasGradQ`, `propLossQ`), like `linearBackward`:
+
+- **weightGrad (SYM)** = strategy A: integer gather into a fresh `reserveMemory`
+  intermediate at scale `s_loss·s_in`, then `addSymInt32TensorsInplace` into the
+  SYM grad accumulator (fresh absmax scale).
+- **biasGrad (SYM)** = an int32 `(batch × outputLength)` accumulator per output
+  channel, then `rescaleIntoAccumulatorScale(sum, s_loss, s_bg, mode)` at the
+  bias-grad's fixed scale (the #218 scheme).
+- **dx / propLoss (SYM)** = `convTranspose1dKernelSymInt32(lossGrad, weights)`,
+  scale `s_loss·s_w`, guarded by the #187 fail-fast if `propLoss` is not SYM.
+
+### Operand bit-width: int12, not int16 (int32-accumulator soundness)
+
+SYM kernels accumulate **products** of operands in an **int32** accumulator (no
+int64 — hard rule). For symmetric `b`-bit operands each product is ≤ 2^(2b−2),
+so an int32 accumulator (~2^31) holds only ~2^(33−2b) worst-case product terms
+before signed overflow (UB):
+
+| operand width | max product | int32 product-terms before overflow |
+|---|---|---|
+| int16 (qMaxBits=16) | 2^30 | 2 |
+| int12 (qMaxBits=12) | 2^22 | 512 |
+| int8  (qMaxBits=8)  | 2^14 | 131072 |
+
+int16×int16→int32 is **unsound for product-accumulation** (forward, dx,
+weightGrad) — it overflows after ~2 full-scale terms; it is sound only for
+*value* sums (biasGrad). Conv SYM therefore uses **int12 operands**
+(`quantizationInitSymInt32WithBits(rm, 12)`): products ≤ 2047² ≈ 4.2e6, ~512-term
+int32 headroom — ample for the batch=1 MCU regime ODT targets, matching the
+low-bit×low-bit→int32 arithmetic of the Deutel FQT paper (arXiv:2407.10734) /
+TFLite. The **grad accumulators stay int16** (wider accumulator, free since SYM
+stores int32 regardless of qMaxBits). The **kernels are bit-width-agnostic** —
+only the quantization configs change; the int32 accumulator (no int64) is kept.
+
+> **Framework-wide follow-up:** Linear's `matmulIntCore` and LayerNorm accumulate
+> int16 products in int32 with the identical 2-term ceiling and have not yet moved
+> to int12 — tracked in a follow-up issue. The #189 policy (release runs free, CI
+> UBSan #204 traps occurrences) backstops any residual overflow beyond int12's
+> headroom.
+
+The training loop (`CalculateGradsSequential.c`) allocates grad/activation
+tensors from the **forward** qConfig, not the backward qConfigs — so a full-SYM
+chain needs each layer's `propLossQ` to agree with the forward-derived grad dtype
+(else the #187 guard fires), exactly as for Linear. The Conv→Quant→…→MSE chain
+wiring + FLOAT32-twin convergence check is PR3.
+
 ## Vision: memory over float accuracy
 
 ODT is a memory-light on-device-training research framework. SYM_INT32 paths
