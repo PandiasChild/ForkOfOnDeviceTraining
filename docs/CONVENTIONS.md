@@ -458,6 +458,45 @@ chain needs each layer's `propLossQ` to agree with the forward-derived grad dtyp
 (else the #187 guard fires), exactly as for Linear. The Conv→Quant→…→MSE chain
 wiring + FLOAT32-twin convergence check is PR3.
 
+### Conv1dTransposed SYM_INT32 (PR3)
+
+Conv1dTransposed is Conv1d's adjoint with roles swapped, so it reuses BOTH PR2
+cores — no new kernels:
+
+- **forward** = `convTranspose1dKernelSymInt32` (the scatter core; its internal
+  per-channel bias-seed refold gives ConvT bias for free). Pass `outputPadding`.
+- **dx / propLoss** = `conv1dKernelSymInt32` (the gather core, the VALID adjoint),
+  guarded by the #187 fail-fast if `propLoss` is not SYM_INT32.
+- **weightGrad** = strategy A: a scatter-style integer gather (ConvT weight layout
+  `[Cin, Cout/groups, K]`, index `(ic·outChPerGroup + ocOffset)·K + k`) into a fresh
+  `reserveMemory` int32 intermediate at scale `s_in·s_loss`, then
+  `addSymInt32TensorsInplace` into the SYM grad accumulator.
+- **biasGrad** = the same fixed-scale refold as Conv1d (`rescaleIntoAccumulatorScale`
+  over the `batch × outputLength` int32 sum).
+
+Backward dispatches on three independent qConfigs (`weightGradQ`/`biasGradQ`/
+`propLossQ`), like `conv1dBackward`/`linearBackward`. Operands are int12, grad
+accumulators int16, accumulators int32 — no int64. Conv1dTransposed is VALID-only
+(Phase 1), so the adjoint never hits a SAME/EXPLICIT padLeft.
+
+### Validator (PR3)
+
+`producerForwardQ` (`ModelValidationApi.c`) now returns the conv layer's `forwardQ`
+for CONV1D and CONV1D_TRANSPOSED, bringing SYM-producing conv layers under the
+int16 inter-layer contract: a SYM conv producer must be followed by a Quantization
+layer (or sit in the last position).
+
+### SYM training chains
+
+The training loop allocates every grad/activation tensor from the FORWARD output
+qConfig (`initGradTensor`), so a uniformly-SYM chain (every `forwardQ` SYM_INT32)
+makes every grad tensor SYM_INT32 and every layer's `propLossQ` match — the #187
+guard passes. SYM-trainable conv layers are built via the low-level
+`initConv1dTransposedConfigWithWeightsAndBias` with SYM `parameter_t`s (the
+high-level factory keeps grads FLOAT32, matching the Linear KAIMING factory).
+`Conv1dTransposed → Quant → MSE` trains under
+`calculateGradsSequential` + `sgdStepM(SYM_INT32)`.
+
 ## Vision: memory over float accuracy
 
 ODT is a memory-light on-device-training research framework. SYM_INT32 paths
