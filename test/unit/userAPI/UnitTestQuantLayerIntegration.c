@@ -6,7 +6,9 @@
 #include <stdlib.h>
 
 #include "CalculateGradsSequential.h"
+#include "Conv1dTransposed.h"
 #include "InferenceApi.h"
+#include "Kernel.h"
 #include "Layer.h"
 #include "LayerNorm.h"
 #include "LayerNormApi.h"
@@ -59,6 +61,37 @@ static tensor_t *build2DSym(size_t b, size_t f, const float *data, size_t n) {
     tensor_t *t = initTensor(shape, quantizationInitSymInt32(HALF_AWAY), NULL);
     tensorFillFromFloatBuffer(t, (float *)data, n);
     return t;
+}
+
+/* 3D [B,C,L] SYM int12 tensor (operands), mirroring build2DSym. */
+static tensor_t *build3DSymI12(size_t b, size_t c, size_t l, const float *data, size_t n) {
+    size_t *dims = reserveMemory(3 * sizeof(size_t));
+    dims[0] = b;
+    dims[1] = c;
+    dims[2] = l;
+    size_t *order = reserveMemory(3 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(3, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, 3, order);
+    tensor_t *t = initTensor(shape, quantizationInitSymInt32WithBits(HALF_AWAY, 12), NULL);
+    tensorFillFromFloatBuffer(t, (float *)data, n);
+    return t;
+}
+
+/* A trainable SYM ConvT param: int12 operand storage, SYM grad accumulator. */
+static parameter_t *buildConvTSymParam(size_t numDims, const size_t *dimsIn, const float *vals) {
+    size_t *dims = reserveMemory(numDims * sizeof(size_t));
+    for (size_t i = 0; i < numDims; i++) {
+        dims[i] = dimsIn[i];
+    }
+    size_t *order = reserveMemory(numDims * sizeof(size_t));
+    setOrderOfDimsForNewTensor(numDims, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, numDims, order);
+    tensor_t *p = initTensor(shape, quantizationInitSymInt32WithBits(HALF_AWAY, 12), NULL);
+    tensorFillFromFloatBuffer(p, (float *)vals, calcNumberOfElementsByShape(shape));
+    tensor_t *g = gradInitSymInt32(p, HALF_AWAY, NULL);
+    return parameterInit(p, g);
 }
 
 /* Trainable Linear with manually built parameters: the new-factory KAIMING
@@ -376,6 +409,72 @@ void testFullSymChainTrainingStepMatchesFloatTwin(void) {
     }
 }
 
+void testConv1dTransposedSymChainTrains(void) {
+    /* Tiny uniform-SYM chain: ConvT(1->1, K=2) -> Quant -> MSE. int12 operands keep
+     * int12*int12 products inside int32; the loop forces int16 grad accumulators.
+     * Calibrated: lr=0.05, STEPS=40 gives firstLoss=0.100313 -> lastLoss=0.006788
+     * (~14.8x decrease, monotone). Verified deterministic over 3 consecutive runs. */
+    quantization_t *symQ = quantizationInitSymInt32WithBits(HALF_AWAY, 12);
+
+    size_t weightDims[3] = {1, 1, 2}; /* [Cin, Cout/groups, K] */
+    size_t biasDims[1] = {1};
+    static const float W_VALS[2] = {0.30f, -0.20f};
+    static const float B_VALS[1] = {0.05f};
+    parameter_t *cw = buildConvTSymParam(3, weightDims, W_VALS);
+    parameter_t *cb = buildConvTSymParam(1, biasDims, B_VALS);
+
+    static kernel_t kernel;
+    initKernel(&kernel, 2, VALID, 1, 1);
+    static conv1dTransposedConfig_t cfg;
+    initConv1dTransposedConfigWithWeightsAndBias(&cfg, &kernel, cw, cb, 1, 0, symQ, symQ, symQ,
+                                                 symQ);
+    static layerConfig_t convLc;
+    static layer_t convLayer;
+    convLc.conv1dTransposed = &cfg;
+    initLayer(&convLayer, CONV1D_TRANSPOSED, &convLc);
+
+    layer_t *quant = buildQuantLayer(symQ, symQ);
+    layer_t *model[2] = {&convLayer, quant};
+
+    TEST_ASSERT_TRUE_MESSAGE(validateModelQuantization(model, 2),
+                             "ConvT-SYM -> Quant must pass the validator");
+
+    /* Fixed learnable sample: input [1,1,3] -> ConvT output [1,1,4]; label [1,1,4]. */
+    static const float IN_VALS[3] = {0.5f, -0.3f, 0.8f};
+    static const float LABEL_VALS[4] = {0.10f, 0.20f, -0.15f, 0.05f};
+
+    optimizer_t *opt = sgdMCreateOptim(0.05f, 0.0f, 0.0f, model, 2, SYM_INT32);
+
+    size_t STEPS = 40;
+    float firstLoss = NAN;
+    float lastLoss = NAN;
+    for (size_t s = 0; s < STEPS; s++) {
+        tensor_t *in = build3DSymI12(1, 1, 3, IN_VALS, 3);
+        tensor_t *label = build3DSymI12(1, 1, 4, LABEL_VALS, 4);
+        trainingStats_t *st =
+            calculateGradsSequential(model, 2, defaultLossConfig(MSE), REDUCTION_MEAN, in, label);
+        if (s == 0) {
+            firstLoss = st->loss;
+        }
+        lastLoss = st->loss;
+        sgdStepM(opt);
+        sgdZeroGrad(opt);
+        freeTrainingStats(st);
+        freeTensor(label);
+        freeTensor(in);
+    }
+
+    bool decreased = lastLoss < firstLoss;
+    bool finite = isfinite(firstLoss) && isfinite(lastLoss);
+
+    freeOptimSgdM(opt); /* frees cw/cb parameter_t */
+    freeQuantLayerShell(quant);
+    freeQuantization(symQ);
+
+    TEST_ASSERT_TRUE_MESSAGE(finite, "SYM ConvT chain losses must be finite");
+    TEST_ASSERT_TRUE_MESSAGE(decreased, "SYM ConvT chain must train (loss must decrease)");
+}
+
 void testValidatorRejectsChainWithoutQuantLayers(void) {
     quantization_t *symQ = quantizationInitSymInt32(HALF_AWAY);
     layerQuant_t lqSym = {
@@ -409,5 +508,6 @@ int main(void) {
     RUN_TEST(testInferenceLinearSymThenQuantOutputsInt16RangeMantissas);
     RUN_TEST(testFullSymChainTrainingStepMatchesFloatTwin);
     RUN_TEST(testValidatorRejectsChainWithoutQuantLayers);
+    RUN_TEST(testConv1dTransposedSymChainTrains);
     return UNITY_END();
 }

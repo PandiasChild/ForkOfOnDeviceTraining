@@ -332,6 +332,10 @@ target_link_libraries(UnitTestQuantLayerIntegration PRIVATE
         InferenceApi
         DataLoader
         StorageApi
+        Conv1dTransposed
+        Conv1dKernel
+        ConvTranspose1dKernel
+        Kernel
 )
 __register_target_as_unit_test(UnitTestQuantLayerIntegration)
 
