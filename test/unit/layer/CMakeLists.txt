@@ -19,6 +19,7 @@ add_custom_command(
         COMMAND uv run ${CMAKE_CURRENT_SOURCE_DIR}/generate_expected_conv1d_transposed.py
                 --out ${GEN_CONV1D_TRANSPOSED_HEADER}
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/generate_expected_conv1d_transposed.py
+                ${CMAKE_CURRENT_SOURCE_DIR}/../goldgen/sym_gold.py
         COMMENT "Generating expected_conv1d_transposed.h via PyTorch"
         VERBATIM
 )
