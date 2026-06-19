@@ -2,6 +2,8 @@
 
 #include <stdbool.h>
 
+#include "Conv1d.h"
+#include "Conv1dTransposed.h"
 #include "Layer.h"
 #include "LayerNorm.h"
 #include "Linear.h"
@@ -56,6 +58,55 @@ static layer_t *buildQuantStub(quantization_t *fq) {
 
 static void freeLayerNormStub(layer_t *layer) {
     freeReservedMemory(layer->config->layerNorm);
+    freeReservedMemory(layer->config);
+    freeReservedMemory(layer);
+}
+
+static layer_t *buildConv1dStub(quantization_t *fq) {
+    conv1dConfig_t *cfg = reserveMemory(sizeof(conv1dConfig_t));
+    cfg->kernel = NULL;
+    cfg->weights = NULL;
+    cfg->bias = NULL;
+    cfg->groups = 1;
+    cfg->forwardQ = fq;
+    cfg->weightGradQ = fq;
+    cfg->biasGradQ = fq;
+    cfg->propLossQ = fq;
+    cfg->ownsQuantizations = false;
+    layerConfig_t *lc = reserveMemory(sizeof(layerConfig_t));
+    lc->conv1d = cfg;
+    layer_t *layer = reserveMemory(sizeof(layer_t));
+    initLayer(layer, CONV1D, lc);
+    return layer;
+}
+
+static void freeConv1dStub(layer_t *layer) {
+    freeReservedMemory(layer->config->conv1d);
+    freeReservedMemory(layer->config);
+    freeReservedMemory(layer);
+}
+
+static layer_t *buildConv1dTransposedStub(quantization_t *fq) {
+    conv1dTransposedConfig_t *cfg = reserveMemory(sizeof(conv1dTransposedConfig_t));
+    cfg->kernel = NULL;
+    cfg->weights = NULL;
+    cfg->bias = NULL;
+    cfg->groups = 1;
+    cfg->outputPadding = 0;
+    cfg->forwardQ = fq;
+    cfg->weightGradQ = fq;
+    cfg->biasGradQ = fq;
+    cfg->propLossQ = fq;
+    cfg->ownsQuantizations = false;
+    layerConfig_t *lc = reserveMemory(sizeof(layerConfig_t));
+    lc->conv1dTransposed = cfg;
+    layer_t *layer = reserveMemory(sizeof(layer_t));
+    initLayer(layer, CONV1D_TRANSPOSED, lc);
+    return layer;
+}
+
+static void freeConv1dTransposedStub(layer_t *layer) {
+    freeReservedMemory(layer->config->conv1dTransposed);
     freeReservedMemory(layer->config);
     freeReservedMemory(layer);
 }
@@ -159,6 +210,51 @@ void testValidatorAcceptsFloatOnlyModel(void) {
     TEST_ASSERT_TRUE(valid);
 }
 
+void testValidatorRejectsConv1dSymProducerFollowedByNonQuantLayer(void) {
+    quantization_t *symQ = quantizationInitSymInt32(HALF_AWAY);
+    layer_t *conv = buildConv1dStub(symQ);
+    layer_t *norm = buildLayerNormStub(symQ);
+    layer_t *model[2] = {conv, norm};
+
+    bool valid = validateModelQuantization(model, 2);
+
+    freeLayerNormStub(norm);
+    freeConv1dStub(conv);
+    freeQuantization(symQ);
+
+    TEST_ASSERT_FALSE_MESSAGE(valid, "Conv1d-SYM feeding a non-Quant layer violates the "
+                                     "int16 inter-layer contract");
+}
+
+void testValidatorAcceptsConv1dTransposedSymProducerInLastPosition(void) {
+    quantization_t *symQ = quantizationInitSymInt32(HALF_AWAY);
+    layer_t *convT = buildConv1dTransposedStub(symQ);
+    layer_t *model[1] = {convT};
+
+    bool valid = validateModelQuantization(model, 1);
+
+    freeConv1dTransposedStub(convT);
+    freeQuantization(symQ);
+
+    TEST_ASSERT_TRUE_MESSAGE(valid, "a SYM producer in the last position is allowed");
+}
+
+void testValidatorRejectsConv1dTransposedSymProducerFollowedByNonQuantLayer(void) {
+    quantization_t *symQ = quantizationInitSymInt32(HALF_AWAY);
+    layer_t *convT = buildConv1dTransposedStub(symQ);
+    layer_t *norm = buildLayerNormStub(symQ);
+    layer_t *model[2] = {convT, norm};
+
+    bool valid = validateModelQuantization(model, 2);
+
+    freeLayerNormStub(norm);
+    freeConv1dTransposedStub(convT);
+    freeQuantization(symQ);
+
+    TEST_ASSERT_FALSE_MESSAGE(valid, "Conv1dTransposed-SYM feeding a non-Quant layer violates "
+                                     "the int16 inter-layer contract");
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testValidatorAcceptsEmptyModel);
@@ -168,5 +264,8 @@ int main(void) {
     RUN_TEST(testValidatorAcceptsChainWithQuantLayersBetweenProducers);
     RUN_TEST(testValidatorAcceptsSymProducerInLastPosition);
     RUN_TEST(testValidatorAcceptsFloatOnlyModel);
+    RUN_TEST(testValidatorRejectsConv1dSymProducerFollowedByNonQuantLayer);
+    RUN_TEST(testValidatorAcceptsConv1dTransposedSymProducerInLastPosition);
+    RUN_TEST(testValidatorRejectsConv1dTransposedSymProducerFollowedByNonQuantLayer);
     return UNITY_END();
 }

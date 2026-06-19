@@ -10,7 +10,7 @@
  *
  *  Walks the layer array and checks the int16 inter-layer contract: a layer
  *  whose forwardQ is SYM_INT32 and whose type is an accumulator-range
- *  producer (LINEAR, LAYERNORM; Conv joins with #45) must be followed by a
+ *  producer (LINEAR, LAYERNORM, CONV1D, CONV1D_TRANSPOSED) must be followed by a
  *  QUANTIZATION layer that requantizes the raw accumulator mantissas. A
  *  producer in the last position is allowed (loss boundary).
  *

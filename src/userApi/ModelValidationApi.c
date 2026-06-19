@@ -4,6 +4,8 @@
 #include <stddef.h>
 
 #include "Common.h"
+#include "Conv1d.h"
+#include "Conv1dTransposed.h"
 #include "Layer.h"
 #include "LayerNorm.h"
 #include "Linear.h"
@@ -18,6 +20,10 @@ static quantization_t *producerForwardQ(layer_t *layer) {
         return layer->config->linear->forwardQ;
     case LAYERNORM:
         return layer->config->layerNorm->forwardQ;
+    case CONV1D:
+        return layer->config->conv1d->forwardQ;
+    case CONV1D_TRANSPOSED:
+        return layer->config->conv1dTransposed->forwardQ;
     default:
         return NULL;
     }
