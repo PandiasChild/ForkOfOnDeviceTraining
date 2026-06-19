@@ -1,8 +1,11 @@
 #include <stdlib.h>
 
 #include "Conv1dTransposed.h"
+#include "ConvTranspose1dKernel.h"
 #include "Layer.h"
 #include "QuantizationApi.h"
+#include "StorageApi.h"
+#include "Tensor.h"
 #include "TensorApi.h"
 #include "expected_conv1d_transposed.h"
 #include "unity.h"
@@ -48,6 +51,74 @@ static void convT1dBuild(convT1dRunResult_t *r, float const *weightData, size_t 
 
     r->input = tensorInitFloat((float *)inputData, (size_t *)inputDims, 3, NULL);
     r->output = tensorInitFloat(outputBuf, (size_t *)outputDims, 3, NULL);
+}
+
+/* Build a SYM_INT32 (HALF_AWAY, qMaxBits=12 operands) tensor from a float fixture:
+ * values are quantized via tensorFillFromFloatBuffer (absmax->scale, round-clamp).
+ * The fixtures are dequant-round-trip-stable (sym_gold.stable_dequant_i12) so the C
+ * side lands on exactly the gold mantissas+scale. NULL vals -> zero mantissas, scale 1.0. */
+static tensor_t *buildSymTensor(size_t numDims, const size_t *dimsIn, const float *vals) {
+    size_t *dims = reserveMemory(numDims * sizeof(size_t));
+    for (size_t i = 0; i < numDims; i++) {
+        dims[i] = dimsIn[i];
+    }
+    size_t *order = reserveMemory(numDims * sizeof(size_t));
+    setOrderOfDimsForNewTensor(numDims, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, numDims, order);
+    tensor_t *t = initTensor(shape, quantizationInitSymInt32WithBits(HALF_AWAY, 12), NULL);
+    if (vals != NULL) {
+        tensorFillFromFloatBuffer(t, vals, calcNumberOfElementsByShape(shape));
+    }
+    return t;
+}
+
+static parameter_t *buildSymParam(size_t numDims, const size_t *dimsIn, const float *vals) {
+    tensor_t *p = buildSymTensor(numDims, dimsIn, vals);
+    tensor_t *g = gradInitSymInt32(p, HALF_AWAY, NULL);
+    return parameterInit(p, g);
+}
+
+static float symScaleOf(tensor_t *t) {
+    return ((symInt32QConfig_t *)t->quantization->qConfig)->scale;
+}
+
+void testConv1dTransposedForwardSymSingleChannelSingleBatch() {
+    size_t weightDims[] = {1, 1, 2};
+    size_t inputDims[] = {1, 1, 3};
+    size_t outputDims[] = {1, 1, 4}; /* Lout=(3-1)*1+1*(2-1)+0+1=4 */
+
+    parameter_t *weights = buildSymParam(3, weightDims, weight_convT1dSym_singleChannelSingleBatch);
+    tensor_t *input = buildSymTensor(3, inputDims, input_convT1dSym_singleChannelSingleBatch);
+    tensor_t *output = buildSymTensor(3, outputDims, NULL);
+
+    kernel_t kernel;
+    initKernel(&kernel, 2, VALID, 1, 1);
+    quantization_t *sq = quantizationInitSymInt32(HALF_AWAY);
+    conv1dTransposedConfig_t cfg;
+    static layerConfig_t lc;
+    static layer_t layer;
+    initConv1dTransposedConfigWithWeightsAndBias(&cfg, &kernel, weights, NULL, 1, 0, sq, sq, sq,
+                                                 sq);
+    layer.type = CONV1D_TRANSPOSED;
+    lc.conv1dTransposed = &cfg;
+    layer.config = &lc;
+
+    conv1dTransposedForward(&layer, input, output);
+
+    int32_t *m = (int32_t *)output->data;
+    for (size_t i = 0; i < expectedForward_convT1dSym_singleChannelSingleBatch_len; i++) {
+        TEST_ASSERT_INT_WITHIN(forwardMantissaTol_convT1dSym_singleChannelSingleBatch,
+                               expectedForward_convT1dSym_singleChannelSingleBatch[i], m[i]);
+    }
+    float scale = symScaleOf(output);
+    TEST_ASSERT_FLOAT_WITHIN(expectedForwardScale_convT1dSym_singleChannelSingleBatch * 1e-4f,
+                             expectedForwardScale_convT1dSym_singleChannelSingleBatch, scale);
+    for (size_t i = 0; i < expectedForwardDequant_convT1dSym_singleChannelSingleBatch_len; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(forwardDequantTol_convT1dSym_singleChannelSingleBatch,
+                                 expectedForwardDequant_convT1dSym_singleChannelSingleBatch[i],
+                                 (float)m[i] * scale);
+    }
 }
 
 void testConv1dTransposedForwardSingleChannelSingleBatch() {
@@ -405,6 +476,369 @@ void testConv1dTransposedRegistryDispatch() {
                      conv1dTransposedCalcOutputShape);
 }
 
+void testConv1dTransposedForwardSymSingleChannelWithBias() {
+    size_t weightDims[] = {1, 1, 2};
+    size_t biasDims[] = {1};
+    size_t inputDims[] = {1, 1, 3};
+    size_t outputDims[] = {1, 1, 4};
+
+    parameter_t *weights = buildSymParam(3, weightDims, weight_convT1dSym_singleChannelWithBias);
+    parameter_t *bias = buildSymParam(1, biasDims, bias_convT1dSym_singleChannelWithBias);
+    tensor_t *input = buildSymTensor(3, inputDims, input_convT1dSym_singleChannelWithBias);
+    tensor_t *output = buildSymTensor(3, outputDims, NULL);
+
+    kernel_t kernel;
+    initKernel(&kernel, 2, VALID, 1, 1);
+    quantization_t *sq = quantizationInitSymInt32(HALF_AWAY);
+    conv1dTransposedConfig_t cfg;
+    static layerConfig_t lc;
+    static layer_t layer;
+    initConv1dTransposedConfigWithWeightsAndBias(&cfg, &kernel, weights, bias, 1, 0, sq, sq, sq,
+                                                 sq);
+    layer.type = CONV1D_TRANSPOSED;
+    lc.conv1dTransposed = &cfg;
+    layer.config = &lc;
+
+    conv1dTransposedForward(&layer, input, output);
+
+    int32_t *m = (int32_t *)output->data;
+    for (size_t i = 0; i < expectedForward_convT1dSym_singleChannelWithBias_len; i++) {
+        TEST_ASSERT_INT_WITHIN(forwardMantissaTol_convT1dSym_singleChannelWithBias,
+                               expectedForward_convT1dSym_singleChannelWithBias[i], m[i]);
+    }
+    float scale = symScaleOf(output);
+    TEST_ASSERT_FLOAT_WITHIN(expectedForwardScale_convT1dSym_singleChannelWithBias * 1e-4f,
+                             expectedForwardScale_convT1dSym_singleChannelWithBias, scale);
+    for (size_t i = 0; i < expectedForwardDequant_convT1dSym_singleChannelWithBias_len; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(forwardDequantTol_convT1dSym_singleChannelWithBias,
+                                 expectedForwardDequant_convT1dSym_singleChannelWithBias[i],
+                                 (float)m[i] * scale);
+    }
+}
+
+void testConv1dTransposedForwardSymStride2() {
+    size_t weightDims[] = {1, 1, 2};
+    size_t inputDims[] = {1, 1, 3};
+    size_t outputDims[] = {1, 1, 6}; /* Lout=(3-1)*2+1*(2-1)+0+1=6 */
+
+    parameter_t *weights = buildSymParam(3, weightDims, weight_convT1dSym_stride2Sym);
+    tensor_t *input = buildSymTensor(3, inputDims, input_convT1dSym_stride2Sym);
+    tensor_t *output = buildSymTensor(3, outputDims, NULL);
+
+    kernel_t kernel;
+    initKernel(&kernel, 2, VALID, 1, 2);
+    quantization_t *sq = quantizationInitSymInt32(HALF_AWAY);
+    conv1dTransposedConfig_t cfg;
+    static layerConfig_t lc;
+    static layer_t layer;
+    initConv1dTransposedConfigWithWeightsAndBias(&cfg, &kernel, weights, NULL, 1, 0, sq, sq, sq,
+                                                 sq);
+    layer.type = CONV1D_TRANSPOSED;
+    lc.conv1dTransposed = &cfg;
+    layer.config = &lc;
+
+    conv1dTransposedForward(&layer, input, output);
+
+    int32_t *m = (int32_t *)output->data;
+    for (size_t i = 0; i < expectedForward_convT1dSym_stride2Sym_len; i++) {
+        TEST_ASSERT_INT_WITHIN(forwardMantissaTol_convT1dSym_stride2Sym,
+                               expectedForward_convT1dSym_stride2Sym[i], m[i]);
+    }
+    float scale = symScaleOf(output);
+    TEST_ASSERT_FLOAT_WITHIN(expectedForwardScale_convT1dSym_stride2Sym * 1e-4f,
+                             expectedForwardScale_convT1dSym_stride2Sym, scale);
+    for (size_t i = 0; i < expectedForwardDequant_convT1dSym_stride2Sym_len; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(forwardDequantTol_convT1dSym_stride2Sym,
+                                 expectedForwardDequant_convT1dSym_stride2Sym[i],
+                                 (float)m[i] * scale);
+    }
+}
+
+void testConv1dTransposedForwardSymStride2OutputPadding() {
+    size_t weightDims[] = {1, 1, 2};
+    size_t biasDims[] = {1};
+    size_t inputDims[] = {1, 1, 3};
+    size_t outputDims[] = {1, 1, 7}; /* Lout=(3-1)*2+1*(2-1)+1+1=7 */
+
+    parameter_t *weights = buildSymParam(3, weightDims, weight_convT1dSym_stride2OutputPaddingSym);
+    parameter_t *bias = buildSymParam(1, biasDims, bias_convT1dSym_stride2OutputPaddingSym);
+    tensor_t *input = buildSymTensor(3, inputDims, input_convT1dSym_stride2OutputPaddingSym);
+    tensor_t *output = buildSymTensor(3, outputDims, NULL);
+
+    kernel_t kernel;
+    initKernel(&kernel, 2, VALID, 1, 2);
+    quantization_t *sq = quantizationInitSymInt32(HALF_AWAY);
+    conv1dTransposedConfig_t cfg;
+    static layerConfig_t lc;
+    static layer_t layer;
+    initConv1dTransposedConfigWithWeightsAndBias(&cfg, &kernel, weights, bias, 1, 1, sq, sq, sq,
+                                                 sq);
+    layer.type = CONV1D_TRANSPOSED;
+    lc.conv1dTransposed = &cfg;
+    layer.config = &lc;
+
+    conv1dTransposedForward(&layer, input, output);
+
+    int32_t *m = (int32_t *)output->data;
+    for (size_t i = 0; i < expectedForward_convT1dSym_stride2OutputPaddingSym_len; i++) {
+        TEST_ASSERT_INT_WITHIN(forwardMantissaTol_convT1dSym_stride2OutputPaddingSym,
+                               expectedForward_convT1dSym_stride2OutputPaddingSym[i], m[i]);
+    }
+    float scale = symScaleOf(output);
+    TEST_ASSERT_FLOAT_WITHIN(expectedForwardScale_convT1dSym_stride2OutputPaddingSym * 1e-4f,
+                             expectedForwardScale_convT1dSym_stride2OutputPaddingSym, scale);
+    for (size_t i = 0; i < expectedForwardDequant_convT1dSym_stride2OutputPaddingSym_len; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(forwardDequantTol_convT1dSym_stride2OutputPaddingSym,
+                                 expectedForwardDequant_convT1dSym_stride2OutputPaddingSym[i],
+                                 (float)m[i] * scale);
+    }
+}
+
+void testConv1dTransposedCalcWeightGradsSymGroupsGrouped() {
+    size_t weightDims[] = {4, 4, 2}; /* [Cin=4, Cout/groups=4, K=2], groups=2 -> Cout=8 */
+    size_t biasDims[] = {8};
+    size_t inputDims[] = {1, 4, 4};
+    size_t lossDims[] = {1, 8, 5};
+
+    parameter_t *weights = buildSymParam(3, weightDims, weight_convT1dSym_groupsGroupedSym);
+    parameter_t *bias = buildSymParam(1, biasDims, bias_convT1dSym_groupsGroupedSym);
+    tensor_t *input = buildSymTensor(3, inputDims, input_convT1dSym_groupsGroupedSym);
+    tensor_t *lossGrad = buildSymTensor(3, lossDims, lossGrad_convT1dSym_groupsGroupedSym);
+
+    kernel_t kernel;
+    initKernel(&kernel, 2, VALID, 1, 1);
+    conv1dTransposedConfig_t cfg;
+    quantization_t *sq = quantizationInitSymInt32(HALF_AWAY);
+    initConv1dTransposedConfigWithWeightsAndBias(&cfg, &kernel, weights, bias, 2, 0, sq, sq, sq,
+                                                 sq);
+
+    conv1dTransposedCalcWeightGradsSymInt32(&cfg, input, lossGrad);
+
+    int32_t *m = (int32_t *)weights->grad->data;
+    for (size_t i = 0; i < expectedWeightGrad_convT1dSym_groupsGroupedSym_len; i++) {
+        TEST_ASSERT_INT_WITHIN(weightGradMantissaTol_convT1dSym_groupsGroupedSym,
+                               expectedWeightGrad_convT1dSym_groupsGroupedSym[i], m[i]);
+    }
+    float scale = symScaleOf(weights->grad);
+    TEST_ASSERT_FLOAT_WITHIN(expectedWeightGradScale_convT1dSym_groupsGroupedSym * 1e-4f,
+                             expectedWeightGradScale_convT1dSym_groupsGroupedSym, scale);
+    for (size_t i = 0; i < expectedWeightGradDequant_convT1dSym_groupsGroupedSym_len; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(weightGradDequantTol_convT1dSym_groupsGroupedSym,
+                                 expectedWeightGradDequant_convT1dSym_groupsGroupedSym[i],
+                                 (float)m[i] * scale);
+    }
+}
+
+void testConv1dTransposedCalcBiasGradsSymMultiChannel() {
+    size_t weightDims[] = {3, 2, 2}; /* [Cin=3, Cout/groups=2, K=2] */
+    size_t biasDims[] = {2};
+    size_t lossDims[] = {1, 2, 5};
+
+    parameter_t *weights = buildSymParam(3, weightDims, weight_convT1dSym_multiChannelWithBiasSym);
+    parameter_t *bias = buildSymParam(1, biasDims, bias_convT1dSym_multiChannelWithBiasSym);
+    tensor_t *lossGrad = buildSymTensor(3, lossDims, lossGrad_convT1dSym_multiChannelWithBiasSym);
+
+    kernel_t kernel;
+    initKernel(&kernel, 2, VALID, 1, 1);
+    conv1dTransposedConfig_t cfg;
+    quantization_t *sq = quantizationInitSymInt32(HALF_AWAY);
+    initConv1dTransposedConfigWithWeightsAndBias(&cfg, &kernel, weights, bias, 1, 0, sq, sq, sq,
+                                                 sq);
+
+    conv1dTransposedCalcBiasGradsSymInt32(&cfg, lossGrad);
+
+    int32_t *m = (int32_t *)bias->grad->data;
+    for (size_t i = 0; i < expectedBiasGrad_convT1dSym_multiChannelWithBiasSym_len; i++) {
+        TEST_ASSERT_INT_WITHIN(biasGradMantissaTol_convT1dSym_multiChannelWithBiasSym,
+                               expectedBiasGrad_convT1dSym_multiChannelWithBiasSym[i], m[i]);
+    }
+    float scale = symScaleOf(bias->grad);
+    TEST_ASSERT_FLOAT_WITHIN(expectedBiasGradScale_convT1dSym_multiChannelWithBiasSym * 1e-4f,
+                             expectedBiasGradScale_convT1dSym_multiChannelWithBiasSym, scale);
+    for (size_t i = 0; i < expectedBiasGradDequant_convT1dSym_multiChannelWithBiasSym_len; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(biasGradDequantTol_convT1dSym_multiChannelWithBiasSym,
+                                 expectedBiasGradDequant_convT1dSym_multiChannelWithBiasSym[i],
+                                 (float)m[i] * scale);
+    }
+}
+
+void testConv1dTransposedBackwardSymStride2OutputPadding() {
+    size_t weightDims[] = {1, 1, 2};
+    size_t biasDims[] = {1};
+    size_t inputDims[] = {1, 1, 3};
+    size_t outputDims[] = {1, 1, 7}; /* Lout=(3-1)*2+1*(2-1)+1+1=7 */
+
+    parameter_t *weights = buildSymParam(3, weightDims, weight_convT1dSym_stride2OutputPaddingSym);
+    parameter_t *bias = buildSymParam(1, biasDims, bias_convT1dSym_stride2OutputPaddingSym);
+    tensor_t *input = buildSymTensor(3, inputDims, input_convT1dSym_stride2OutputPaddingSym);
+    tensor_t *lossGrad = buildSymTensor(3, outputDims, lossGrad_convT1dSym_stride2OutputPaddingSym);
+    tensor_t *propLoss = buildSymTensor(3, inputDims, NULL);
+
+    kernel_t kernel;
+    initKernel(&kernel, 2, VALID, 1, 2); /* K=2, VALID, dilation=1, stride=2 */
+    conv1dTransposedConfig_t cfg;
+    quantization_t *sq = quantizationInitSymInt32(HALF_AWAY);
+    static layerConfig_t lc;
+    static layer_t layer;
+    initConv1dTransposedConfigWithWeightsAndBias(&cfg, &kernel, weights, bias, 1, 1, sq, sq, sq,
+                                                 sq);
+    layer.type = CONV1D_TRANSPOSED;
+    lc.conv1dTransposed = &cfg;
+    layer.config = &lc;
+
+    conv1dTransposedBackward(&layer, input, lossGrad, propLoss);
+
+    /* propLoss (dx) */
+    int32_t *dx = (int32_t *)propLoss->data;
+    for (size_t i = 0; i < expectedPropLoss_convT1dSym_stride2OutputPaddingSym_len; i++) {
+        TEST_ASSERT_INT_WITHIN(propLossMantissaTol_convT1dSym_stride2OutputPaddingSym,
+                               expectedPropLoss_convT1dSym_stride2OutputPaddingSym[i], dx[i]);
+    }
+    float dxScale = symScaleOf(propLoss);
+    TEST_ASSERT_FLOAT_WITHIN(expectedPropLossScale_convT1dSym_stride2OutputPaddingSym * 1e-4f,
+                             expectedPropLossScale_convT1dSym_stride2OutputPaddingSym, dxScale);
+    for (size_t i = 0; i < expectedPropLossDequant_convT1dSym_stride2OutputPaddingSym_len; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(propLossDequantTol_convT1dSym_stride2OutputPaddingSym,
+                                 expectedPropLossDequant_convT1dSym_stride2OutputPaddingSym[i],
+                                 (float)dx[i] * dxScale);
+    }
+    /* weightGrad */
+    int32_t *dw = (int32_t *)weights->grad->data;
+    float dwScale = symScaleOf(weights->grad);
+    for (size_t i = 0; i < expectedWeightGrad_convT1dSym_stride2OutputPaddingSym_len; i++) {
+        TEST_ASSERT_INT_WITHIN(weightGradMantissaTol_convT1dSym_stride2OutputPaddingSym,
+                               expectedWeightGrad_convT1dSym_stride2OutputPaddingSym[i], dw[i]);
+        TEST_ASSERT_FLOAT_WITHIN(weightGradDequantTol_convT1dSym_stride2OutputPaddingSym,
+                                 expectedWeightGradDequant_convT1dSym_stride2OutputPaddingSym[i],
+                                 (float)dw[i] * dwScale);
+    }
+    /* biasGrad */
+    int32_t *db = (int32_t *)bias->grad->data;
+    float dbScale = symScaleOf(bias->grad);
+    for (size_t i = 0; i < expectedBiasGrad_convT1dSym_stride2OutputPaddingSym_len; i++) {
+        TEST_ASSERT_INT_WITHIN(biasGradMantissaTol_convT1dSym_stride2OutputPaddingSym,
+                               expectedBiasGrad_convT1dSym_stride2OutputPaddingSym[i], db[i]);
+        TEST_ASSERT_FLOAT_WITHIN(biasGradDequantTol_convT1dSym_stride2OutputPaddingSym,
+                                 expectedBiasGradDequant_convT1dSym_stride2OutputPaddingSym[i],
+                                 (float)db[i] * dbScale);
+    }
+}
+
+void testConv1dTransposedBackwardSymGroupsGrouped() {
+    size_t weightDims[] = {4, 4, 2};
+    size_t biasDims[] = {8};
+    size_t inputDims[] = {1, 4, 4};
+    size_t outputDims[] = {1, 8, 5};
+    size_t propLossDims[] = {1, 4, 4};
+
+    parameter_t *weights = buildSymParam(3, weightDims, weight_convT1dSym_groupsGroupedSym);
+    parameter_t *bias = buildSymParam(1, biasDims, bias_convT1dSym_groupsGroupedSym);
+    tensor_t *input = buildSymTensor(3, inputDims, input_convT1dSym_groupsGroupedSym);
+    tensor_t *lossGrad = buildSymTensor(3, outputDims, lossGrad_convT1dSym_groupsGroupedSym);
+    tensor_t *propLoss = buildSymTensor(3, propLossDims, NULL);
+
+    kernel_t kernel;
+    initKernel(&kernel, 2, VALID, 1, 1);
+    conv1dTransposedConfig_t cfg;
+    quantization_t *sq = quantizationInitSymInt32(HALF_AWAY);
+    static layerConfig_t lc;
+    static layer_t layer;
+    initConv1dTransposedConfigWithWeightsAndBias(&cfg, &kernel, weights, bias, 2, 0, sq, sq, sq,
+                                                 sq);
+    layer.type = CONV1D_TRANSPOSED;
+    lc.conv1dTransposed = &cfg;
+    layer.config = &lc;
+
+    conv1dTransposedBackward(&layer, input, lossGrad, propLoss);
+
+    /* propLoss (dx) */
+    int32_t *dx = (int32_t *)propLoss->data;
+    for (size_t i = 0; i < expectedPropLoss_convT1dSym_groupsGroupedSym_len; i++) {
+        TEST_ASSERT_INT_WITHIN(propLossMantissaTol_convT1dSym_groupsGroupedSym,
+                               expectedPropLoss_convT1dSym_groupsGroupedSym[i], dx[i]);
+    }
+    float dxScale = symScaleOf(propLoss);
+    TEST_ASSERT_FLOAT_WITHIN(expectedPropLossScale_convT1dSym_groupsGroupedSym * 1e-4f,
+                             expectedPropLossScale_convT1dSym_groupsGroupedSym, dxScale);
+    for (size_t i = 0; i < expectedPropLossDequant_convT1dSym_groupsGroupedSym_len; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(propLossDequantTol_convT1dSym_groupsGroupedSym,
+                                 expectedPropLossDequant_convT1dSym_groupsGroupedSym[i],
+                                 (float)dx[i] * dxScale);
+    }
+    /* weightGrad */
+    int32_t *dw = (int32_t *)weights->grad->data;
+    float dwScale = symScaleOf(weights->grad);
+    for (size_t i = 0; i < expectedWeightGrad_convT1dSym_groupsGroupedSym_len; i++) {
+        TEST_ASSERT_INT_WITHIN(weightGradMantissaTol_convT1dSym_groupsGroupedSym,
+                               expectedWeightGrad_convT1dSym_groupsGroupedSym[i], dw[i]);
+        TEST_ASSERT_FLOAT_WITHIN(weightGradDequantTol_convT1dSym_groupsGroupedSym,
+                                 expectedWeightGradDequant_convT1dSym_groupsGroupedSym[i],
+                                 (float)dw[i] * dwScale);
+    }
+    /* biasGrad */
+    int32_t *db = (int32_t *)bias->grad->data;
+    float dbScale = symScaleOf(bias->grad);
+    for (size_t i = 0; i < expectedBiasGrad_convT1dSym_groupsGroupedSym_len; i++) {
+        TEST_ASSERT_INT_WITHIN(biasGradMantissaTol_convT1dSym_groupsGroupedSym,
+                               expectedBiasGrad_convT1dSym_groupsGroupedSym[i], db[i]);
+        TEST_ASSERT_FLOAT_WITHIN(biasGradDequantTol_convT1dSym_groupsGroupedSym,
+                                 expectedBiasGradDequant_convT1dSym_groupsGroupedSym[i],
+                                 (float)db[i] * dbScale);
+    }
+}
+
+void testConv1dTransposedBackwardSymDilation2() {
+    size_t weightDims[] = {1, 1, 2};
+    size_t inputDims[] = {1, 1, 4};
+    size_t outputDims[] = {1, 1, 6};
+    size_t propLossDims[] = {1, 1, 4};
+
+    parameter_t *weights = buildSymParam(3, weightDims, weight_convT1dSym_dilation2Sym);
+    tensor_t *input = buildSymTensor(3, inputDims, input_convT1dSym_dilation2Sym);
+    tensor_t *lossGrad = buildSymTensor(3, outputDims, lossGrad_convT1dSym_dilation2Sym);
+    tensor_t *propLoss = buildSymTensor(3, propLossDims, NULL);
+
+    kernel_t kernel;
+    initKernel(&kernel, 2, VALID, 2, 1); /* dilation=2, stride=1 */
+    conv1dTransposedConfig_t cfg;
+    quantization_t *sq = quantizationInitSymInt32(HALF_AWAY);
+    static layerConfig_t lc;
+    static layer_t layer;
+    initConv1dTransposedConfigWithWeightsAndBias(&cfg, &kernel, weights, NULL, 1, 0, sq, sq, sq,
+                                                 sq);
+    layer.type = CONV1D_TRANSPOSED;
+    lc.conv1dTransposed = &cfg;
+    layer.config = &lc;
+
+    conv1dTransposedBackward(&layer, input, lossGrad, propLoss);
+
+    /* propLoss (dx) */
+    int32_t *dx = (int32_t *)propLoss->data;
+    for (size_t i = 0; i < expectedPropLoss_convT1dSym_dilation2Sym_len; i++) {
+        TEST_ASSERT_INT_WITHIN(propLossMantissaTol_convT1dSym_dilation2Sym,
+                               expectedPropLoss_convT1dSym_dilation2Sym[i], dx[i]);
+    }
+    float dxScale = symScaleOf(propLoss);
+    TEST_ASSERT_FLOAT_WITHIN(expectedPropLossScale_convT1dSym_dilation2Sym * 1e-4f,
+                             expectedPropLossScale_convT1dSym_dilation2Sym, dxScale);
+    for (size_t i = 0; i < expectedPropLossDequant_convT1dSym_dilation2Sym_len; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(propLossDequantTol_convT1dSym_dilation2Sym,
+                                 expectedPropLossDequant_convT1dSym_dilation2Sym[i],
+                                 (float)dx[i] * dxScale);
+    }
+    /* weightGrad */
+    int32_t *dw = (int32_t *)weights->grad->data;
+    float dwScale = symScaleOf(weights->grad);
+    for (size_t i = 0; i < expectedWeightGrad_convT1dSym_dilation2Sym_len; i++) {
+        TEST_ASSERT_INT_WITHIN(weightGradMantissaTol_convT1dSym_dilation2Sym,
+                               expectedWeightGrad_convT1dSym_dilation2Sym[i], dw[i]);
+        TEST_ASSERT_FLOAT_WITHIN(weightGradDequantTol_convT1dSym_dilation2Sym,
+                                 expectedWeightGradDequant_convT1dSym_dilation2Sym[i],
+                                 (float)dw[i] * dwScale);
+    }
+    /* no biasGrad: bias == NULL */
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -424,5 +858,14 @@ int main() {
     RUN_TEST(testConv1dTransposedForwardDilation2);
     RUN_TEST(testConv1dTransposedCalcOutputShapeWithGroups);
     RUN_TEST(testConv1dTransposedRegistryDispatch);
+    RUN_TEST(testConv1dTransposedForwardSymSingleChannelSingleBatch);
+    RUN_TEST(testConv1dTransposedForwardSymSingleChannelWithBias);
+    RUN_TEST(testConv1dTransposedForwardSymStride2);
+    RUN_TEST(testConv1dTransposedForwardSymStride2OutputPadding);
+    RUN_TEST(testConv1dTransposedCalcWeightGradsSymGroupsGrouped);
+    RUN_TEST(testConv1dTransposedCalcBiasGradsSymMultiChannel);
+    RUN_TEST(testConv1dTransposedBackwardSymStride2OutputPadding);
+    RUN_TEST(testConv1dTransposedBackwardSymGroupsGrouped);
+    RUN_TEST(testConv1dTransposedBackwardSymDilation2);
     return UNITY_END();
 }

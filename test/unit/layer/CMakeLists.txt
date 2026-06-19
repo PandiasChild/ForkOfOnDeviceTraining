@@ -130,6 +130,8 @@ add_elastic_ai_unit_test(
         CommonLayerLibs
         TensorApi
         QuantizationApi
+        Conv1dKernel
+        ConvTranspose1dKernel
         Kernel
         StorageApi
 )
