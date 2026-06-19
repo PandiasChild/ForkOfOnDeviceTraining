@@ -87,6 +87,15 @@ static void conv1dTransposedCalcWeightGradsFloat32(conv1dTransposedConfig_t *cfg
     size_t outputLength = lossGrad->shape->dimensions[2];
     size_t kernelSize = cfg->weights->param->shape->dimensions[2];
 
+    size_t expectedOutLen = (inputLength - 1) * cfg->kernel->stride +
+                            cfg->kernel->dilation * (kernelSize - 1) + cfg->outputPadding + 1;
+    if (expectedOutLen != outputLength) {
+        PRINT_ERROR("Conv1dTransposed backward (weightGrad): lossGrad outputLength (%zu) does "
+                    "not match the transpose geometry from forwardInput (expected %zu)",
+                    outputLength, expectedOutLen);
+        exit(1);
+    }
+
     size_t groups = cfg->groups;
     size_t inChPerGroup = inChannels / groups;
     size_t outChPerGroup = outChannels / groups;
@@ -156,6 +165,15 @@ void conv1dTransposedCalcWeightGradsSymInt32(conv1dTransposedConfig_t *cfg, tens
     size_t outChannels = lossGrad->shape->dimensions[1];
     size_t outputLength = lossGrad->shape->dimensions[2];
     size_t kernelSize = cfg->weights->param->shape->dimensions[2];
+
+    size_t expectedOutLen = (inputLength - 1) * cfg->kernel->stride +
+                            cfg->kernel->dilation * (kernelSize - 1) + cfg->outputPadding + 1;
+    if (expectedOutLen != outputLength) {
+        PRINT_ERROR("Conv1dTransposed backward (weightGrad): lossGrad outputLength (%zu) does "
+                    "not match the transpose geometry from forwardInput (expected %zu)",
+                    outputLength, expectedOutLen);
+        exit(1);
+    }
 
     size_t groups = cfg->groups;
     size_t inChPerGroup = inChannels / groups;
