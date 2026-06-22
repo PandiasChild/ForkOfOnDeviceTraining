@@ -33,8 +33,7 @@ void convTranspose1dKernelFloat32(tensor_t const *input, tensor_t const *weight,
     size_t padLeft = 0;
 
     if (kernel->paddingType == VALID) {
-        size_t expectedOutLen = (inputLength - 1) * kernel->stride +
-                                kernel->dilation * (kernelSize - 1) + outputPadding + 1;
+        size_t expectedOutLen = convTranspose1dOutputLength(inputLength, kernel, outputPadding);
         if (expectedOutLen != outputLength) {
             PRINT_ERROR("convTranspose1dKernelFloat32: VALID output_length mismatch "
                         "(expected=%zu, got=%zu)",
@@ -158,8 +157,7 @@ void convTranspose1dKernelSymInt32(tensor_t const *input, tensor_t const *weight
     size_t padLeft = 0;
 
     if (kernel->paddingType == VALID) {
-        size_t expectedOutLen = (inputLength - 1) * kernel->stride +
-                                kernel->dilation * (kernelSize - 1) + outputPadding + 1;
+        size_t expectedOutLen = convTranspose1dOutputLength(inputLength, kernel, outputPadding);
         if (expectedOutLen != outputLength) {
             PRINT_ERROR("convTranspose1dKernelSymInt32: VALID output_length mismatch "
                         "(expected=%zu, got=%zu)",

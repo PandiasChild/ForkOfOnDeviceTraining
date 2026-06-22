@@ -92,8 +92,8 @@ static void conv1dTransposedCalcWeightGradsFloat32(conv1dTransposedConfig_t *cfg
     size_t outputLength = lossGrad->shape->dimensions[2];
     size_t kernelSize = cfg->weights->param->shape->dimensions[2];
 
-    size_t expectedOutLen = (inputLength - 1) * cfg->kernel->stride +
-                            cfg->kernel->dilation * (kernelSize - 1) + cfg->outputPadding + 1;
+    size_t expectedOutLen =
+        convTranspose1dOutputLength(inputLength, cfg->kernel, cfg->outputPadding);
     if (expectedOutLen != outputLength) {
         PRINT_ERROR("Conv1dTransposed backward (weightGrad): lossGrad outputLength (%zu) does "
                     "not match the transpose geometry from forwardInput (expected %zu)",
@@ -171,8 +171,8 @@ void conv1dTransposedCalcWeightGradsSymInt32(conv1dTransposedConfig_t *cfg, tens
     size_t outputLength = lossGrad->shape->dimensions[2];
     size_t kernelSize = cfg->weights->param->shape->dimensions[2];
 
-    size_t expectedOutLen = (inputLength - 1) * cfg->kernel->stride +
-                            cfg->kernel->dilation * (kernelSize - 1) + cfg->outputPadding + 1;
+    size_t expectedOutLen =
+        convTranspose1dOutputLength(inputLength, cfg->kernel, cfg->outputPadding);
     if (expectedOutLen != outputLength) {
         PRINT_ERROR("Conv1dTransposed backward (weightGrad): lossGrad outputLength (%zu) does "
                     "not match the transpose geometry from forwardInput (expected %zu)",
@@ -349,14 +349,12 @@ void conv1dTransposedCalcOutputShape(layer_t *layer, shape_t *inputShape, shape_
     conv1dTransposedConfig_t *cfg = layer->config->conv1dTransposed;
     size_t batchSize = inputShape->dimensions[0];
     size_t inputLength = inputShape->dimensions[2];
-    size_t kernelSize = cfg->weights->param->shape->dimensions[2];
     // Conv1dTransposed weight shape: [Cin, Cout/groups, K]
     // Cout = (Cout/groups) * groups
     size_t outChannelsPerGroup = cfg->weights->param->shape->dimensions[1];
     size_t outChannels = outChannelsPerGroup * cfg->groups;
 
-    size_t outputLength = (inputLength - 1) * cfg->kernel->stride +
-                          cfg->kernel->dilation * (kernelSize - 1) + cfg->outputPadding + 1;
+    size_t outputLength = convTranspose1dOutputLength(inputLength, cfg->kernel, cfg->outputPadding);
 
     outputShape->dimensions[0] = batchSize;
     outputShape->dimensions[1] = outChannels;
