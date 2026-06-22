@@ -34,6 +34,11 @@ void initConv1dTransposedConfigWithWeightsAndBias(
                     outputPadding, kernel->stride, kernel->dilation);
         exit(1);
     }
+    if (kernel->size != weights->param->shape->dimensions[2]) {
+        PRINT_ERROR("Conv1dTransposed: kernel->size (%zu) must equal weight kernelSize (%zu)",
+                    kernel->size, weights->param->shape->dimensions[2]);
+        exit(1);
+    }
     cfg->kernel = kernel;
     cfg->weights = weights;
     cfg->bias = bias;

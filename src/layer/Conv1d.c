@@ -22,6 +22,11 @@ void initConv1dConfigWithWeightsAndBias(conv1dConfig_t *conv1dConfig, kernel_t *
         PRINT_ERROR("Conv1d: groups must be >= 1");
         exit(1);
     }
+    if (kernel->size != weights->param->shape->dimensions[2]) {
+        PRINT_ERROR("Conv1d: kernel->size (%zu) must equal weight kernelSize (%zu)", kernel->size,
+                    weights->param->shape->dimensions[2]);
+        exit(1);
+    }
     conv1dConfig->kernel = kernel;
     conv1dConfig->weights = weights;
     conv1dConfig->bias = bias;
