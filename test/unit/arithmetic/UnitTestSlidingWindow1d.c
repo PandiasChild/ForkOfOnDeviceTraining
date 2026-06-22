@@ -216,6 +216,36 @@ void testGeometryExplicitZeroPaddingEqualsValid() {
     TEST_ASSERT_EQUAL_size_t(0, g.padRight);
 }
 
+void testTransposeOutputLengthBasic() {
+    // (4-1)*1 + 1*(2-1) + 0 + 1 = 5
+    kernel_t kernel = {.size = 2, .stride = 1, .dilation = 1, .paddingType = VALID};
+    TEST_ASSERT_EQUAL_size_t(5, convTranspose1dOutputLength(4, &kernel, 0));
+}
+
+void testTransposeOutputLengthWithStride() {
+    // (4-1)*2 + 1*(2-1) + 0 + 1 = 8
+    kernel_t kernel = {.size = 2, .stride = 2, .dilation = 1, .paddingType = VALID};
+    TEST_ASSERT_EQUAL_size_t(8, convTranspose1dOutputLength(4, &kernel, 0));
+}
+
+void testTransposeOutputLengthWithDilation() {
+    // (4-1)*1 + 2*(3-1) + 0 + 1 = 8
+    kernel_t kernel = {.size = 3, .stride = 1, .dilation = 2, .paddingType = VALID};
+    TEST_ASSERT_EQUAL_size_t(8, convTranspose1dOutputLength(4, &kernel, 0));
+}
+
+void testTransposeOutputLengthWithOutputPadding() {
+    // (4-1)*2 + 1*(2-1) + 1 + 1 = 9
+    kernel_t kernel = {.size = 2, .stride = 2, .dilation = 1, .paddingType = VALID};
+    TEST_ASSERT_EQUAL_size_t(9, convTranspose1dOutputLength(4, &kernel, 1));
+}
+
+void testTransposeOutputLengthStrideDilationOutputPadding() {
+    // (5-1)*2 + 2*(3-1) + 1 + 1 = 14
+    kernel_t kernel = {.size = 3, .stride = 2, .dilation = 2, .paddingType = VALID};
+    TEST_ASSERT_EQUAL_size_t(14, convTranspose1dOutputLength(5, &kernel, 1));
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -231,6 +261,11 @@ int main(void) {
     RUN_TEST(testGeometryExplicitPaddingStride2);
     RUN_TEST(testGeometryExplicitPaddingOddKernelStride1MatchesSame);
     RUN_TEST(testGeometryExplicitZeroPaddingEqualsValid);
+    RUN_TEST(testTransposeOutputLengthBasic);
+    RUN_TEST(testTransposeOutputLengthWithStride);
+    RUN_TEST(testTransposeOutputLengthWithDilation);
+    RUN_TEST(testTransposeOutputLengthWithOutputPadding);
+    RUN_TEST(testTransposeOutputLengthStrideDilationOutputPadding);
     RUN_TEST(testSliceCenterFullWindow);
     RUN_TEST(testSliceLeftEdgeWithPadding);
     RUN_TEST(testSliceRightEdgeWithPadding);

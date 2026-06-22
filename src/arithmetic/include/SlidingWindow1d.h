@@ -17,6 +17,15 @@ typedef struct windowGeometry1d {
 
 windowGeometry1d_t windowGeometry1dCalc(size_t inputLength, kernel_t const *kernel);
 
+/*! VALID-mode transposed-conv forward output length:
+ *    Lout = (inputLength - 1)*stride + dilation*(kernelSize - 1) + outputPadding + 1
+ *  Uses kernel->size as the kernel tap count (enforced == weight kernelSize at
+ *  layer init, see initConv1dConfigWithWeightsAndBias /
+ *  initConv1dTransposedConfigWithWeightsAndBias). SAME/EXPLICIT transpose geometry
+ *  is NOT this — it is recovered via windowGeometry1dCalc(outputLength, kernel). */
+size_t convTranspose1dOutputLength(size_t inputLength, kernel_t const *kernel,
+                                   size_t outputPadding);
+
 typedef struct windowSlice1d {
     size_t firstValidInputIdx;
     size_t firstValidKernelOffset;

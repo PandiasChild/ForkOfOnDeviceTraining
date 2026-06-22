@@ -92,3 +92,9 @@ windowSlice1d_t windowSlice1dAt(windowGeometry1d_t const *geometry, size_t outpu
     s.validCount = (size_t)(lastK - firstK + 1);
     return s;
 }
+
+size_t convTranspose1dOutputLength(size_t inputLength, kernel_t const *kernel,
+                                   size_t outputPadding) {
+    return (inputLength - 1) * kernel->stride + kernel->dilation * (kernel->size - 1) +
+           outputPadding + 1;
+}
