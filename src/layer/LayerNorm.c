@@ -196,7 +196,7 @@ static void layerNormGroupStatsSymInt32(tensor_t *t, size_t numNormDims, size_t 
  *            -DODT_SEED_GUARD) outside the safe envelope instead of casting an
  *            out-of-range float to int32 (UB). Spec errata: "int32 is safe
  *            throughout" holds only while the rescaled seed leaves one worst-case
- *            int16xint16 product (32768*32767) of int32 headroom for the
+ *            int12xint12 product (2047*2047 ≈ 4.2e6, #227) of int32 headroom for the
  *            gamma-product, i.e. |beta| <~ absmax_n * absmax_gamma.)
  * gamma/beta are contiguous default-order rank-D tensors -> flat index j. */
 static void layerNormAffineSymInt32(layerNormConfig_t *cfg, tensor_t *output, float sNorm) {

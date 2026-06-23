@@ -470,6 +470,10 @@ only the quantization configs change; the int32 accumulator (no int64) is kept.
 - Note: the conv weightGrad product mixes an int12 input with an int16 grad
   operand under the #218 grad-accumulator scheme — its budget is governed by
   #218/#45, not closed by this operand flip.
+- The unit-test gold suite validates the **default** int12/int16 contract
+  (`ODT_SYM_OPERAND_QMAXBITS=12`, `ODT_SYM_GRAD_QMAXBITS=16`); building with a
+  knob override (e.g. `-DODT_SYM_OPERAND_QMAXBITS=8`) diverges from those gold
+  fixtures, which is expected and intentional.
 
 The training loop (`CalculateGradsSequential.c`) allocates grad/activation
 tensors from the **forward** qConfig, not the backward qConfigs — so a full-SYM

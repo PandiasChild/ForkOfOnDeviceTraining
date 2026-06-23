@@ -31,8 +31,9 @@ static shape_t *buildOwnedShape(const size_t *srcDims, size_t numberOfDims) {
 
 /* Constant fill via tensorFillFromFloatBuffer: plain memcpy for FLOAT32; for
  * SYM_INT32 it routes through convertFloatTensorToSymInt32Tensor, which IS
- * the spec's parameter quantization (all-ones -> mantissa 32767, scale
- * 1/32767; all-zeros -> mantissa 0, scale 1.0 via the absMax==0 guard).
+ * the spec's parameter quantization (all-ones -> mantissa 2047, scale
+ * 1/2047 (#227 int12 operand default); all-zeros -> mantissa 0, scale 1.0
+ * via the absMax==0 guard).
  * initDistribution cannot be used here: it is FLOAT32-only by guard, and
  * extending it is Issue-C scope. */
 static void fillParamTensorWithConstant(tensor_t *paramTensor, float value) {
@@ -46,8 +47,8 @@ static void fillParamTensorWithConstant(tensor_t *paramTensor, float value) {
 }
 
 /* gamma: shape normalizedShape, init all-ones (FLOAT32: 1.0f each; SYM_INT32:
- * mantissa 32767, scale 1/32767); grad dtype from gradQ (= the profile's
- * backwardMath). */
+ * mantissa 2047, scale 1/2047 (#227 int12 operand default)); grad dtype from
+ * gradQ (= the profile's backwardMath). */
 static parameter_t *allocateLayerNormGamma(const size_t *normalizedShape, size_t numNormDims,
                                            quantization_t *storageQ, quantization_t *gradQ) {
     shape_t *shape = buildOwnedShape(normalizedShape, numNormDims);
