@@ -387,6 +387,13 @@ static void unpackSignExtend(const uint8_t *src, size_t srcBits, int32_t *dst, s
     }
 }
 
+// Important: Scale is ignored! Emits sign-extended integer codes (int_repr).
+void convertSymTensorToInt32Tensor(tensor_t *inputTensor, tensor_t *outputTensor) {
+    size_t n = calcNumberOfElementsByTensor(inputTensor);
+    symQConfig_t *inQC = inputTensor->quantization->qConfig;
+    unpackSignExtend(inputTensor->data, inQC->qBits, (int32_t *)outputTensor->data, n);
+}
+
 void convertSymTensorToFloat32Tensor(tensor_t *inputTensor, tensor_t *outputTensor) {
     size_t n = calcNumberOfElementsByTensor(inputTensor);
     symQConfig_t *inQC = inputTensor->quantization->qConfig;
@@ -457,7 +464,7 @@ conversionFunction_t conversionMatrix[6][6] = {
                    [SYM] = unsupportedConversionTypes,
                    [ASYM] = convertSymInt32TensorToAsymTensor,
                    [BOOL] = unsupportedConversionTypes},
-    [SYM] = {[INT32] = unsupportedConversionTypes,
+    [SYM] = {[INT32] = convertSymTensorToInt32Tensor,
              [FLOAT32] = convertSymTensorToFloat32Tensor,
              [SYM_INT32] = convertSymTensorToSymInt32Tensor,
              [SYM] = NULL,

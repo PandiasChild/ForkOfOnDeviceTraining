@@ -950,6 +950,35 @@ void testConversionSymFloat32Dequantizes() {
     freeReservedMemory(inBuf);
 }
 
+void testConversionSymInt32CodesDropScale() {
+    size_t n = 4;
+    size_t dims[] = {4};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+    symQConfig_t inQC = {0};
+    inQC.scale = 7.5f;
+    inQC.qBits = 6; /* scale must be IGNORED */
+    quantization_t inQ;
+    initSymQuantization(&inQC, &inQ);
+    int32_t mant[] = {5, -5, 1, -32};
+    uint8_t *inBuf = reserveMemory(calcNumberOfBytesForData(&inQ, n));
+    tensor_t inTensor;
+    setTensorValues(&inTensor, inBuf, &shape, &inQ, NULL);
+    byteConversion((uint8_t *)mant, 32, inTensor.data, 6, n);
+
+    quantization_t outQ;
+    initInt32Quantization(&outQ);
+    int32_t outData[4];
+    tensor_t outTensor;
+    setTensorValues(&outTensor, (uint8_t *)outData, &shape, &outQ, NULL);
+
+    convertTensor(&inTensor, &outTensor);
+
+    int32_t expected[] = {5, -5, 1, -32};
+    TEST_ASSERT_EQUAL_INT32_ARRAY(expected, outData, n);
+    freeReservedMemory(inBuf);
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -986,6 +1015,7 @@ int main(void) {
     RUN_TEST(testQuantTypeToStringBool);
     RUN_TEST(testConversionSymSymInt32SignExtends);
     RUN_TEST(testConversionSymFloat32Dequantizes);
+    RUN_TEST(testConversionSymInt32CodesDropScale);
 
     return UNITY_END();
 }
