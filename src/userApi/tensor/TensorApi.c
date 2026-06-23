@@ -283,7 +283,7 @@ tensor_t *gradInitFloat(tensor_t *param, sparsity_t *sparsity) {
 }
 
 tensor_t *gradInitSymInt32(tensor_t *param, roundingMode_t roundingMode, sparsity_t *sparsity) {
-    quantization_t *symQ = quantizationInitSymInt32(roundingMode);
+    quantization_t *symQ = quantizationInitSymInt32WithBits(roundingMode, ODT_SYM_GRAD_QMAXBITS);
     tensor_t *grad = gradInit(param, symQ, sparsity);
     freeQuantization(symQ);
     return grad;
@@ -325,8 +325,9 @@ quantization_t *getQLike(quantization_t *quantization) {
     case SYM_INT32:
         symInt32QConfig_t *likeSymInt32QC = reserveMemory(sizeof(symInt32QConfig_t));
         symInt32QConfig_t *symInt32QC = quantization->qConfig;
-
-        initSymInt32QConfig(symInt32QC->roundingMode, likeSymInt32QC);
+        /* preserve the source width — do NOT reset to the operand default (#227) */
+        initSymInt32QConfigWithQMaxBits(symInt32QC->roundingMode, likeSymInt32QC,
+                                        symInt32QC->qMaxBits);
         initSymInt32Quantization(likeSymInt32QC, likeQ);
         break;
     case ASYM:

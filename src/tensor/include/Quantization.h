@@ -11,6 +11,18 @@ typedef struct symInt32QConfig {
     uint8_t qMaxBits;
 } symInt32QConfig_t;
 
+/* SYM_INT32 operand bit-width contract (#227). Operands feeding product
+ * accumulators are int12 so int12*int12 products stay within an int32
+ * accumulator (no int64). Sound for reductions N <= 511 (512*2^22 > INT32_MAX);
+ * narrow the knob for wider layers. Grad accumulators are value-sums and stay
+ * wide (int16) per the #45 contract. Override with -DODT_SYM_OPERAND_QMAXBITS=N. */
+#ifndef ODT_SYM_OPERAND_QMAXBITS
+#define ODT_SYM_OPERAND_QMAXBITS 12
+#endif
+#ifndef ODT_SYM_GRAD_QMAXBITS
+#define ODT_SYM_GRAD_QMAXBITS 16
+#endif
+
 typedef struct symQConfig {
     float scale;
     uint8_t qBits;
@@ -29,7 +41,7 @@ typedef struct quantization {
     void *qConfig;
 } quantization_t;
 
-// Important: This sets qMaxBits to 16
+// Important: This sets qMaxBits to ODT_SYM_OPERAND_QMAXBITS (12)
 void initSymInt32QConfig(roundingMode_t roundingMode, symInt32QConfig_t *symInt32QConfig);
 void initSymInt32QConfigWithQMaxBits(roundingMode_t roundingMode,
                                      symInt32QConfig_t *symInt32QConfig, uint8_t qMaxBits);

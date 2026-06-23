@@ -654,6 +654,23 @@ void testGradInit_SymInt32_MatchesParamShapeAndDtype(void) {
     TEST_ASSERT_EQUAL_UINT(5, d1);
 }
 
+void testGradInitSymInt32StaysInt16WhileDefaultIsInt12() {
+    /* default operand config is int12 after the #227 flip */
+    symInt32QConfig_t opQC;
+    initSymInt32QConfig(HALF_AWAY, &opQC);
+    TEST_ASSERT_EQUAL_UINT8(12, opQC.qMaxBits);
+
+    /* a grad accumulator built from a param stays int16 (#45 contract) */
+    size_t dims[] = {2, 3};
+    size_t order[] = {0, 1};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 2, .orderOfDimensions = order};
+    tensor_t *param = initTensor(getShapeLike(&shape), quantizationInitSymInt32(HALF_AWAY), NULL);
+    tensor_t *grad = gradInitSymInt32(param, HALF_AWAY, NULL);
+    TEST_ASSERT_EQUAL_UINT8(16, ((symInt32QConfig_t *)grad->quantization->qConfig)->qMaxBits);
+    freeTensor(grad);
+    freeTensor(param);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testTensorInitWithDistribution_Zeros_InitializesProductOfDimsValues);
@@ -681,5 +698,6 @@ int main(void) {
     RUN_TEST(testInitDistribution_KaimingUniform_NotAllZero);
     RUN_TEST(testInitDistribution_KaimingNormal_NotAllZero);
     RUN_TEST(testTensorFillFromBoolBuffer_RoundTrip_N12);
+    RUN_TEST(testGradInitSymInt32StaysInt16WhileDefaultIsInt12);
     return UNITY_END();
 }
