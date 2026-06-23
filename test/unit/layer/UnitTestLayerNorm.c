@@ -154,7 +154,7 @@ static layer_t makeLayerNormLayer(layerNormConfig_t *cfg, layerConfig_t *lcfg) {
 /* Dequant-domain invariants (gamma=1, beta=0): per-group dequantized mean ~ 0,
  * per-group dequantized variance ~ var/(var+eps) (PyTorch eps behavior).
  * Affine-stable: with gamma=ones the dequantized values are unchanged by the
- * Task-3 affine stage (mantissa*32767 and scale/32767 cancel). */
+ * Task-3 affine stage (mantissa*2047 and scale/2047 cancel at int12, #227). */
 void testSymForwardDequantInvariantsMultiGroup(void) {
     size_t dims[] = {2, 4};
     tensor_t *in =
@@ -204,7 +204,8 @@ void testSymForwardDequantInvariantsMultiGroup(void) {
     freeTensor(in);
 
     /* var/(var+eps): row0 1.25/(1.25+1e-5)=0.999992; row1 125/(125+1e-5)~1.0.
-     * Tolerances absorb input quantization noise (s_x = 40/32767 ~ 1.2e-3). */
+     * Tolerances absorb input quantization noise (s_x = 40/2047 ~ 1.95e-2 at
+     * int12, #227; the scale-invariant dequant-domain mean/var still fit). */
     TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0.f, groupMean[0]);
     TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0.f, groupMean[1]);
     TEST_ASSERT_FLOAT_WITHIN(5e-3f, 0.999992f, groupVar[0]);
@@ -882,7 +883,10 @@ static void runSymGoldForward(size_t numDims, const size_t *dims, size_t numNorm
         float deq = (float)m[i] * scale;
         TEST_ASSERT_FLOAT_WITHIN(dequantTol, expDequant[i], deq);
         if (expXhat != NULL) {
-            TEST_ASSERT_FLOAT_WITHIN(3e-5f, expXhat[i], deq);
+            /* int12 operands (#227): normalized-output LSB is s_norm <= 1.9/2047
+             * (parity fixtures cap absmax(xhat) <= 1.9), so the dequant tracks
+             * xhat to s_norm/2 <= 4.64e-4. Was 3e-5f under int16 (1.9/65534). */
+            TEST_ASSERT_FLOAT_WITHIN(5e-4f, expXhat[i], deq);
         }
     }
     if (expGroupVarRatio != NULL) {
@@ -1226,10 +1230,16 @@ void testSymForwardConstantInputEmitsZeros(void) {
 }
 
 /* The affine with gamma=ones multiplies every normalized mantissa by exactly
- * 32767. Recover qNorm = y_q/32767 (remainder must be 0 — pins that the gamma
- * multiply actually happened) and assert the normalization-stage invariants:
- * full-range stretch (max |qNorm| == 32767) and near-zero per-group mantissa
- * sums (Σ n == 0 exactly in real arithmetic; rounding adds <= 0.5/element). */
+ * the gamma operand qMax. At int12 operands (#227) gamma=ones quantizes to
+ * qMax=2047 (absmax=1 -> every gamma_q = 2047) and beta=zeros -> seed=0, so
+ * y_q = qNorm * 2047 EXACTLY. Recover qNorm = y_q/2047 (remainder must be 0 —
+ * pins that the gamma multiply actually happened) and assert the
+ * normalization-stage invariants: full-range stretch (max |qNorm| == 2047, the
+ * normalized output also saturates to the int12 qMax) and near-zero per-group
+ * mantissa sums (Σ n == 0 exactly in real arithmetic; rounding adds <= 0.5/
+ * element, so |Σ qNorm| <= N/2 = 2, asserted within the width-independent
+ * [-4, 4]). Pure width substitution from the int16 era (32767 -> 2047); the
+ * structural invariant is unchanged. */
 void testSymForwardMantissaInvariantsViaOnesGamma(void) {
     size_t dims[] = {2, 4};
     tensor_t *in =
@@ -1267,14 +1277,14 @@ void testSymForwardMantissaInvariantsViaOnesGamma(void) {
     int32_t qNorm[8];
     int32_t maxAbs = 0;
     for (size_t i = 0; i < 8; i++) {
-        TEST_ASSERT_EQUAL_INT(0, m[i] % 32767);
-        qNorm[i] = m[i] / 32767;
+        TEST_ASSERT_EQUAL_INT(0, m[i] % 2047);
+        qNorm[i] = m[i] / 2047;
         int32_t a = (qNorm[i] < 0) ? -qNorm[i] : qNorm[i];
         if (a > maxAbs) {
             maxAbs = a;
         }
     }
-    TEST_ASSERT_EQUAL_INT(32767, maxAbs);
+    TEST_ASSERT_EQUAL_INT(2047, maxAbs);
     for (size_t g = 0; g < 2; g++) {
         int32_t sum = 0;
         for (size_t j = 0; j < 4; j++) {
@@ -1286,8 +1296,9 @@ void testSymForwardMantissaInvariantsViaOnesGamma(void) {
 
 /* Constant input + nonzero beta: y = gamma*0 + beta. Pins (a) the affine runs
  * AFTER the constant guard, (b) the beta-rescale idiom (raw beta_q would
- * dequantize to 2x the right value here since s_beta = 0.5/32767 != s_y), and
- * (c) the post-affine output scale s_y = s_norm * s_gamma = 1/32767. */
+ * dequantize to 2x the right value here since s_beta = 0.5/2047 != s_y), and
+ * (c) the post-affine output scale s_y = s_norm * s_gamma = 1/2047 (int12
+ * operand gamma=ones quantizes to qMax=2047 with scale 1/2047, #227). */
 void testSymForwardConstantInputAppliesBeta(void) {
     size_t dims[] = {2, 3};
     tensor_t *in = buildSymInt32TensorND(2, dims, (float[]){7.f, 7.f, 7.f, 7.f, 7.f, 7.f});
@@ -1322,7 +1333,7 @@ void testSymForwardConstantInputAppliesBeta(void) {
     freeTensor(out);
     freeTensor(in);
 
-    float expectedScale = 1.0f / 32767.0f;
+    float expectedScale = 1.0f / 2047.0f;
     TEST_ASSERT_FLOAT_WITHIN(expectedScale * 1e-4f, expectedScale, scale);
     float expBeta[] = {0.5f, -0.25f, 0.125f};
     for (size_t g = 0; g < 2; g++) {
@@ -1500,10 +1511,12 @@ void testFactorySymInt32StorageQuantizesGammaBeta(void) {
     freeQuantization(symQ);
 
     for (size_t i = 0; i < 4; i++) {
-        TEST_ASSERT_EQUAL_INT(32767, g[i]);
+        /* gamma=ones is OPERAND storage (default int12, #227): absmax=1 ->
+         * every mantissa = qMax = 2047, scale = 1/2047. beta=zeros -> 0, scale 1. */
+        TEST_ASSERT_EQUAL_INT(2047, g[i]);
         TEST_ASSERT_EQUAL_INT(0, b[i]);
     }
-    TEST_ASSERT_FLOAT_WITHIN(1e-9f, 1.0f / 32767.0f, gScale);
+    TEST_ASSERT_FLOAT_WITHIN(1e-9f, 1.0f / 2047.0f, gScale);
     TEST_ASSERT_FLOAT_WITHIN(1e-9f, 1.0f, bScale);
     TEST_ASSERT_TRUE(gammaGradFloat);
     TEST_ASSERT_TRUE(betaGradFloat);

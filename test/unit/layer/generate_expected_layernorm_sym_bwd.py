@@ -35,8 +35,21 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
-QMAX = 32767.0
-QMIN = -32768.0
+# SYM_INT32 backward carries the #227 operand-int12 / grad-int16 split (mirrors
+# generate_expected_conv1d.py's quantize_sym_i12 vs the int16 grad requant):
+#   OPERAND width (int12, qMaxBits=12) — default-initialized tensors:
+#     forwardInput / gamma / dy, the propLoss (dx) requant (propLoss is built via
+#     quantizationInitSymInt32 -> int12), AND the per-call grad INCREMENT
+#     quantization (layerNormAccumulateGradSymInt32's incSym uses the int12
+#     default initSymInt32QConfig).
+#   GRAD-ACCUMULATOR width (int16, qMaxBits=16) — gradInitSymInt32 tensors:
+#     ONLY the running-sum requant of dgamma/dbeta back into the grad tensor
+#     (addSymInt32TensorsInplace -> convertTensor into the int16 grad).
+QMAX = 2047.0
+QMIN = -2048.0
+
+QMAX_GRAD = 32767.0
+QMIN_GRAD = -32768.0
 
 
 def round_half_away(x: torch.Tensor) -> torch.Tensor:
@@ -79,11 +92,24 @@ def emit_int32_scalar(name: str, v: int) -> str:
 
 
 def quantize_sym(x: torch.Tensor):
-    """convertFloatTensorToSymInt32Tensor: absmax -> scale (1.0 if absmax==0),
-    round-clamp with the C rounding (half-away-from-zero)."""
+    """int12 OPERAND quantize (qMaxBits=12): convertFloatTensorToSymInt32Tensor on
+    a default-initialized tensor — absmax -> scale (1.0 if absmax==0), round-clamp
+    [-2048, 2047] with the C rounding (half-away-from-zero). Used for forwardInput/
+    gamma/dy operands, the propLoss (dx) requant, and the grad INCREMENT."""
     absmax = x.abs().max().item()
     scale = 1.0 if absmax == 0.0 else absmax / QMAX
     q = round_half_away(torch.clamp(x / scale, QMIN, QMAX))
+    return q.to(torch.int32), scale
+
+
+def quantize_sym_grad(x: torch.Tensor):
+    """int16 GRAD-ACCUMULATOR requant (qMaxBits=16): the running-sum requant of
+    dgamma/dbeta back into a gradInitSymInt32 tensor (addSymInt32TensorsInplace ->
+    convertTensor into the int16 grad). absmax -> scale=absmax/32767, round-clamp
+    [-32768, 32767]. ONLY the grad running sum uses this width (#227)."""
+    absmax = x.abs().max().item()
+    scale = 1.0 if absmax == 0.0 else absmax / QMAX_GRAD
+    q = round_half_away(torch.clamp(x / scale, QMIN_GRAD, QMAX_GRAD))
     return q.to(torch.int32), scale
 
 
@@ -138,9 +164,11 @@ def emulate_accumulate(grad_q, grad_s, inc):
     (2) addSymInt32TensorsInplace: dequantize BOTH with their own scales,
         float-add, requantize the sum with a fresh absmax/QMAX scale.
     Returns ((mantissas, scale) after accumulation, increment scale)."""
+    # Increment is quantized at the int12 OPERAND width (incSym is default-init);
+    # the running sum is requantized back into the int16 GRAD tensor.
     inc_q, inc_s = quantize_sym(inc)
     total = grad_q.to(torch.float64) * grad_s + inc_q.to(torch.float64) * inc_s
-    out_q, out_s = quantize_sym(total)
+    out_q, out_s = quantize_sym_grad(total)
     return (out_q, out_s), inc_s
 
 
@@ -261,8 +289,8 @@ def _run_bwd_fixture(name, x, gamma, dy, normalized_shape, *, eps=1e-5,
 def fixture_bwd_base():
     # [3,4], D=1, G=3, N=4 (N>=3). Per-group variance ratio ~445x (row1) pins
     # per-group invSigma in dx. Non-uniform dy with sign/magnitude structure
-    # per group; gamma non-trivial with s_gamma = 2/32767 (scale-blindness
-    # mutations must show up in the dequant/scale asserts).
+    # per group; gamma non-trivial with s_gamma = 2/2047 (int12 operand, #227;
+    # scale-blindness mutations must show up in the dequant/scale asserts).
     x = torch.tensor([[0.1, -0.4, 0.7, 1.2],
                       [20.0, 10.0, -15.0, 5.0],
                       [-0.3, -0.8, 0.2, 0.9]], dtype=torch.float64)

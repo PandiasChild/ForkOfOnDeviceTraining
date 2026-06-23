@@ -13,7 +13,9 @@ Self-checks:
  - the emulated dequantized output matches F.layer_norm on the dequantized
    inputs within the analytic quantization bound;
  - parity fixtures keep absmax(xhat) <= 1.9, which guarantees the documented
-   3e-5 C-side xhat tolerance (s_norm/2 <= 1.9/65534 ~ 2.9e-5).
+   5e-4 C-side xhat tolerance: at int12 operands (qMaxBits=12, #227) the
+   normalized output LSB is s_norm <= 1.9/2047, so s_norm/2 <= 4.64e-4 < 5e-4
+   (the int16 era used 1.9/65534 ~ 2.9e-5 -> a 3e-5 tolerance).
 
 Biased variance (/N) via explicit emulation + F.layer_norm; NEVER torch.var
 (ddof=1 default). Rounding: the framework's roundByMode(HALF_AWAY) is C
@@ -29,8 +31,14 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
-QMAX = 32767.0
-QMIN = -32768.0
+# SYM_INT32 forward is operand-domain end-to-end (#227 int12 operand flip).
+# input/gamma/beta and the normalized OUTPUT all live in default-initialized
+# (quantizationInitSymInt32) tensors, which are now int12 (qMaxBits=12):
+#   absmax -> scale = absmax/2047, round-clamp to [-2048, 2047].
+# There is NO grad accumulator in the forward, so every QMAX/QMIN here is int12.
+# (The backward generator carries the operand-int12 vs grad-int16 split.)
+QMAX = 2047.0
+QMIN = -2048.0
 
 
 def round_half_away(x: torch.Tensor) -> torch.Tensor:
@@ -177,7 +185,8 @@ def fixture_sym_parity():
 
 def fixture_sym_affine():
     # [2,4], non-trivial gamma/beta with deliberately different scales:
-    # s_gamma = 2/32767, s_beta = 0.05/32767 — the beta rescale MUST matter.
+    # s_gamma = 2/2047, s_beta = 0.05/2047 (int12 operands, #227) — the beta
+    # rescale MUST matter (s_beta != s_y).
     x = torch.tensor([[0.2, -1.0, 0.6, 1.4],
                       [1.0, 3.0, -2.0, 0.0]], dtype=torch.float64)
     gamma = torch.tensor([1.5, -0.5, 2.0, 0.25], dtype=torch.float64)
