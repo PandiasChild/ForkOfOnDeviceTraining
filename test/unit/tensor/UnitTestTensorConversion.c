@@ -979,6 +979,65 @@ void testConversionSymInt32CodesDropScale() {
     freeReservedMemory(inBuf);
 }
 
+void testConversionSymAsymRescaleRoundTrips() {
+    /* Round-trip: SYM -> ASYM -> FLOAT32 recovers dequantized SYM values.
+     *
+     * Fixture: n=6, SYM qBits=6, scale=0.5, mantissas {10,-8,4,-2,6,-10}.
+     * Dequantized SYM: deq[i] = mant[i] * 0.5 => {5.0, -4.0, 2.0, -1.0, 3.0, -5.0}.
+     *
+     * ASYM qBits=5: range=10.0, qMax=32, asym scale=10/32=0.3125.
+     * convertFloatTensorToAsymTensor clamps codes to [0, qMax-1=31].
+     * zeroPoint = round(-5.0/0.3125) = -16; max code = clamp(32, 0, 31) = 31.
+     * Recovered max = (31+(-16))*0.3125 = 4.6875; error = 0.3125 = 1 scale step.
+     * Tolerance widened to 0.35 > 0.3125 to cover the clipped extremes.
+     */
+    size_t n = 6;
+    size_t dims[] = {6};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    /* Build SYM input */
+    symQConfig_t inQC = {0};
+    inQC.scale = 0.5f;
+    inQC.qBits = 6;
+    quantization_t inQ;
+    initSymQuantization(&inQC, &inQ);
+    int32_t srcMant[] = {10, -8, 4, -2, 6, -10};
+    uint8_t *inBuf = reserveMemory(calcNumberOfBytesForData(&inQ, n));
+    tensor_t inTensor;
+    setTensorValues(&inTensor, inBuf, &shape, &inQ, NULL);
+    byteConversion((uint8_t *)srcMant, 32, inTensor.data, 6, n);
+
+    /* ASYM output tensor */
+    asymQConfig_t asymQC;
+    initAsymQConfig(5, HALF_AWAY, &asymQC);
+    quantization_t asymQ;
+    initAsymQuantization(&asymQC, &asymQ);
+    uint8_t asymData[n * calcBytesPerElement(&asymQ)];
+    tensor_t asymTensor;
+    setTensorValues(&asymTensor, asymData, &shape, &asymQ, NULL);
+
+    /* FLOAT32 output tensor for round-trip verification */
+    quantization_t floatQ;
+    initFloat32Quantization(&floatQ);
+    float outF[6];
+    tensor_t floatTensor;
+    setTensorValues(&floatTensor, (uint8_t *)outF, &shape, &floatQ, NULL);
+
+    /* Convert SYM -> ASYM -> FLOAT32 */
+    convertTensor(&inTensor, &asymTensor);
+    convertTensor(&asymTensor, &floatTensor);
+
+    /* Expected: dequantized SYM values */
+    float expected[] = {5.0f, -4.0f, 2.0f, -1.0f, 3.0f, -5.0f};
+
+    for (size_t i = 0; i < n; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(0.35f, expected[i], outF[i]);
+    }
+
+    freeReservedMemory(inBuf);
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -1016,6 +1075,7 @@ int main(void) {
     RUN_TEST(testConversionSymSymInt32SignExtends);
     RUN_TEST(testConversionSymFloat32Dequantizes);
     RUN_TEST(testConversionSymInt32CodesDropScale);
+    RUN_TEST(testConversionSymAsymRescaleRoundTrips);
 
     return UNITY_END();
 }

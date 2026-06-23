@@ -415,6 +415,40 @@ void convertSymTensorToSymInt32Tensor(tensor_t *inputTensor, tensor_t *outputTen
     outQC->qMaxBits = inQC->qBits;
 }
 
+void convertSymTensorToAsymTensor(tensor_t *inputTensor, tensor_t *outputTensor) {
+    size_t n = calcNumberOfElementsByTensor(inputTensor);
+    symQConfig_t *inQC = inputTensor->quantization->qConfig;
+    int32_t mant[n];
+    unpackSignExtend(inputTensor->data, inQC->qBits, mant, n);
+    float deq[n];
+    for (size_t i = 0; i < n; i++) {
+        deq[i] = (float)mant[i] * inQC->scale;
+    }
+    /* mirror convertFloatTensorToAsymTensor on `deq` */
+    float mn = findMinFloat((uint8_t *)deq, n), mx = findMaxFloat((uint8_t *)deq, n);
+    asymQConfig_t *outQC = outputTensor->quantization->qConfig;
+    float qMax = powf(2, outQC->qBits);
+    float scale;
+    int16_t zeroPoint;
+    if (mn == mx) {
+        scale = (mn == 0.f) ? 1.f : mn;
+        zeroPoint = 1;
+    } else {
+        scale = (mx - mn) / qMax;
+        zeroPoint = (int16_t)roundByMode(mn / scale, outQC->roundingMode);
+    }
+    int32_t codes[n];
+    for (size_t i = 0; i < n; i++) {
+        codes[i] = roundByMode(clamp(deq[i] / scale - (float)zeroPoint, 0.f, qMax - 1),
+                               outQC->roundingMode);
+    }
+    outQC->scale = scale;
+    outQC->zeroPoint = zeroPoint;
+    uint8_t wide[n * sizeof(int32_t)];
+    writeInt32ArrayToByteArray(n, codes, wide);
+    byteConversion(wide, 32, outputTensor->data, outQC->qBits, n);
+}
+
 char *quantTypeToString(qtype_t t) {
     switch (t) {
     case INT32:
@@ -468,7 +502,7 @@ conversionFunction_t conversionMatrix[6][6] = {
              [FLOAT32] = convertSymTensorToFloat32Tensor,
              [SYM_INT32] = convertSymTensorToSymInt32Tensor,
              [SYM] = NULL,
-             [ASYM] = unsupportedConversionTypes,
+             [ASYM] = convertSymTensorToAsymTensor,
              [BOOL] = unsupportedConversionTypes},
     [ASYM] = {[INT32] = convertAsymTensorToInt32Tensor,
               [FLOAT32] = convertAsymTensorToFloatTensor,
