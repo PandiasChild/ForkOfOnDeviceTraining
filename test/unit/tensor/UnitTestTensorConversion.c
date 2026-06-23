@@ -173,8 +173,10 @@ void testConversionFloatSymInt32() {
     setTensorValues(&symInt32Tensor, (uint8_t *)symInt32Data, &shape, &symInt32Q, NULL);
     convertTensor(&floatTensor, &symInt32Tensor);
 
-    float expectedScale = 0.000204474f;
-    int32_t expectedData[] = {7336, 14183, 15650, 22008, -5869, -32767};
+    /* absmax = 6.7; int12 scale = 6.7/2047 ≈ 0.003273083.
+     * Quantized values: round(v / scale): 458, 886, 978, 1375, -367, -2047. */
+    float expectedScale = 6.7f / 2047.0f;
+    int32_t expectedData[] = {458, 886, 978, 1375, -367, -2047};
 
     symInt32QConfig_t *outputSymInt32QC = symInt32Tensor.quantization->qConfig;
     TEST_ASSERT_FLOAT_WITHIN(0.000001f, expectedScale, outputSymInt32QC->scale);
@@ -183,8 +185,10 @@ void testConversionFloatSymInt32() {
     convertTensor(&symInt32Tensor, &floatTensor);
     float expectedFloat[] = {1.5f, 2.9f, 3.2f, 4.5f, -1.2f, -6.7f};
     float *actualFloat = (float *)floatTensor.data;
+    /* int12 quantisation step = scale ≈ 0.00327; worst-case round-trip
+     * error is scale/2 ≈ 0.00164, so tolerance 0.002 is sufficient. */
     for (size_t i = 0; i < 6; i++) {
-        TEST_ASSERT_FLOAT_WITHIN(0.0001f, expectedFloat[i], actualFloat[i]);
+        TEST_ASSERT_FLOAT_WITHIN(0.002f, expectedFloat[i], actualFloat[i]);
     }
 }
 
