@@ -1200,6 +1200,62 @@ void testConversionFloatToSymRoundTripsSymmetric() {
     TEST_ASSERT_TRUE(codes[5] < 0); /* floatData[5] = -3.5 */
 }
 
+void testConversionInt32ToSymNoRescaleScale1() {
+    /* INT32 codes fitting qBits=6 range [-32, 31] pack with scale=1. */
+    size_t n = 6;
+    size_t dims[] = {6};
+    size_t orderOfDims[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = orderOfDims};
+
+    int32_t intData[] = {5, -5, 31, -32, 0, 12};
+    quantization_t intQ;
+    initInt32Quantization(&intQ);
+    tensor_t intTensor;
+    setTensorValues(&intTensor, (uint8_t *)intData, &shape, &intQ, NULL);
+
+    symQConfig_t outQC;
+    initSymQConfig(6, HALF_AWAY, &outQC);
+    outQC.scale = 999.0f; /* garbage — proves scale=1 is written by the cell */
+    quantization_t outQ;
+    initSymQuantization(&outQC, &outQ);
+    uint8_t symData[calcNumberOfBytesForData(&outQ, n)];
+    tensor_t symTensor;
+    setTensorValues(&symTensor, symData, &shape, &outQ, NULL);
+
+    convertTensor(&intTensor, &symTensor);
+
+    int32_t codes[6];
+    symTestUnpackSignExtend(symTensor.data, 6, codes, 6);
+    TEST_ASSERT_EQUAL_INT32_ARRAY(intData, codes, 6);
+    TEST_ASSERT_EQUAL_FLOAT(1.0f, outQC.scale);
+}
+
+void testConversionInt32ToSymRejectsOutOfRange() {
+    /* An INT32 code outside [-32, 31] for qBits=6 must exit(1).
+     * Mutation guard: if packFitGuarded's range check is removed, the out-of-range
+     * code 40 truncates silently and the child exits 0, failing this test. */
+    size_t n = 6;
+    size_t dims[] = {6};
+    size_t orderOfDims[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = orderOfDims};
+
+    int32_t intData[] = {5, 40, -5, 0, 0, 0}; /* 40 > 31: out of range for qBits=6 */
+    quantization_t intQ;
+    initInt32Quantization(&intQ);
+    tensor_t intTensor;
+    setTensorValues(&intTensor, (uint8_t *)intData, &shape, &intQ, NULL);
+
+    symQConfig_t outQC;
+    initSymQConfig(6, HALF_AWAY, &outQC);
+    quantization_t outQ;
+    initSymQuantization(&outQC, &outQ);
+    uint8_t symData[calcNumberOfBytesForData(&outQ, n)];
+    tensor_t symTensor;
+    setTensorValues(&symTensor, symData, &shape, &outQ, NULL);
+
+    ASSERT_EXITS_WITH_FAILURE(convertTensor(&intTensor, &symTensor));
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -1242,6 +1298,8 @@ int main(void) {
     RUN_TEST(testRepackSymInt32ToSymNoRescaleFittingCarriesScale);
     RUN_TEST(testRepackSymInt32ToSymNoRescaleRejectsOverflow);
     RUN_TEST(testConversionFloatToSymRoundTripsSymmetric);
+    RUN_TEST(testConversionInt32ToSymNoRescaleScale1);
+    RUN_TEST(testConversionInt32ToSymRejectsOutOfRange);
 
     return UNITY_END();
 }

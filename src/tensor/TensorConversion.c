@@ -119,6 +119,16 @@ void convertFloatTensorToSymInt32Tensor(tensor_t *inputTensor, tensor_t *outputT
     }
 }
 
+void convertInt32TensorToSymTensor(tensor_t *inputTensor, tensor_t *outputTensor) {
+    size_t n = calcNumberOfElementsByTensor(inputTensor);
+    symQConfig_t *outQC = outputTensor->quantization->qConfig;
+    outQC->scale = 1.f;
+    int32_t codes[n];
+    readBytesAsInt32Array(n, inputTensor->data, codes);
+    packFitGuarded(codes, n, outputTensor->data, outQC->qBits, "convertInt32TensorToSymTensor");
+    copyDimsAndSparsityToTensor(inputTensor, outputTensor);
+}
+
 void convertFloatTensorToSymTensor(tensor_t *inputTensor, tensor_t *outputTensor) {
     size_t n = calcNumberOfElementsByTensor(inputTensor);
     float absMax = findAbsMaxFloat(inputTensor->data, n);
@@ -530,7 +540,7 @@ conversionFunction_t conversionMatrix[6][6] = {
     [INT32] = {[INT32] = NULL,
                [FLOAT32] = convertInt32TensorToFloatTensor,
                [SYM_INT32] = convertInt32TensorToSymInt32Tensor,
-               [SYM] = unsupportedConversionTypes,
+               [SYM] = convertInt32TensorToSymTensor,
                [ASYM] = convertInt32TensorToAsymTensor,
                [BOOL] = unsupportedConversionTypes},
     [FLOAT32] = {[INT32] = convertFloatTensorToInt32Tensor,
