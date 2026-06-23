@@ -1160,6 +1160,46 @@ void testRepackSymInt32ToSymNoRescaleRejectsOverflow() {
     ASSERT_EXITS_WITH_FAILURE(repackSymInt32ToSymNoRescale(&inTensor, &symTensor));
 }
 
+void testConversionFloatToSymRoundTripsSymmetric() {
+    /* n=6, absMax=3.5 => scale = 3.5 / (2^(6-1) - 1) = 3.5/31 ≈ 0.112903226.
+     * One quant step = scale ≈ 0.113; worst-case round-trip error = scale/2 ≈ 0.056;
+     * tolerance 0.12 is > one full step to cover HALF_AWAY rounding at the boundary. */
+    size_t n = 6;
+    size_t dims[] = {6};
+    size_t orderOfDims[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = orderOfDims};
+
+    float floatData[] = {1.5f, -2.5f, 3.0f, -1.0f, 0.5f, -3.5f};
+    quantization_t floatQ;
+    initFloat32Quantization(&floatQ);
+    tensor_t floatTensor;
+    setTensorValues(&floatTensor, (uint8_t *)floatData, &shape, &floatQ, NULL);
+
+    symQConfig_t outQC;
+    initSymQConfig(6, HALF_AWAY, &outQC);
+    quantization_t outQ;
+    initSymQuantization(&outQC, &outQ);
+    uint8_t symData[calcNumberOfBytesForData(&outQ, n)];
+    tensor_t symTensor;
+    setTensorValues(&symTensor, symData, &shape, &outQ, NULL);
+
+    convertTensor(&floatTensor, &symTensor);
+
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 3.5f / 31.0f, outQC.scale);
+
+    int32_t codes[6];
+    symTestUnpackSignExtend(symTensor.data, 6, codes, 6);
+    for (size_t i = 0; i < n; i++) {
+        float rec = (float)codes[i] * outQC.scale;
+        TEST_ASSERT_FLOAT_WITHIN(0.12f, floatData[i], rec);
+    }
+
+    /* Prove symmetric range: the OLD buggy code clamped to [0, qMax-1] so
+     * negative inputs became 0; a non-zero negative code proves correct range. */
+    TEST_ASSERT_TRUE(codes[1] < 0); /* floatData[1] = -2.5 */
+    TEST_ASSERT_TRUE(codes[5] < 0); /* floatData[5] = -3.5 */
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -1201,6 +1241,7 @@ int main(void) {
     RUN_TEST(testConversionSymInt32ToSymRescaleRoundTrips);
     RUN_TEST(testRepackSymInt32ToSymNoRescaleFittingCarriesScale);
     RUN_TEST(testRepackSymInt32ToSymNoRescaleRejectsOverflow);
+    RUN_TEST(testConversionFloatToSymRoundTripsSymmetric);
 
     return UNITY_END();
 }

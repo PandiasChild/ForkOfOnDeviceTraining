@@ -11,6 +11,9 @@
 #include "TensorConversion.h"
 #include "math.h"
 
+static void packFitGuarded(const int32_t *src, size_t n, uint8_t *dst, size_t dstBits,
+                           const char *what);
+
 void zeroTensorData(tensor_t *tensor) {
     size_t numberOfElements = calcNumberOfElementsByTensor(tensor);
     size_t bytesPerElement = calcBytesPerElement(tensor->quantization);
@@ -116,31 +119,21 @@ void convertFloatTensorToSymInt32Tensor(tensor_t *inputTensor, tensor_t *outputT
     }
 }
 
-// I DON'T HAVE TO IMPLEMENT SYM CONVERSIONS!
 void convertFloatTensorToSymTensor(tensor_t *inputTensor, tensor_t *outputTensor) {
-    size_t numberOfElements = calcNumberOfElementsByTensor(inputTensor);
-
-    float min = findMinFloat(inputTensor->data, numberOfElements);
-    float max = findMaxFloat(inputTensor->data, numberOfElements);
-
-    symQConfig_t *outputSymQConfig = outputTensor->quantization->qConfig;
-    float qMax = powf(2, outputSymQConfig->qBits);
-
-    float scale = (min - max) / qMax;
-    outputSymQConfig->scale = scale;
-
-    float inputs[numberOfElements];
-    readBytesAsFloatArray(numberOfElements, inputTensor->data, inputs);
-
-    size_t bytesPerOutputElement = calcBytesPerElement(outputTensor->quantization);
-    uint8_t outputs[numberOfElements * bytesPerOutputElement];
-
-    for (size_t i = 0; i < numberOfElements; i++) {
-        outputs[i] =
-            roundByMode(clamp(inputs[i] / scale, 0.f, qMax - 1), outputSymQConfig->roundingMode);
+    size_t n = calcNumberOfElementsByTensor(inputTensor);
+    float absMax = findAbsMaxFloat(inputTensor->data, n);
+    symQConfig_t *outQC = outputTensor->quantization->qConfig;
+    const float qMax = powf(2, (float)outQC->qBits - 1) - 1;
+    const float qMin = -powf(2, (float)outQC->qBits - 1);
+    float scale = (absMax == 0.f) ? 1.f : absMax / qMax;
+    outQC->scale = scale;
+    float *in = (float *)inputTensor->data;
+    int32_t codes[n];
+    for (size_t i = 0; i < n; i++) {
+        codes[i] = roundByMode(clamp(in[i] / scale, qMin, qMax), outQC->roundingMode);
     }
-
-    memcpy(outputTensor->data, outputs, numberOfElements * bytesPerOutputElement);
+    packFitGuarded(codes, n, outputTensor->data, outQC->qBits, "convertFloatTensorToSymTensor");
+    copyDimsAndSparsityToTensor(inputTensor, outputTensor);
 }
 
 // conversion from float to asym should not be needed/used
@@ -543,7 +536,7 @@ conversionFunction_t conversionMatrix[6][6] = {
     [FLOAT32] = {[INT32] = convertFloatTensorToInt32Tensor,
                  [FLOAT32] = NULL,
                  [SYM_INT32] = convertFloatTensorToSymInt32Tensor,
-                 [SYM] = unsupportedConversionTypes,
+                 [SYM] = convertFloatTensorToSymTensor,
                  [ASYM] = convertFloatTensorToAsymTensor,
                  [BOOL] = unsupportedConversionTypes},
     [SYM_INT32] = {[INT32] = extractInt32TensorFromSymInt32Tensor,
