@@ -885,6 +885,42 @@ void testRequantToScaleSharedBufferAliasMatchesGold() {
     TEST_ASSERT_EQUAL_FLOAT(targetScale_requant_f6ToScaleSat, outQc.scale);
 }
 
+void testConversionSymSymInt32SignExtends() {
+    size_t numValues = 4;
+    size_t dims[] = {4};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    /* SYM source, qBits=6, scale 0.5; mantissas {3,-3,31,-32} packed */
+    symQConfig_t inQC = {0};
+    inQC.scale = 0.5f;
+    inQC.qBits = 6;
+    quantization_t inQ;
+    initSymQuantization(&inQC, &inQ);
+    int32_t srcMant[] = {3, -3, 31, -32};
+    uint8_t *inBuf = reserveMemory(calcNumberOfBytesForData(&inQ, numValues));
+    tensor_t inTensor;
+    setTensorValues(&inTensor, inBuf, &shape, &inQ, NULL);
+    /* pack the signed mantissas into the SYM bitstream */
+    byteConversion((uint8_t *)srcMant, 32, inTensor.data, 6, numValues);
+
+    symInt32QConfig_t outQC = {0};
+    outQC.qMaxBits = 16;
+    quantization_t outQ;
+    initSymInt32Quantization(&outQC, &outQ);
+    int32_t outData[4];
+    tensor_t outTensor;
+    setTensorValues(&outTensor, (uint8_t *)outData, &shape, &outQ, NULL);
+
+    convertTensor(&inTensor, &outTensor);
+
+    int32_t expectedMant[] = {3, -3, 31, -32};
+    TEST_ASSERT_EQUAL_INT32_ARRAY(expectedMant, outData, numValues); /* sign preserved */
+    TEST_ASSERT_EQUAL_FLOAT(0.5f, outQC.scale);                      /* scale carried */
+    TEST_ASSERT_EQUAL_UINT8(6, outQC.qMaxBits);                      /* width recorded */
+    freeReservedMemory(inBuf);
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -919,6 +955,7 @@ int main(void) {
     RUN_TEST(testConversionBoolBoolCopiesOnlyPackedBytes);
     RUN_TEST(testConversionSymInt32SameTypeCopyPropagatesScale);
     RUN_TEST(testQuantTypeToStringBool);
+    RUN_TEST(testConversionSymSymInt32SignExtends);
 
     return UNITY_END();
 }

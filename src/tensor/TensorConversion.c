@@ -374,6 +374,29 @@ void convertAsymTensorToSymInt32Tensor(tensor_t *inputTensor, tensor_t *outputTe
     outputSymInt32QConfig->scale = inputAsymQConfig->scale;
 }
 
+static void unpackSignExtend(const uint8_t *src, size_t srcBits, int32_t *dst, size_t n) {
+    byteConversion((uint8_t *)src, srcBits, (uint8_t *)dst, 32, n); /* zero-fills high bits */
+    if (srcBits >= 32) {
+        return;
+    }
+    const int32_t signBit = (int32_t)1 << (srcBits - 1);
+    const int32_t mask = (int32_t)(((uint32_t)1 << srcBits) - 1u);
+    for (size_t i = 0; i < n; i++) {
+        int32_t v = dst[i] & mask;
+        dst[i] = (v ^ signBit) - signBit; /* sign-extend from srcBits */
+    }
+}
+
+void convertSymTensorToSymInt32Tensor(tensor_t *inputTensor, tensor_t *outputTensor) {
+    size_t n = calcNumberOfElementsByTensor(inputTensor);
+    symQConfig_t *inQC = inputTensor->quantization->qConfig;
+    symInt32QConfig_t *outQC = outputTensor->quantization->qConfig;
+
+    unpackSignExtend(inputTensor->data, inQC->qBits, (int32_t *)outputTensor->data, n);
+    outQC->scale = inQC->scale;
+    outQC->qMaxBits = inQC->qBits;
+}
+
 char *quantTypeToString(qtype_t t) {
     switch (t) {
     case INT32:
@@ -425,7 +448,7 @@ conversionFunction_t conversionMatrix[6][6] = {
                    [BOOL] = unsupportedConversionTypes},
     [SYM] = {[INT32] = unsupportedConversionTypes,
              [FLOAT32] = unsupportedConversionTypes,
-             [SYM_INT32] = unsupportedConversionTypes,
+             [SYM_INT32] = convertSymTensorToSymInt32Tensor,
              [SYM] = NULL,
              [ASYM] = unsupportedConversionTypes,
              [BOOL] = unsupportedConversionTypes},
