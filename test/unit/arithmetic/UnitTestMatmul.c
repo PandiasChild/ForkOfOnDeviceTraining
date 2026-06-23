@@ -1,4 +1,5 @@
 #include "Arithmetic.h"
+#include "DeathTest.h"
 #include "Matmul.h"
 #include "Tensor.h"
 #include "unity.h"
@@ -415,6 +416,32 @@ void testMatmulSymInt32TensorsWithBiasRescalesBias() {
     TEST_ASSERT_EQUAL_FLOAT_ARRAY(expected, actual.data, 4);
 }
 
+void testMatmulSymInt32RejectsOperandWiderThanInt12() {
+    tensor_t a, b, out;
+    int32_t aData[] = {1, 2, 3, 4, 5, 6};
+    int32_t bData[] = {1, 4, 2, 5, 3, 6};
+    int32_t outData[4];
+    size_t aDims[] = {2, 3}, bDims[] = {3, 2}, oDims[] = {2, 2}, order[] = {0, 1};
+    shape_t aS, bS, oS;
+    setShape(&aS, aDims, 2, order);
+    setShape(&bS, bDims, 2, order);
+    setShape(&oS, oDims, 2, order);
+
+    symInt32QConfig_t aQC, bQC, oQC;
+    initSymInt32QConfigWithQMaxBits(HALF_AWAY, &aQC, 13); /* violates int12 contract */
+    initSymInt32QConfig(HALF_AWAY, &bQC);                 /* default int12 */
+    initSymInt32QConfig(HALF_AWAY, &oQC);
+    quantization_t aQ, bQ, oQ;
+    initSymInt32Quantization(&aQC, &aQ);
+    initSymInt32Quantization(&bQC, &bQ);
+    initSymInt32Quantization(&oQC, &oQ);
+    setTensorValues(&a, (uint8_t *)aData, &aS, &aQ, NULL);
+    setTensorValues(&b, (uint8_t *)bData, &bS, &bQ, NULL);
+    setTensorValues(&out, (uint8_t *)outData, &oS, &oQ, NULL);
+
+    ASSERT_EXITS_WITH_FAILURE(matmulSymInt32Tensors(&a, &b, &out));
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -428,6 +455,7 @@ int main(void) {
     RUN_TEST(testMatmulFloat32TensorsWithBiasBroadcastsOverRows);
     RUN_TEST(testMatmulFloat32TensorsWithBiasNullEqualsPlain);
     RUN_TEST(testMatmulSymInt32TensorsWithBiasRescalesBias);
+    RUN_TEST(testMatmulSymInt32RejectsOperandWiderThanInt12);
 
     return UNITY_END();
 }

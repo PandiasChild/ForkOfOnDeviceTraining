@@ -83,6 +83,7 @@ add_elastic_ai_unit_test(
         MORE_LIBS
         Arithmetic
         Tensor
+        odt_test_death
 )
 
 add_elastic_ai_unit_test(

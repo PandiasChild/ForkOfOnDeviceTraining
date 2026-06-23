@@ -231,12 +231,30 @@ void matmulSymIntTensorsWithInstructionCounter(tensor_t *aTensor, tensor_t *bTen
     ++matmulInstructionCounter;
 }
 
+static void matmulValidateSymOperand(tensor_t *t, const char *what) {
+    if (t->quantization->type != SYM_INT32) {
+        PRINT_ERROR("matmul SYM_INT32: %s must be SYM_INT32", what);
+        exit(1);
+    }
+    symInt32QConfig_t *qc = t->quantization->qConfig;
+    if (qc->qMaxBits > ODT_SYM_OPERAND_QMAXBITS) {
+        PRINT_ERROR("matmul SYM_INT32: %s qMaxBits (%u) exceeds operand contract (%u) — int32 "
+                    "product accumulation would overflow (#227)",
+                    what, (unsigned)qc->qMaxBits, (unsigned)ODT_SYM_OPERAND_QMAXBITS);
+        exit(1);
+    }
+}
+
 void matmulSymInt32Tensors(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTensor) {
+    matmulValidateSymOperand(aTensor, "aTensor");
+    matmulValidateSymOperand(bTensor, "bTensor");
     MATMUL_FUNC_SYM_INT32(aTensor, bTensor, outputTensor);
 }
 
 void matmulSymInt32TensorsWithBias(tensor_t *aTensor, tensor_t *bTensor, tensor_t *outputTensor,
                                    tensor_t *bias) {
+    matmulValidateSymOperand(aTensor, "aTensor");
+    matmulValidateSymOperand(bTensor, "bTensor");
     if (bias == NULL) {
         matmulIntCore(aTensor, bTensor, outputTensor, NULL);
     } else {
