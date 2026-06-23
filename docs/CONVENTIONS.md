@@ -430,11 +430,15 @@ int64 — hard rule). For symmetric `b`-bit operands each product is ≤ 2^(2b�
 so an int32 accumulator (~2^31) holds only ~2^(33−2b) worst-case product terms
 before signed overflow (UB):
 
-| operand width | max product | int32 product-terms before overflow |
+| operand width | max product | int32 term at which overflow first occurs |
 |---|---|---|
 | int16 (qMaxBits=16) | 2^30 | 2 |
 | int12 (qMaxBits=12) | 2^22 | 512 |
 | int8  (qMaxBits=8)  | 2^14 | 131072 |
+
+The number of worst-case terms that still **fit** is one less: int16 survives 1,
+int12 survives **511**, int8 survives 131071 — i.e. int12 is sound for reductions
+of length **N ≤ 511** (`512·2^22 = 2^31 > INT32_MAX`).
 
 int16×int16→int32 is **unsound for product-accumulation** (forward, dx,
 weightGrad) — it overflows after ~2 full-scale terms; it is sound only for
@@ -446,11 +450,26 @@ TFLite. The **grad accumulators stay int16** (wider accumulator, free since SYM
 stores int32 regardless of qMaxBits). The **kernels are bit-width-agnostic** —
 only the quantization configs change; the int32 accumulator (no int64) is kept.
 
-> **Framework-wide follow-up:** Linear's `matmulIntCore` and LayerNorm accumulate
-> int16 products in int32 with the identical 2-term ceiling and have not yet moved
-> to int12 — tracked in a follow-up issue. The #189 policy (release runs free, CI
-> UBSan #204 traps occurrences) backstops any residual overflow beyond int12's
-> headroom.
+**Realized framework-wide int12 contract (PR-A, #227):**
+
+- The SYM_INT32 **operand** default is int12 via the compile-time knob
+  `ODT_SYM_OPERAND_QMAXBITS` (=12), set in `initSymInt32QConfig`
+  (`src/tensor/include/Quantization.h`). Override per-build with
+  `-DODT_SYM_OPERAND_QMAXBITS=N` (e.g. =8 for layers wider than 511).
+- `matmulIntCore` (Linear forward / propLoss / weightGrad) and the LayerNorm
+  **affine product** now run on int12 operands, enforced by op-entry guards
+  (`matmulValidateSymOperand` at both Matmul SYM entries;
+  `layerNormValidateSymTensor` lowered to the knob). LayerNorm's per-group
+  mantissa-sum is a value-sum and stays sound at any qMaxBits ≤ 16.
+- **Grad accumulators stay int16** via `ODT_SYM_GRAD_QMAXBITS` (=16), pinned
+  in `gradInitSymInt32` (`getQLike` preserves the source width). They are
+  value-sums; wider is free.
+- int12 is sound only for reductions **N ≤ 511**; the runtime N-vs-budget check
+  is a deferred follow-up. The #189 policy (release runs free, CI UBSan #204)
+  backstops residual overflow.
+- Note: the conv weightGrad product mixes an int12 input with an int16 grad
+  operand under the #218 grad-accumulator scheme — its budget is governed by
+  #218/#45, not closed by this operand flip.
 
 The training loop (`CalculateGradsSequential.c`) allocates grad/activation
 tensors from the **forward** qConfig, not the backward qConfigs — so a full-SYM
