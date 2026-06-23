@@ -387,6 +387,17 @@ static void unpackSignExtend(const uint8_t *src, size_t srcBits, int32_t *dst, s
     }
 }
 
+void convertSymTensorToFloat32Tensor(tensor_t *inputTensor, tensor_t *outputTensor) {
+    size_t n = calcNumberOfElementsByTensor(inputTensor);
+    symQConfig_t *inQC = inputTensor->quantization->qConfig;
+    int32_t mant[n];
+    unpackSignExtend(inputTensor->data, inQC->qBits, mant, n);
+    float *out = (float *)outputTensor->data;
+    for (size_t i = 0; i < n; i++) {
+        out[i] = (float)mant[i] * inQC->scale;
+    }
+}
+
 void convertSymTensorToSymInt32Tensor(tensor_t *inputTensor, tensor_t *outputTensor) {
     size_t n = calcNumberOfElementsByTensor(inputTensor);
     symQConfig_t *inQC = inputTensor->quantization->qConfig;
@@ -447,7 +458,7 @@ conversionFunction_t conversionMatrix[6][6] = {
                    [ASYM] = convertSymInt32TensorToAsymTensor,
                    [BOOL] = unsupportedConversionTypes},
     [SYM] = {[INT32] = unsupportedConversionTypes,
-             [FLOAT32] = unsupportedConversionTypes,
+             [FLOAT32] = convertSymTensorToFloat32Tensor,
              [SYM_INT32] = convertSymTensorToSymInt32Tensor,
              [SYM] = NULL,
              [ASYM] = unsupportedConversionTypes,
