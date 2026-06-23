@@ -23,6 +23,7 @@ add_elastic_ai_unit_test(
         Quantization
         TensorApi
         StorageApi
+        odt_test_death
 )
 set(GEN_REQUANT_HEADER ${CMAKE_CURRENT_BINARY_DIR}/expected_requant.h)
 add_custom_command(

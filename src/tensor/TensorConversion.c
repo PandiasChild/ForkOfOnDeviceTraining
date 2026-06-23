@@ -477,6 +477,51 @@ void unsupportedConversionTypes(tensor_t *inputTensor, tensor_t *outputTensor) {
     exit(1);
 }
 
+static void packFitGuarded(const int32_t *src, size_t n, uint8_t *dst, size_t dstBits,
+                           const char *what) {
+    const int32_t hi = ((int32_t)1 << (dstBits - 1)) - 1;
+    const int32_t lo = -((int32_t)1 << (dstBits - 1));
+    for (size_t i = 0; i < n; i++) {
+        if (src[i] < lo || src[i] > hi) {
+            PRINT_ERROR("%s: value %d does not fit %u-bit SYM range [%d, %d] (#227)", what, src[i],
+                        (unsigned)dstBits, lo, hi);
+            exit(1);
+        }
+    }
+    int32_t tmp[n];
+    for (size_t i = 0; i < n; i++) {
+        tmp[i] = src[i];
+    }
+    byteConversion((uint8_t *)tmp, 32, dst, dstBits, n);
+}
+
+void convertSymInt32TensorToSymTensor(tensor_t *inputTensor, tensor_t *outputTensor) {
+    size_t n = calcNumberOfElementsByTensor(inputTensor);
+    symInt32QConfig_t *inQC = inputTensor->quantization->qConfig;
+    symQConfig_t *outQC = outputTensor->quantization->qConfig;
+    float inScale = inQC->scale;
+    const float qMax = powf(2, (float)outQC->qBits - 1) - 1;
+    const float qMin = -powf(2, (float)outQC->qBits - 1);
+    int32_t *in = (int32_t *)inputTensor->data;
+
+    float absMax = 0.f;
+    for (size_t i = 0; i < n; i++) {
+        float d = fabsf((float)in[i] * inScale);
+        if (d > absMax) {
+            absMax = d;
+        }
+    }
+    float scale = (absMax == 0.f) ? 1.f : absMax / qMax;
+    outQC->scale = scale;
+
+    int32_t codes[n];
+    for (size_t i = 0; i < n; i++) {
+        codes[i] = (int32_t)roundByMode(clamp(((float)in[i] * inScale) / scale, qMin, qMax),
+                                        outQC->roundingMode);
+    }
+    packFitGuarded(codes, n, outputTensor->data, outQC->qBits, "convertSymInt32TensorToSymTensor");
+}
+
 _Static_assert(BOOL + 1 == 6, "extend conversionMatrix when adding qtype_t entries");
 
 conversionFunction_t conversionMatrix[6][6] = {
@@ -495,7 +540,7 @@ conversionFunction_t conversionMatrix[6][6] = {
     [SYM_INT32] = {[INT32] = extractInt32TensorFromSymInt32Tensor,
                    [FLOAT32] = convertSymInt32TensorToFloat32Tensor,
                    [SYM_INT32] = requantSymInt32Tensor,
-                   [SYM] = unsupportedConversionTypes,
+                   [SYM] = convertSymInt32TensorToSymTensor,
                    [ASYM] = convertSymInt32TensorToAsymTensor,
                    [BOOL] = unsupportedConversionTypes},
     [SYM] = {[INT32] = convertSymTensorToInt32Tensor,

@@ -1,4 +1,5 @@
 #include "DTypes.h"
+#include "DeathTest.h"
 #include "Quantization.h"
 #include "StorageApi.h"
 #include "Tensor.h"
@@ -12,6 +13,19 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* PR-C pack tests verify the packed SYM output by unpacking it here in-test:
+ * byteConversion zero-fills on widen, so sign-extend each value from qBits.
+ * (The SYM->* unpack cells live on the parallel PR-B branch, not here.) */
+static void symTestUnpackSignExtend(const uint8_t *packed, size_t qBits, int32_t *out, size_t n) {
+    byteConversion((uint8_t *)packed, qBits, (uint8_t *)out, 32, n);
+    const int32_t signBit = (int32_t)1 << (qBits - 1);
+    const int32_t mask = (int32_t)(((uint32_t)1 << qBits) - 1u);
+    for (size_t i = 0; i < n; i++) {
+        int32_t v = out[i] & mask;
+        out[i] = (v ^ signBit) - signBit;
+    }
+}
 
 void testConversionIntFloat() {
     uint8_t numValues = 6;
@@ -1038,6 +1052,55 @@ void testConversionSymAsymRescaleRoundTrips() {
     freeReservedMemory(inBuf);
 }
 
+void testConversionSymInt32ToSymRescaleRoundTrips() {
+    size_t n = 6;
+    size_t dims[] = {6};
+    size_t numberOfDims = 1;
+    size_t orderOfDims[] = {0};
+    shape_t shape = {
+        .dimensions = dims, .numberOfDimensions = numberOfDims, .orderOfDimensions = orderOfDims};
+
+    /* Input: SYM_INT32 with scale=0.25, mantissas span [-40, 40].
+     * Dequantized values: mantissa * 0.25 = {10, -8, 4, -2, 6, -10}; absmax = 10.0. */
+    symInt32QConfig_t inQC;
+    initSymInt32QConfigWithQMaxBits(HALF_AWAY, &inQC, 16);
+    inQC.scale = 0.25f;
+    quantization_t inQ;
+    initSymInt32Quantization(&inQC, &inQ);
+    int32_t inData[] = {40, -32, 16, -8, 24, -40};
+    tensor_t inTensor;
+    setTensorValues(&inTensor, (uint8_t *)inData, &shape, &inQ, NULL);
+
+    /* Output: SYM with qBits=6.
+     * Expected fresh scale = absmax / (2^(6-1) - 1) = 10.0 / 31 ≈ 0.322580645. */
+    symQConfig_t outQC;
+    initSymQConfig(6, HALF_AWAY, &outQC);
+    quantization_t outQ;
+    initSymQuantization(&outQC, &outQ);
+    uint8_t symData[calcNumberOfBytesForData(&outQ, n)];
+    tensor_t symTensor;
+    setTensorValues(&symTensor, symData, &shape, &outQ, NULL);
+
+    convertTensor(&inTensor, &symTensor);
+
+    /* Assert fresh output scale. */
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 10.0f / 31.0f, outQC.scale);
+
+    /* Manually unpack codes and dequantize; verify within one quant step.
+     * One quant step = scale ≈ 0.323; tolerance = 0.33f. */
+    int32_t codes[6];
+    symTestUnpackSignExtend(symTensor.data, 6, codes, 6);
+    float expectedVal[] = {10.f, -8.f, 4.f, -2.f, 6.f, -10.f};
+    for (size_t i = 0; i < n; i++) {
+        float rec = (float)codes[i] * outQC.scale;
+        TEST_ASSERT_FLOAT_WITHIN(0.33f, expectedVal[i], rec);
+    }
+
+    /* Representative codes: 10.0 / (10.0/31) = 31; -10.0 / (10.0/31) = -31. */
+    TEST_ASSERT_INT32_WITHIN(1, 31, codes[0]);
+    TEST_ASSERT_INT32_WITHIN(1, -31, codes[5]);
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -1076,6 +1139,7 @@ int main(void) {
     RUN_TEST(testConversionSymFloat32Dequantizes);
     RUN_TEST(testConversionSymInt32CodesDropScale);
     RUN_TEST(testConversionSymAsymRescaleRoundTrips);
+    RUN_TEST(testConversionSymInt32ToSymRescaleRoundTrips);
 
     return UNITY_END();
 }
