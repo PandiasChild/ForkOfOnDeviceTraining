@@ -1256,6 +1256,66 @@ void testConversionInt32ToSymRejectsOutOfRange() {
     ASSERT_EXITS_WITH_FAILURE(convertTensor(&intTensor, &symTensor));
 }
 
+void testConversionAsymToSymRescaleOffCenterRoundTrips() {
+    /* Strategy: build an ASYM input representing an off-center ALL-POSITIVE band [2, 6],
+     * convert ASYM -> SYM, manually unpack the SYM output (sign-extend), dequantize with
+     * the fresh SYM scale, and assert recovery within tolerance — proving the cell RESCALED
+     * (a symmetric grid holds the [2,6] band only because the scale was recomputed). */
+    size_t n = 6;
+    size_t dims[] = {6};
+    size_t orderOfDims[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = orderOfDims};
+
+    /* Build ASYM input: qBits=5, scale=0.25, zeroPoint=-4.
+     * asym codes {12,16,20,24,28,14} -> reals = (code + zeroPoint)*scale = (code-4)*0.25
+     * = {2.0, 3.0, 4.0, 5.0, 6.0, 2.5} — off-center all-positive band [2, 6]. */
+    asymQConfig_t inQC;
+    initAsymQConfig(5, HALF_AWAY, &inQC);
+    inQC.scale = 0.25f;
+    inQC.zeroPoint = -4;
+    quantization_t inQ;
+    initAsymQuantization(&inQC, &inQ);
+
+    int32_t asymCodes[] = {12, 16, 20, 24, 28, 14};
+    uint8_t asymData[calcNumberOfBytesForData(&inQ, 6)];
+    byteConversion((uint8_t *)asymCodes, 32, asymData, 5, 6);
+    tensor_t asymTensor;
+    setTensorValues(&asymTensor, asymData, &shape, &inQ, NULL);
+
+    float reference[] = {2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 2.5f};
+
+    /* SYM output qBits=6. */
+    symQConfig_t outQC;
+    initSymQConfig(6, HALF_AWAY, &outQC);
+    quantization_t outQ;
+    initSymQuantization(&outQC, &outQ);
+    uint8_t symData[calcNumberOfBytesForData(&outQ, 6)];
+    tensor_t symTensor;
+    setTensorValues(&symTensor, symData, &shape, &outQ, NULL);
+
+    convertTensor(&asymTensor, &symTensor);
+
+    /* Assert FRESH symmetric scale proves rescale (NOT the carried asym 0.25):
+     * absMax = 6.0; scale = 6.0 / (2^(6-1) - 1) = 6.0/31. */
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 6.0f / 31.0f, outQC.scale);
+
+    /* Manual unpack + dequant + compare.
+     * asym codes are exact integers so the only error is the SYM requantization step
+     * ≈ scale/2 = (6/31)/2 ≈ 0.097; tolerance 0.2 is conservative (< one full step). */
+    int32_t symCodes[6];
+    symTestUnpackSignExtend(symTensor.data, 6, symCodes, 6);
+    for (size_t i = 0; i < 6; i++) {
+        float rec = (float)symCodes[i] * outQC.scale;
+        TEST_ASSERT_FLOAT_WITHIN(0.2f, reference[i], rec);
+    }
+
+    /* All codes positive: off-center [2,6] band maps onto the positive half of the
+     * symmetric grid after rescaling. */
+    for (size_t i = 0; i < 6; i++) {
+        TEST_ASSERT_TRUE(symCodes[i] > 0);
+    }
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -1300,6 +1360,7 @@ int main(void) {
     RUN_TEST(testConversionFloatToSymRoundTripsSymmetric);
     RUN_TEST(testConversionInt32ToSymNoRescaleScale1);
     RUN_TEST(testConversionInt32ToSymRejectsOutOfRange);
+    RUN_TEST(testConversionAsymToSymRescaleOffCenterRoundTrips);
 
     return UNITY_END();
 }

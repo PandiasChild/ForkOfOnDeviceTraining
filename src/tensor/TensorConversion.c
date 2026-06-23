@@ -452,6 +452,29 @@ void convertSymTensorToAsymTensor(tensor_t *inputTensor, tensor_t *outputTensor)
     byteConversion(wide, 32, outputTensor->data, outQC->qBits, n);
 }
 
+void convertAsymTensorToSymTensor(tensor_t *inputTensor, tensor_t *outputTensor) {
+    size_t n = calcNumberOfElementsByTensor(inputTensor);
+    asymQConfig_t *inQC = inputTensor->quantization->qConfig;
+    size_t inBits = calcBitsPerElement(inputTensor->quantization);
+    int32_t codes[n];
+    byteConversion(inputTensor->data, inBits, (uint8_t *)codes, 32, n); /* asym codes >= 0 */
+    float deq[n];
+    for (size_t i = 0; i < n; i++) {
+        deq[i] = ((float)codes[i] + (float)inQC->zeroPoint) * inQC->scale;
+    }
+    float absMax = findAbsMaxFloat((uint8_t *)deq, n);
+    symQConfig_t *outQC = outputTensor->quantization->qConfig;
+    const float qMax = powf(2, (float)outQC->qBits - 1) - 1;
+    const float qMin = -powf(2, (float)outQC->qBits - 1);
+    float scale = (absMax == 0.f) ? 1.f : absMax / qMax;
+    outQC->scale = scale;
+    int32_t out[n];
+    for (size_t i = 0; i < n; i++) {
+        out[i] = roundByMode(clamp(deq[i] / scale, qMin, qMax), outQC->roundingMode);
+    }
+    packFitGuarded(out, n, outputTensor->data, outQC->qBits, "convertAsymTensorToSymTensor");
+}
+
 char *quantTypeToString(qtype_t t) {
     switch (t) {
     case INT32:
@@ -564,7 +587,7 @@ conversionFunction_t conversionMatrix[6][6] = {
     [ASYM] = {[INT32] = convertAsymTensorToInt32Tensor,
               [FLOAT32] = convertAsymTensorToFloatTensor,
               [SYM_INT32] = convertAsymTensorToSymInt32Tensor,
-              [SYM] = unsupportedConversionTypes,
+              [SYM] = convertAsymTensorToSymTensor,
               [ASYM] = NULL,
               [BOOL] = unsupportedConversionTypes},
     [BOOL] = {[INT32] = unsupportedConversionTypes,
