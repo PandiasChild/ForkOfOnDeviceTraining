@@ -520,6 +520,36 @@ high-level factory keeps grads FLOAT32, matching the Linear KAIMING factory).
 `Conv1dTransposed → Quant → MSE` trains under
 `calculateGradsSequential` + `sgdStepM(SYM_INT32)`.
 
+## SYM ↔ * conversion bridge (#227)
+
+`SYM` is the sub-byte bit-packed **storage** dtype; `SYM_INT32` is the int32-slot
+**compute** dtype. The MCU lifecycle is store-packed (`SYM`) → unpack to int32
+(`SYM_INT32`) → compute → repack. `conversionMatrix`
+(`src/tensor/TensorConversion.c`) fills these cells: PR-B implements the **unpack
+row** (`SYM → {SYM_INT32, FLOAT32, INT32, ASYM}`); the pack column (`* → SYM`) is
+PR-C.
+
+**Sign-extend on unpack.** `byteConversion` is a pure bit-copy that ZERO-FILLS on
+widen, so a packed signed mantissa (e.g. `−3` at qBits=6 = `0b111101`) would read
+back as `61`. Every `SYM →` cell routes through the shared
+`unpackSignExtend(src, srcBits, dst, n)` helper, which widens then sign-extends the
+two's-complement payload from `srcBits` (`(v ^ signBit) − signBit`). ASYM codes are
+non-negative, so the ASYM **pack** path does not sign-extend.
+
+**`int_repr` vs `dequantize` (deliberate, documented asymmetry).** A conversion
+whose destination is `INT32` emits the integer **codes** and drops the scale
+(`int_repr`); a conversion whose destination is `FLOAT32` emits the **values** with
+the scale applied (`dequantize`). This mirrors PyTorch `int_repr()` vs
+`dequantize()` and is consistent across both source dtypes: `SYM → INT32` and
+`SYM_INT32 → INT32` are both `int_repr`; `SYM → FLOAT32` and `SYM_INT32 → FLOAT32`
+are both `dequantize`. No value-rounding `→INT32` variant exists (YAGNI;
+near-useless for `scale ≪ 1`).
+
+**Rescale on the symmetric↔asymmetric transition.** `SYM → ASYM` always rescales
+(dequantize → derive a fresh asym `scale`+`zeroPoint` from min/max → requantize →
+pack): a symmetric code grid cannot hold an off-center `+zeroPoint` band at the
+carried scale, independent of width.
+
 ## Vision: memory over float accuracy
 
 ODT is a memory-light on-device-training research framework. SYM_INT32 paths
