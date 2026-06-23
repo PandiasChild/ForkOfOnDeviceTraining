@@ -253,6 +253,7 @@ add_elastic_ai_unit_test(
         Rounding
         Arithmetic
         StorageApi
+        odt_test_death
 )
 add_dependencies(UnitTestLayerNorm generate_expected_layernorm)
 add_dependencies(UnitTestLayerNorm generate_expected_layernorm_sym)

@@ -16,6 +16,7 @@
 #include "TensorApi.h"
 #include "unity.h"
 
+#include "DeathTest.h"
 #include "expected_layernorm.h"
 #include "expected_layernorm_sym.h"
 #include "expected_layernorm_sym_bwd.h"
@@ -1839,6 +1840,48 @@ void testFactoryFullSymProfileTrainsSymGrads(void) {
     TEST_ASSERT_TRUE(dxScale > 0.0f && dxScale != 1.0f);
 }
 
+/* layerNormValidateSymTensor is static; exercise it through layerNormForward.
+ * The INPUT tensor is built with qMaxBits=13, which exceeds the int12 operand
+ * contract (ODT_SYM_OPERAND_QMAXBITS=12); the forward must exit(1). */
+void testLayerNormSymRejectsOperandWiderThanInt12(void) {
+    size_t dims[] = {2, 4};
+    /* Build input with a width-13 qMaxBits — violates ODT_SYM_OPERAND_QMAXBITS. */
+    size_t *inDims = reserveMemory(2 * sizeof(size_t));
+    inDims[0] = 2;
+    inDims[1] = 4;
+    size_t *inOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, inOrder);
+    shape_t *inShape = reserveMemory(sizeof(shape_t));
+    setShape(inShape, inDims, 2, inOrder);
+    quantization_t *wideQ = quantizationInitSymInt32WithBits(HALF_AWAY, 13);
+    tensor_t *in = initTensor(inShape, wideQ, NULL);
+
+    tensor_t *out = buildSymInt32TensorND(2, dims, NULL);
+
+    size_t ns[] = {4};
+    parameter_t *gamma = buildSymParam(1, ns, (float[]){1.f, 1.f, 1.f, 1.f});
+    parameter_t *beta = buildSymParam(1, ns, (float[]){0.f, 0.f, 0.f, 0.f});
+    size_t *normShape = reserveMemory(sizeof(size_t));
+    normShape[0] = 4;
+
+    quantization_t *fq = quantizationInitSymInt32(HALF_AWAY);
+    quantization_t *bq = quantizationInitFloat();
+    layerNormConfig_t cfg;
+    initLayerNormConfig(&cfg, gamma, beta, normShape, 1, 1e-5f, fq, bq);
+    layerConfig_t lcfg;
+    layer_t layer = makeLayerNormLayer(&cfg, &lcfg);
+
+    ASSERT_EXITS_WITH_FAILURE(layerNormForward(&layer, in, out));
+
+    freeQuantization(bq);
+    freeQuantization(fq);
+    freeReservedMemory(normShape);
+    freeParameter(beta);
+    freeParameter(gamma);
+    freeTensor(out);
+    freeTensor(in);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testConfigStructIsPopulated);
@@ -1881,5 +1924,6 @@ int main(void) {
     RUN_TEST(testSymBackwardVarNearEpsGold);
     RUN_TEST(testSymBackwardDivergentLayoutsBitIdentical);
     RUN_TEST(testFactoryFullSymProfileTrainsSymGrads);
+    RUN_TEST(testLayerNormSymRejectsOperandWiderThanInt12);
     return UNITY_END();
 }

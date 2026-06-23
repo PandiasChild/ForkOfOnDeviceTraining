@@ -118,21 +118,35 @@ static void layerNormGroupStats(tensor_t *t, size_t numNormDims, size_t g, size_
 }
 
 /* The SYM_INT32 path reinterprets tensor data as int32 mantissas; a FLOAT32
- * buffer read that way is silent garbage, so fail fast. qMaxBits > 16 would
- * break two int32 bounds: the per-group mantissa-sum accumulator and the
- * affine product q*gamma_q <= qMax^2 (spec: int64 is NOT used). NOTE: the
- * guard can only check the config — int16-range mantissas are the SYM_INT32
- * input CONTRACT; upstream ops must deliver requantized mantissas — an open
- * inter-layer requantization question for the quantized-training epic (#137). */
+ * buffer read that way is silent garbage, so fail fast. The int12 bound
+ * (ODT_SYM_OPERAND_QMAXBITS) is required by the affine product q*gamma_q
+ * (out[off]*gammaQ[j]); the per-group mantissa-SUM is a value-sum and is
+ * sound at any qMaxBits <= 16. (#227) */
 static void layerNormValidateSymTensor(tensor_t *t, const char *what) {
     if (t->quantization->type != SYM_INT32) {
         PRINT_ERROR("LayerNorm SYM_INT32: %s must be SYM_INT32", what);
         exit(1);
     }
     symInt32QConfig_t *qc = t->quantization->qConfig;
-    if (qc->qMaxBits > 16) {
-        PRINT_ERROR("LayerNorm SYM_INT32: %s qMaxBits (%u) exceeds 16", what,
-                    (unsigned)qc->qMaxBits);
+    if (qc->qMaxBits > ODT_SYM_OPERAND_QMAXBITS) {
+        PRINT_ERROR("LayerNorm SYM_INT32: %s qMaxBits (%u) exceeds operand contract (%u)", what,
+                    (unsigned)qc->qMaxBits, (unsigned)ODT_SYM_OPERAND_QMAXBITS);
+        exit(1);
+    }
+}
+
+/* Grad tensors accumulate via addSymInt32TensorsInplace (no multiply) so they
+ * may be as wide as ODT_SYM_GRAD_QMAXBITS (16). Only the SYM_INT32 type is
+ * required; the width guard is intentionally looser than the operand contract. */
+static void layerNormValidateSymGrad(tensor_t *t, const char *what) {
+    if (t->quantization->type != SYM_INT32) {
+        PRINT_ERROR("LayerNorm SYM_INT32: %s must be SYM_INT32", what);
+        exit(1);
+    }
+    symInt32QConfig_t *qc = t->quantization->qConfig;
+    if (qc->qMaxBits > ODT_SYM_GRAD_QMAXBITS) {
+        PRINT_ERROR("LayerNorm SYM_INT32: %s qMaxBits (%u) exceeds grad contract (%u)", what,
+                    (unsigned)qc->qMaxBits, (unsigned)ODT_SYM_GRAD_QMAXBITS);
         exit(1);
     }
 }
@@ -466,8 +480,8 @@ static void layerNormBackwardSymInt32(layerNormConfig_t *cfg, tensor_t *forwardI
     layerNormValidateSymTensor(loss, "loss");
     layerNormValidateSymTensor(propLoss, "propLoss");
     layerNormValidateSymTensor(cfg->gamma->param, "gamma");
-    layerNormValidateSymTensor(cfg->gamma->grad, "gamma grad");
-    layerNormValidateSymTensor(cfg->beta->grad, "beta grad");
+    layerNormValidateSymGrad(cfg->gamma->grad, "gamma grad");
+    layerNormValidateSymGrad(cfg->beta->grad, "beta grad");
     /* beta->param is never read here (beta does not enter dx; dbeta needs only
      * dy) — deliberately not validated. */
 
