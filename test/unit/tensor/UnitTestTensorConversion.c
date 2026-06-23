@@ -1101,6 +1101,65 @@ void testConversionSymInt32ToSymRescaleRoundTrips() {
     TEST_ASSERT_INT32_WITHIN(1, -31, codes[5]);
 }
 
+void testRepackSymInt32ToSymNoRescaleFittingCarriesScale() {
+    size_t n = 6;
+    size_t dims[] = {6};
+    size_t orderOfDims[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = orderOfDims};
+
+    symInt32QConfig_t inQC;
+    initSymInt32QConfigWithQMaxBits(HALF_AWAY, &inQC, 16);
+    inQC.scale = 0.5f;
+    quantization_t inQ;
+    initSymInt32Quantization(&inQC, &inQ);
+    int32_t inData[] = {5, -5, 31, -32, 0, 12};
+    tensor_t inTensor;
+    setTensorValues(&inTensor, (uint8_t *)inData, &shape, &inQ, NULL);
+
+    symQConfig_t outQC;
+    initSymQConfig(6, HALF_AWAY, &outQC);
+    outQC.scale = 999.0f;
+    quantization_t outQ;
+    initSymQuantization(&outQC, &outQ);
+    uint8_t symData[calcNumberOfBytesForData(&outQ, n)];
+    tensor_t symTensor;
+    setTensorValues(&symTensor, symData, &shape, &outQ, NULL);
+
+    repackSymInt32ToSymNoRescale(&inTensor, &symTensor);
+
+    int32_t codes[6];
+    symTestUnpackSignExtend(symTensor.data, 6, codes, 6);
+    TEST_ASSERT_EQUAL_INT32_ARRAY(inData, codes, 6);
+    TEST_ASSERT_EQUAL_FLOAT(0.5f, outQC.scale);
+}
+
+void testRepackSymInt32ToSymNoRescaleRejectsOverflow() {
+    size_t n = 6;
+    size_t dims[] = {6};
+    size_t orderOfDims[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = orderOfDims};
+
+    symInt32QConfig_t inQC;
+    initSymInt32QConfigWithQMaxBits(HALF_AWAY, &inQC, 16);
+    inQC.scale = 0.5f;
+    quantization_t inQ;
+    initSymInt32Quantization(&inQC, &inQ);
+    int32_t inData[] = {5, 40, -5, 0, 0, 0};
+    tensor_t inTensor;
+    setTensorValues(&inTensor, (uint8_t *)inData, &shape, &inQ, NULL);
+
+    symQConfig_t outQC;
+    initSymQConfig(6, HALF_AWAY, &outQC);
+    outQC.scale = 999.0f;
+    quantization_t outQ;
+    initSymQuantization(&outQC, &outQ);
+    uint8_t symData[calcNumberOfBytesForData(&outQ, n)];
+    tensor_t symTensor;
+    setTensorValues(&symTensor, symData, &shape, &outQ, NULL);
+
+    ASSERT_EXITS_WITH_FAILURE(repackSymInt32ToSymNoRescale(&inTensor, &symTensor));
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -1140,6 +1199,8 @@ int main(void) {
     RUN_TEST(testConversionSymInt32CodesDropScale);
     RUN_TEST(testConversionSymAsymRescaleRoundTrips);
     RUN_TEST(testConversionSymInt32ToSymRescaleRoundTrips);
+    RUN_TEST(testRepackSymInt32ToSymNoRescaleFittingCarriesScale);
+    RUN_TEST(testRepackSymInt32ToSymNoRescaleRejectsOverflow);
 
     return UNITY_END();
 }

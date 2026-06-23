@@ -522,6 +522,15 @@ void convertSymInt32TensorToSymTensor(tensor_t *inputTensor, tensor_t *outputTen
     packFitGuarded(codes, n, outputTensor->data, outQC->qBits, "convertSymInt32TensorToSymTensor");
 }
 
+void repackSymInt32ToSymNoRescale(tensor_t *inputTensor, tensor_t *outputTensor) {
+    size_t n = calcNumberOfElementsByTensor(inputTensor);
+    symInt32QConfig_t *inQC = inputTensor->quantization->qConfig;
+    symQConfig_t *outQC = outputTensor->quantization->qConfig;
+    outQC->scale = inQC->scale;
+    packFitGuarded((int32_t *)inputTensor->data, n, outputTensor->data, outQC->qBits,
+                   "repackSymInt32ToSymNoRescale");
+}
+
 _Static_assert(BOOL + 1 == 6, "extend conversionMatrix when adding qtype_t entries");
 
 conversionFunction_t conversionMatrix[6][6] = {

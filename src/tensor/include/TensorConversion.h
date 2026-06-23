@@ -49,6 +49,11 @@ void requantSymInt32Tensor(tensor_t *inputTensor, tensor_t *outputTensor);
  * diagonal). */
 void requantSymInt32TensorToScale(tensor_t *inputTensor, tensor_t *outputTensor);
 char *quantTypeToString(qtype_t t);
+/*! SYM_INT32 -> SYM with NO rescale: carry the input scale, pack mantissas
+ *  verbatim. Exits if any mantissa exceeds the target qBits. The no-rescale
+ *  partner of convertSymTensorToSymInt32Tensor (#227). Not a conversionMatrix
+ *  cell (the rescale variant owns [SYM_INT32][SYM]); call directly. */
+void repackSymInt32ToSymNoRescale(tensor_t *inputTensor, tensor_t *outputTensor);
 
 extern conversionFunction_t conversionMatrix[6][6];
 
