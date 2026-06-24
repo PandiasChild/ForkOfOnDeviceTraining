@@ -117,10 +117,6 @@ void testConversionIntAsym() {
     uint8_t flattenedAsymData[numValues];
     byteConversion(asymTensor.data, asymQConfig.qBits, flattenedAsymData, 8, numValues);
 
-    /*uint8_t expectedAsym[] = {16, 22, 25, 31, 6, 0};
-    int32_t expectedZeroPoint = -11;
-    float expectedScale = 0.1875f;*/
-
     uint8_t expectedAsym[] = {15, 20, 26, 31, 5, 0};
     int32_t expectedZeroPoint = -10;
     float expectedScale = 0.1935484f;
@@ -999,10 +995,10 @@ void testConversionSymAsymRescaleRoundTrips() {
      * Fixture: n=6, SYM qBits=6, scale=0.5, mantissas {10,-8,4,-2,6,-10}.
      * Dequantized SYM: deq[i] = mant[i] * 0.5 => {5.0, -4.0, 2.0, -1.0, 3.0, -5.0}.
      *
-     * ASYM qBits=5: range=10.0, qMax-1=31, asym scale=10/31≈0.32258.
-     * Codes clamped to [0, 31]; zeroPoint = round(-5.0/(10/31)) = -16 (approx).
-     * Worst-case round-trip error ≈0.16 < tolerance 0.35.
-     * Tolerance stays at 0.35 to cover the clipped extremes.
+     * ASYM qBits=5: range=10.0, qMax=2^5-1=31, asym scale=10/31≈0.32258.
+     * zeroPoint=round(-5.0/(10/31))=-16; codes={31,4,22,13,25,1} (clamped to [0,31]).
+     * Codes + scale + zeroPoint are pinned exactly below; the round-trip leg is a
+     * secondary sanity check (worst-case error ≈0.16, tolerance 0.35 covers clipping).
      */
     size_t n = 6;
     size_t dims[] = {6};
@@ -1041,6 +1037,13 @@ void testConversionSymAsymRescaleRoundTrips() {
     convertTensor(&inTensor, &asymTensor);
     /* #243: standard affine asym scale = range/(2^qBits-1) = 10/31 (was 10/32). */
     TEST_ASSERT_FLOAT_WITHIN(1e-5f, 10.0f / 31.0f, asymQC.scale);
+    /* Pin the grid exactly: the 0.35 round-trip tolerance below cannot distinguish
+     * 10/31 from the old 10/32, so assert zeroPoint and the unpacked codes directly. */
+    TEST_ASSERT_EQUAL_INT32(-16, asymQC.zeroPoint);
+    uint8_t flattenedAsymData[n];
+    byteConversion(asymTensor.data, asymQC.qBits, flattenedAsymData, 8, n);
+    uint8_t expectedCodes[] = {31, 4, 22, 13, 25, 1};
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedCodes, flattenedAsymData, n);
     convertTensor(&asymTensor, &floatTensor);
 
     /* Expected: dequantized SYM values */
