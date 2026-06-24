@@ -550,6 +550,19 @@ near-useless for `scale ≪ 1`).
 pack): a symmetric code grid cannot hold an off-center `+zeroPoint` band at the
 carried scale, independent of width.
 
+**Asymmetric quantization convention (#243).** Every `* → ASYM` cell builds a float
+buffer (from its own preamble) and routes through one shared helper,
+`quantizeFloatToAsym` (`src/tensor/TensorConversion.c`) — the single source of truth.
+Standard affine: `scale = (max − min) / (2^qBits − 1)`, `zeroPoint = round(min/scale)`,
+`code = clamp(round(v/scale − zeroPoint), 0, 2^qBits − 1)` (HALF_AWAY). Dequant is
+`(code + zeroPoint)·scale` — note the **additive** `zeroPoint` (ODT's sign convention,
+the inverse of PyTorch's `q − zeroPoint`). A constant tensor (`min == max`) uses
+`scale = (min != 0) ? |min| : 1` to avoid divide-by-zero. The denominator is
+`2^qBits − 1`, **not** `2^qBits` — the latter is an off-by-one that leaves the top code
+unreachable. New asym-producing converters MUST call this helper and never re-derive the
+grid inline: hand-rolled copies are exactly how the four `*→ASYM` converters drifted
+before #243. The float→SYM pack sibling is `packFloatBufferAsSym`.
+
 ## Vision: memory over float accuracy
 
 ODT is a memory-light on-device-training research framework. SYM_INT32 paths
