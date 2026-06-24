@@ -13,6 +13,8 @@
 
 static void packFitGuarded(const int32_t *src, size_t n, uint8_t *dst, size_t dstBits,
                            const char *what);
+static void packFloatBufferAsSym(const float *values, size_t n, symQConfig_t *outQC, uint8_t *dst,
+                                 const char *what);
 
 void zeroTensorData(tensor_t *tensor) {
     size_t numberOfElements = calcNumberOfElementsByTensor(tensor);
@@ -131,18 +133,9 @@ void convertInt32TensorToSymTensor(tensor_t *inputTensor, tensor_t *outputTensor
 
 void convertFloatTensorToSymTensor(tensor_t *inputTensor, tensor_t *outputTensor) {
     size_t n = calcNumberOfElementsByTensor(inputTensor);
-    float absMax = findAbsMaxFloat(inputTensor->data, n);
     symQConfig_t *outQC = outputTensor->quantization->qConfig;
-    const float qMax = powf(2, (float)outQC->qBits - 1) - 1;
-    const float qMin = -powf(2, (float)outQC->qBits - 1);
-    float scale = (absMax == 0.f) ? 1.f : absMax / qMax;
-    outQC->scale = scale;
-    float *in = (float *)inputTensor->data;
-    int32_t codes[n];
-    for (size_t i = 0; i < n; i++) {
-        codes[i] = roundByMode(clamp(in[i] / scale, qMin, qMax), outQC->roundingMode);
-    }
-    packFitGuarded(codes, n, outputTensor->data, outQC->qBits, "convertFloatTensorToSymTensor");
+    packFloatBufferAsSym((float *)inputTensor->data, n, outQC, outputTensor->data,
+                         "convertFloatTensorToSymTensor");
     copyDimsAndSparsityToTensor(inputTensor, outputTensor);
 }
 
@@ -462,17 +455,8 @@ void convertAsymTensorToSymTensor(tensor_t *inputTensor, tensor_t *outputTensor)
     for (size_t i = 0; i < n; i++) {
         deq[i] = ((float)codes[i] + (float)inQC->zeroPoint) * inQC->scale;
     }
-    float absMax = findAbsMaxFloat((uint8_t *)deq, n);
     symQConfig_t *outQC = outputTensor->quantization->qConfig;
-    const float qMax = powf(2, (float)outQC->qBits - 1) - 1;
-    const float qMin = -powf(2, (float)outQC->qBits - 1);
-    float scale = (absMax == 0.f) ? 1.f : absMax / qMax;
-    outQC->scale = scale;
-    int32_t out[n];
-    for (size_t i = 0; i < n; i++) {
-        out[i] = roundByMode(clamp(deq[i] / scale, qMin, qMax), outQC->roundingMode);
-    }
-    packFitGuarded(out, n, outputTensor->data, outQC->qBits, "convertAsymTensorToSymTensor");
+    packFloatBufferAsSym(deq, n, outQC, outputTensor->data, "convertAsymTensorToSymTensor");
 }
 
 char *quantTypeToString(qtype_t t) {
@@ -521,31 +505,31 @@ static void packFitGuarded(const int32_t *src, size_t n, uint8_t *dst, size_t ds
     byteConversion((uint8_t *)tmp, 32, dst, dstBits, n);
 }
 
+static void packFloatBufferAsSym(const float *values, size_t n, symQConfig_t *outQC, uint8_t *dst,
+                                 const char *what) {
+    float absMax = findAbsMaxFloat((uint8_t *)values, n);
+    const float qMax = powf(2, (float)outQC->qBits - 1) - 1;
+    const float qMin = -powf(2, (float)outQC->qBits - 1);
+    float scale = (absMax == 0.f) ? 1.f : absMax / qMax;
+    outQC->scale = scale;
+    int32_t codes[n];
+    for (size_t i = 0; i < n; i++) {
+        codes[i] = roundByMode(clamp(values[i] / scale, qMin, qMax), outQC->roundingMode);
+    }
+    packFitGuarded(codes, n, dst, outQC->qBits, what);
+}
+
 void convertSymInt32TensorToSymTensor(tensor_t *inputTensor, tensor_t *outputTensor) {
     size_t n = calcNumberOfElementsByTensor(inputTensor);
     symInt32QConfig_t *inQC = inputTensor->quantization->qConfig;
     symQConfig_t *outQC = outputTensor->quantization->qConfig;
     float inScale = inQC->scale;
-    const float qMax = powf(2, (float)outQC->qBits - 1) - 1;
-    const float qMin = -powf(2, (float)outQC->qBits - 1);
     int32_t *in = (int32_t *)inputTensor->data;
-
-    float absMax = 0.f;
+    float vals[n];
     for (size_t i = 0; i < n; i++) {
-        float d = fabsf((float)in[i] * inScale);
-        if (d > absMax) {
-            absMax = d;
-        }
+        vals[i] = (float)in[i] * inScale;
     }
-    float scale = (absMax == 0.f) ? 1.f : absMax / qMax;
-    outQC->scale = scale;
-
-    int32_t codes[n];
-    for (size_t i = 0; i < n; i++) {
-        codes[i] = (int32_t)roundByMode(clamp(((float)in[i] * inScale) / scale, qMin, qMax),
-                                        outQC->roundingMode);
-    }
-    packFitGuarded(codes, n, outputTensor->data, outQC->qBits, "convertSymInt32TensorToSymTensor");
+    packFloatBufferAsSym(vals, n, outQC, outputTensor->data, "convertSymInt32TensorToSymTensor");
 }
 
 void repackSymInt32ToSymNoRescale(tensor_t *inputTensor, tensor_t *outputTensor) {
