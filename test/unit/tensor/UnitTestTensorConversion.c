@@ -999,11 +999,10 @@ void testConversionSymAsymRescaleRoundTrips() {
      * Fixture: n=6, SYM qBits=6, scale=0.5, mantissas {10,-8,4,-2,6,-10}.
      * Dequantized SYM: deq[i] = mant[i] * 0.5 => {5.0, -4.0, 2.0, -1.0, 3.0, -5.0}.
      *
-     * ASYM qBits=5: range=10.0, qMax=32, asym scale=10/32=0.3125.
-     * convertFloatTensorToAsymTensor clamps codes to [0, qMax-1=31].
-     * zeroPoint = round(-5.0/0.3125) = -16; max code = clamp(32, 0, 31) = 31.
-     * Recovered max = (31+(-16))*0.3125 = 4.6875; error = 0.3125 = 1 scale step.
-     * Tolerance widened to 0.35 > 0.3125 to cover the clipped extremes.
+     * ASYM qBits=5: range=10.0, qMax-1=31, asym scale=10/31≈0.32258.
+     * Codes clamped to [0, 31]; zeroPoint = round(-5.0/(10/31)) = -16 (approx).
+     * Worst-case round-trip error ≈0.16 < tolerance 0.35.
+     * Tolerance stays at 0.35 to cover the clipped extremes.
      */
     size_t n = 6;
     size_t dims[] = {6};
@@ -1040,6 +1039,8 @@ void testConversionSymAsymRescaleRoundTrips() {
 
     /* Convert SYM -> ASYM -> FLOAT32 */
     convertTensor(&inTensor, &asymTensor);
+    /* #243: standard affine asym scale = range/(2^qBits-1) = 10/31 (was 10/32). */
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, 10.0f / 31.0f, asymQC.scale);
     convertTensor(&asymTensor, &floatTensor);
 
     /* Expected: dequantized SYM values */
