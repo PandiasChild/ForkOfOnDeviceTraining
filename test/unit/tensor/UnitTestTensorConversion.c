@@ -1256,6 +1256,47 @@ void testConversionInt32ToSymRejectsOutOfRange() {
     ASSERT_EXITS_WITH_FAILURE(convertTensor(&intTensor, &symTensor));
 }
 
+void testConversionSymInt32AsymConstantTensorNoDivByZero() {
+    /* Constant tensor: min==max. The quantizeFloatToAsym degenerate branch must avoid
+     * divide-by-zero and recover the constant. Before the dedup,
+     * convertSymInt32TensorToAsymTensor had no min==max guard: scale=(max-min)/qMax=0,
+     * so value/scale was inf and the result was garbage (UB on the float->int cast). */
+    size_t n = 4;
+    size_t dims[] = {4};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    symInt32QConfig_t inQC;
+    initSymInt32QConfigWithQMaxBits(HALF_AWAY, &inQC, 16);
+    inQC.scale = 0.5f;
+    quantization_t inQ;
+    initSymInt32Quantization(&inQC, &inQ);
+    int32_t inData[] = {8, 8, 8, 8}; /* dequantized = 4.0 each (constant) */
+    tensor_t inTensor;
+    setTensorValues(&inTensor, (uint8_t *)inData, &shape, &inQ, NULL);
+
+    asymQConfig_t asymQC;
+    initAsymQConfig(5, HALF_AWAY, &asymQC);
+    quantization_t asymQ;
+    initAsymQuantization(&asymQC, &asymQ);
+    uint8_t asymData[n * calcBytesPerElement(&asymQ)];
+    tensor_t asymTensor;
+    setTensorValues(&asymTensor, asymData, &shape, &asymQ, NULL);
+
+    quantization_t floatQ;
+    initFloat32Quantization(&floatQ);
+    float outF[4];
+    tensor_t floatTensor;
+    setTensorValues(&floatTensor, (uint8_t *)outF, &shape, &floatQ, NULL);
+
+    convertTensor(&inTensor, &asymTensor);    /* SYM_INT32 -> ASYM (constant) */
+    convertTensor(&asymTensor, &floatTensor); /* ASYM -> FLOAT32 round-trip */
+
+    for (size_t i = 0; i < n; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(1e-4f, 4.0f, outF[i]);
+    }
+}
+
 void testConversionAsymToSymRescaleOffCenterRoundTrips() {
     /* Strategy: build an ASYM input representing an off-center ALL-POSITIVE band [2, 6],
      * convert ASYM -> SYM, manually unpack the SYM output (sign-extend), dequantize with
@@ -1333,6 +1374,7 @@ int main(void) {
     RUN_TEST(testConversionSymInt32Int);
     RUN_TEST(testConversionSymInt32Float);
     RUN_TEST(testConversionSymInt32Asym);
+    RUN_TEST(testConversionSymInt32AsymConstantTensorNoDivByZero);
 
     RUN_TEST(testConversionAsymInt);
     RUN_TEST(testConversionAsymFloat);

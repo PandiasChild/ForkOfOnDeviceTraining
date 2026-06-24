@@ -15,6 +15,7 @@ static void packFitGuarded(const int32_t *src, size_t n, uint8_t *dst, size_t ds
                            const char *what);
 static void packFloatBufferAsSym(const float *values, size_t n, symQConfig_t *outQC, uint8_t *dst,
                                  const char *what);
+static void quantizeFloatToAsym(const float *values, size_t n, asymQConfig_t *outQC, uint8_t *dst);
 
 void zeroTensorData(tensor_t *tensor) {
     size_t numberOfElements = calcNumberOfElementsByTensor(tensor);
@@ -49,6 +50,32 @@ void convertInt32TensorToSymInt32Tensor(tensor_t *inputTensor, tensor_t *outputT
     outputSymInt32QConfig->scale = 1;
 
     memcpy(outputTensor->data, inputTensor->data, numberOfElements * sizeof(int32_t));
+}
+
+/* Standard affine asymmetric quantization (#243). scale = (max-min)/(2^qBits-1),
+ * zeroPoint = round(min/scale), code = clamp(round(v/scale - zeroPoint), 0, 2^qBits-1).
+ * Dequant (elsewhere) is (code + zeroPoint)*scale. Constant tensor (min==max) uses a
+ * nonzero scale to avoid divide-by-zero. The single source of truth for all four
+ * *ToAsymTensor converters. */
+static void quantizeFloatToAsym(const float *values, size_t n, asymQConfig_t *outQC, uint8_t *dst) {
+    float mn = findMinFloat((uint8_t *)values, n);
+    float mx = findMaxFloat((uint8_t *)values, n);
+    const float qMax = powf(2, (float)outQC->qBits) - 1;
+    float scale;
+    if (mn == mx) {
+        scale = (mn != 0.f) ? fabsf(mn) : 1.f;
+    } else {
+        scale = (mx - mn) / qMax;
+    }
+    int16_t zeroPoint = (int16_t)roundByMode(mn / scale, outQC->roundingMode);
+    int32_t codes[n];
+    for (size_t i = 0; i < n; i++) {
+        codes[i] = roundByMode(clamp(values[i] / scale - (float)zeroPoint, 0.f, qMax),
+                               outQC->roundingMode);
+    }
+    outQC->scale = scale;
+    outQC->zeroPoint = zeroPoint;
+    byteConversion((uint8_t *)codes, 32, dst, outQC->qBits, n);
 }
 
 void convertInt32TensorToAsymTensor(tensor_t *inputTensor, tensor_t *outputTensor) {
@@ -276,38 +303,15 @@ void requantSymInt32TensorToScale(tensor_t *inputTensor, tensor_t *outputTensor)
 
 void convertSymInt32TensorToAsymTensor(tensor_t *inputTensor, tensor_t *outputTensor) {
     size_t numberOfValues = calcNumberOfElementsByTensor(inputTensor);
-
     symInt32QConfig_t *inputSymInt32QConfig = inputTensor->quantization->qConfig;
     asymQConfig_t *outputAsymQConfig = outputTensor->quantization->qConfig;
-
     float inputScale = inputSymInt32QConfig->scale;
-
     int32_t *inputAsInt32 = (int32_t *)inputTensor->data;
-
     float inputAsFloat[numberOfValues];
     for (size_t i = 0; i < numberOfValues; i++) {
         inputAsFloat[i] = inputScale * (float)inputAsInt32[i];
     }
-
-    float min = findMinFloat((uint8_t *)inputAsFloat, numberOfValues);
-    float max = findMaxFloat((uint8_t *)inputAsFloat, numberOfValues);
-    int32_t qMax = (1 << outputAsymQConfig->qBits) - 1;
-
-    float outputScale = (max - min) / (float)qMax;
-    outputAsymQConfig->scale = outputScale;
-
-    int16_t zeroPoint = (int16_t)roundByMode(min / outputScale, outputAsymQConfig->roundingMode);
-    outputAsymQConfig->zeroPoint = zeroPoint;
-
-    int32_t outputInt[numberOfValues];
-    for (size_t i = 0; i < numberOfValues; i++) {
-        outputInt[i] =
-            roundByMode(clamp(inputAsFloat[i] / outputScale - (float)zeroPoint, 0.f, qMax),
-                        outputAsymQConfig->roundingMode);
-    }
-
-    byteConversion((uint8_t *)outputInt, 32, outputTensor->data, outputAsymQConfig->qBits,
-                   numberOfValues);
+    quantizeFloatToAsym(inputAsFloat, numberOfValues, outputAsymQConfig, outputTensor->data);
 }
 
 void convertAsymTensorToInt32Tensor(tensor_t *inputTensor, tensor_t *outputTensor) {
