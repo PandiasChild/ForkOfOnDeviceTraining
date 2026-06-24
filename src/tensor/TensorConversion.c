@@ -166,41 +166,11 @@ void convertFloatTensorToSymTensor(tensor_t *inputTensor, tensor_t *outputTensor
     copyDimsAndSparsityToTensor(inputTensor, outputTensor);
 }
 
-// conversion from float to asym should not be needed/used
 void convertFloatTensorToAsymTensor(tensor_t *inputTensor, tensor_t *outputTensor) {
     size_t numberOfElements = calcNumberOfElementsByTensor(inputTensor);
-    float min = findMinFloat(inputTensor->data, numberOfElements);
-    float max = findMaxFloat(inputTensor->data, numberOfElements);
-
     asymQConfig_t *asymQConfig = outputTensor->quantization->qConfig;
-    float qMax = pow(2, asymQConfig->qBits);
-
-    float scale;
-    int16_t zeroPoint;
-    if (min == max) {
-        scale = min;
-        zeroPoint = 1;
-    } else {
-        scale = (max - min) / qMax;
-        zeroPoint = (int16_t)roundByMode(min / scale, asymQConfig->roundingMode);
-    }
-
-    int32_t outputElements[numberOfElements];
-    float *inputFloat = (float *)inputTensor->data;
-
-    for (size_t i = 0; i < numberOfElements; i++) {
-        outputElements[i] =
-            roundByMode(clamp(inputFloat[i] / scale - (float)zeroPoint, 0.f, qMax - 1),
-                        asymQConfig->roundingMode);
-    }
-
-    asymQConfig->scale = scale;
-    asymQConfig->zeroPoint = zeroPoint;
-    uint8_t outputElement[numberOfElements * sizeof(int32_t)];
-    writeInt32ArrayToByteArray(numberOfElements, outputElements, outputElement);
-
-    byteConversion(outputElement, 32, outputTensor->data, asymQConfig->qBits, numberOfElements);
-
+    quantizeFloatToAsym((float *)inputTensor->data, numberOfElements, asymQConfig,
+                        outputTensor->data);
     copyDimsAndSparsityToTensor(inputTensor, outputTensor);
 }
 

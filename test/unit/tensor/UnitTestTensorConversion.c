@@ -236,9 +236,9 @@ void testConversionFloatAsym() {
     uint8_t flattenedAsymData[numValues];
     byteConversion(asymTensor.data, asymQConfig.qBits, flattenedAsymData, 8, numValues);
 
-    uint8_t expectedAsym[] = {16, 22, 27, 31, 6, 0};
-    int32_t expectedZeroPoint = -11;
-    float expectedScale = 0.1875f;
+    uint8_t expectedAsym[] = {15, 20, 26, 31, 5, 0};
+    int32_t expectedZeroPoint = -10;
+    float expectedScale = 6.0f / 31.0f;
 
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedAsym, flattenedAsymData, numValues);
     TEST_ASSERT_EQUAL_INT32(expectedZeroPoint, asymQConfig.zeroPoint);
