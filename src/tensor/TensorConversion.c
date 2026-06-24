@@ -80,28 +80,14 @@ static void quantizeFloatToAsym(const float *values, size_t n, asymQConfig_t *ou
 
 void convertInt32TensorToAsymTensor(tensor_t *inputTensor, tensor_t *outputTensor) {
     size_t numberOfElements = calcNumberOfElementsByTensor(inputTensor);
-    int32_t min = findMinInt32(inputTensor->data, numberOfElements);
-    int32_t max = findMaxInt32(inputTensor->data, numberOfElements);
-    asymQConfig_t *linearQConfig = outputTensor->quantization->qConfig;
-    int32_t qMax = pow(2, linearQConfig->qBits) - 1;
-
-    float scale = (float)(max - min) / (float)qMax;
-    int16_t zeroPoint = (int16_t)roundByMode((float)min / scale, linearQConfig->roundingMode);
-
-    int32_t outputElements[numberOfElements];
-    for (size_t elementIndex = 0; elementIndex < numberOfElements; elementIndex++) {
-        int32_t inputElement = readBytesAsInt32(&inputTensor->data[elementIndex * sizeof(int32_t)]);
-
-        outputElements[elementIndex] =
-            roundByMode(clamp((float)inputElement / scale - (float)zeroPoint, 0.f, qMax - 1),
-                        linearQConfig->roundingMode);
+    int32_t inputAsInt32[numberOfElements];
+    readBytesAsInt32Array(numberOfElements, inputTensor->data, inputAsInt32);
+    float vals[numberOfElements];
+    for (size_t i = 0; i < numberOfElements; i++) {
+        vals[i] = (float)inputAsInt32[i];
     }
-    linearQConfig->scale = scale;
-    linearQConfig->zeroPoint = zeroPoint;
-    uint8_t outputElement[numberOfElements * sizeof(int32_t)];
-    writeInt32ArrayToByteArray(numberOfElements, outputElements, outputElement);
-
-    byteConversion(outputElement, 32, outputTensor->data, linearQConfig->qBits, numberOfElements);
+    asymQConfig_t *asymQConfig = outputTensor->quantization->qConfig;
+    quantizeFloatToAsym(vals, numberOfElements, asymQConfig, outputTensor->data);
     copyDimsAndSparsityToTensor(inputTensor, outputTensor);
 }
 

@@ -121,7 +121,7 @@ void testConversionIntAsym() {
     int32_t expectedZeroPoint = -11;
     float expectedScale = 0.1875f;*/
 
-    uint8_t expectedAsym[] = {15, 20, 26, 30, 5, 0};
+    uint8_t expectedAsym[] = {15, 20, 26, 31, 5, 0};
     int32_t expectedZeroPoint = -10;
     float expectedScale = 0.1935484f;
 
