@@ -836,13 +836,11 @@ void testLinearBackwardFloatWithMismatchedQuantizations() {
     tensor_t *forwardInput = initTensor(fwdShape, quantizationInitFloat(), NULL);
     tensorFillFromFloatBuffer(forwardInput, (float[]){0.f, 1.f, 2.f}, 3);
 
-    /* 4. Build heap ASYM loss tensor directly via tensorFillFromFloatBuffer.
-     *    Going through an intermediate Float tensor + convertTensor would alias
-     *    the two shape pointers (copyDimsAndSparsityToTensor in
-     *    convertFloatTensorToAsymTensor writes outputTensor->shape =
-     *    inputTensor->shape), which then causes a double-free. The fill helper
-     *    builds an internal Float view that aliases tensor->shape, so the
-     *    self-assignment is harmless. */
+    /* 4. Build heap ASYM loss tensor directly via tensorFillFromFloatBuffer
+     *    (the fill helper does the Float->ASYM conversion internally). Converters
+     *    write only data + qconfig and no longer touch output->shape (#247), so
+     *    an intermediate Float tensor would work too; the direct fill is simply
+     *    fewer allocations. */
     size_t *lossAsymDims = reserveMemory(2 * sizeof(size_t));
     lossAsymDims[0] = 1;
     lossAsymDims[1] = 2;

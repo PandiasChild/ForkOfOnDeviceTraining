@@ -23,13 +23,6 @@ void zeroTensorData(tensor_t *tensor) {
     memset(tensor->data, 0, numberOfElements * bytesPerElement);
 }
 
-void copyDimsAndSparsityToTensor(tensor_t *inputTensor, tensor_t *outputTensor) {
-    outputTensor->shape = inputTensor->shape;
-    if (inputTensor->sparsity) {
-        memcpy(outputTensor->sparsity, inputTensor->sparsity, sizeof(sparsity_t));
-    }
-}
-
 void convertInt32TensorToFloatTensor(tensor_t *inputTensor, tensor_t *outputTensor) {
     size_t numberOfElements = calcNumberOfElementsByTensor(inputTensor);
     int32_t inputData[numberOfElements];
@@ -40,7 +33,6 @@ void convertInt32TensorToFloatTensor(tensor_t *inputTensor, tensor_t *outputTens
         outputData[i] = (float)inputData[i];
     }
     writeFloatArrayToByteArray(numberOfElements, outputData, outputTensor->data);
-    copyDimsAndSparsityToTensor(inputTensor, outputTensor);
 }
 
 void convertInt32TensorToSymInt32Tensor(tensor_t *inputTensor, tensor_t *outputTensor) {
@@ -88,7 +80,6 @@ void convertInt32TensorToAsymTensor(tensor_t *inputTensor, tensor_t *outputTenso
     }
     asymQConfig_t *asymQConfig = outputTensor->quantization->qConfig;
     quantizeFloatToAsym(vals, numberOfElements, asymQConfig, outputTensor->data);
-    copyDimsAndSparsityToTensor(inputTensor, outputTensor);
 }
 
 void convertFloatTensorToInt32Tensor(tensor_t *inputTensor, tensor_t *outputTensor) {
@@ -101,7 +92,6 @@ void convertFloatTensorToInt32Tensor(tensor_t *inputTensor, tensor_t *outputTens
         outputData[i] = (int32_t)inputData[i];
     }
     writeInt32ArrayToByteArray(numberOfElements, outputData, outputTensor->data);
-    copyDimsAndSparsityToTensor(inputTensor, outputTensor);
 }
 
 void convertFloatTensorToSymInt32Tensor(tensor_t *inputTensor, tensor_t *outputTensor) {
@@ -141,7 +131,6 @@ void convertInt32TensorToSymTensor(tensor_t *inputTensor, tensor_t *outputTensor
     int32_t codes[n];
     readBytesAsInt32Array(n, inputTensor->data, codes);
     packFitGuarded(codes, n, outputTensor->data, outQC->qBits, "convertInt32TensorToSymTensor");
-    copyDimsAndSparsityToTensor(inputTensor, outputTensor);
 }
 
 void convertFloatTensorToSymTensor(tensor_t *inputTensor, tensor_t *outputTensor) {
@@ -149,7 +138,6 @@ void convertFloatTensorToSymTensor(tensor_t *inputTensor, tensor_t *outputTensor
     symQConfig_t *outQC = outputTensor->quantization->qConfig;
     packFloatBufferAsSym((float *)inputTensor->data, n, outQC, outputTensor->data,
                          "convertFloatTensorToSymTensor");
-    copyDimsAndSparsityToTensor(inputTensor, outputTensor);
 }
 
 void convertFloatTensorToAsymTensor(tensor_t *inputTensor, tensor_t *outputTensor) {
@@ -157,7 +145,6 @@ void convertFloatTensorToAsymTensor(tensor_t *inputTensor, tensor_t *outputTenso
     asymQConfig_t *asymQConfig = outputTensor->quantization->qConfig;
     quantizeFloatToAsym((float *)inputTensor->data, numberOfElements, asymQConfig,
                         outputTensor->data);
-    copyDimsAndSparsityToTensor(inputTensor, outputTensor);
 }
 
 // Important: Scale is ignored!
@@ -285,7 +272,6 @@ void convertAsymTensorToInt32Tensor(tensor_t *inputTensor, tensor_t *outputTenso
         outputElements[elementIndex] = outputElements[elementIndex] + zeroPoint;
     }
     writeInt32ArrayToByteArray(numberOfElements, outputElements, outputTensor->data);
-    copyDimsAndSparsityToTensor(inputTensor, outputTensor);
 }
 
 void convertAsymTensorToFloatTensor(tensor_t *inputTensor, tensor_t *outputTensor) {
@@ -303,8 +289,6 @@ void convertAsymTensorToFloatTensor(tensor_t *inputTensor, tensor_t *outputTenso
         outputElements[elementIndex] =
             ((float)inputInt[elementIndex] + (float)zeroPoint) * asymQConfig->scale;
     }
-
-    copyDimsAndSparsityToTensor(inputTensor, outputTensor);
 }
 
 void convertAsymTensorToSymInt32Tensor(tensor_t *inputTensor, tensor_t *outputTensor) {
@@ -331,6 +315,11 @@ void convertAsymTensorToSymInt32Tensor(tensor_t *inputTensor, tensor_t *outputTe
 }
 
 static void unpackSignExtend(const uint8_t *src, size_t srcBits, int32_t *dst, size_t n) {
+    if (srcBits == 0) {
+        /* 1 << (srcBits - 1) below underflows size_t to SIZE_MAX -> UB shift (#247). */
+        PRINT_ERROR("unpackSignExtend: srcBits must be > 0");
+        exit(1);
+    }
     byteConversion((uint8_t *)src, srcBits, (uint8_t *)dst, 32, n); /* zero-fills high bits */
     if (srcBits >= 32) {
         return;
@@ -428,6 +417,12 @@ void unsupportedConversionTypes(tensor_t *inputTensor, tensor_t *outputTensor) {
 
 static void packFitGuarded(const int32_t *src, size_t n, uint8_t *dst, size_t dstBits,
                            const char *what) {
+    if (dstBits == 0 || dstBits > 31) {
+        /* 1 << (dstBits - 1) needs dstBits in [1, 31]: 0 underflows size_t and
+         * >= 32 overshoots the int32 sign bit -> UB shift (#247). */
+        PRINT_ERROR("%s: dstBits (%u) must be in [1, 31]", what, (unsigned)dstBits);
+        exit(1);
+    }
     const int32_t hi = ((int32_t)1 << (dstBits - 1)) - 1;
     const int32_t lo = -((int32_t)1 << (dstBits - 1));
     for (size_t i = 0; i < n; i++) {

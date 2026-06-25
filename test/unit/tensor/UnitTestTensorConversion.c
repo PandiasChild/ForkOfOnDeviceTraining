@@ -1361,6 +1361,123 @@ void testConversionAsymToSymRescaleOffCenterRoundTrips() {
     }
 }
 
+void testConvertSymToInt32RejectsZeroQBits() {
+    /* qBits==0 makes unpackSignExtend compute 1 << (srcBits - 1); srcBits is
+     * size_t so 0 - 1 wraps to SIZE_MAX and the shift is UB (#247). The guard
+     * must reject it before the shift. */
+    size_t dims[] = {4};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    symQConfig_t inQC = {0};
+    inQC.scale = 0.5f;
+    inQC.qBits = 0; /* degenerate */
+    quantization_t inQ;
+    initSymQuantization(&inQC, &inQ);
+    uint8_t inBuf[4] = {0}; /* never read: the guard fires first */
+    tensor_t inTensor;
+    setTensorValues(&inTensor, inBuf, &shape, &inQ, NULL);
+
+    quantization_t outQ;
+    initInt32Quantization(&outQ);
+    int32_t outData[4];
+    tensor_t outTensor;
+    setTensorValues(&outTensor, (uint8_t *)outData, &shape, &outQ, NULL);
+
+    ASSERT_EXITS_WITH_FAILURE(convertTensor(&inTensor, &outTensor));
+}
+
+void testConvertInt32ToSymRejectsZeroQBits() {
+    /* qBits==0 makes packFitGuarded compute 1 << (dstBits - 1) with dstBits as
+     * size_t (0 - 1 -> SIZE_MAX): UB shift, plus a 0-width byteConversion whose
+     * memset size underflows (#247). The guard must reject it up front. */
+    size_t dims[] = {4};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    int32_t intData[] = {1, -1, 2, -2};
+    quantization_t intQ;
+    initInt32Quantization(&intQ);
+    tensor_t intTensor;
+    setTensorValues(&intTensor, (uint8_t *)intData, &shape, &intQ, NULL);
+
+    symQConfig_t outQC = {0};
+    outQC.qBits = 0; /* degenerate */
+    quantization_t outQ;
+    initSymQuantization(&outQC, &outQ);
+    uint8_t symBuf[4] = {0};
+    tensor_t symTensor;
+    setTensorValues(&symTensor, symBuf, &shape, &outQ, NULL);
+
+    ASSERT_EXITS_WITH_FAILURE(convertTensor(&intTensor, &symTensor));
+}
+
+void testConvertersPreserveCallerOutputShape() {
+    /* Contract (#247): converters write data + qconfig only; the CALLER owns the
+     * output tensor's shape, so the converter must NOT repoint output->shape.
+     * Pins the removal of the copyDimsAndSparsityToTensor shape-pointer steal,
+     * which double-freed heap-owned-shape outputs (see UnitTestLinear /
+     * UnitTestAdd). Distinct in/out shape structs make the steal observable as a
+     * changed pointer. */
+    size_t inDims[] = {6};
+    size_t inOrder[] = {0};
+    shape_t inShape = {.dimensions = inDims, .numberOfDimensions = 1, .orderOfDimensions = inOrder};
+    size_t outDims[] = {6};
+    size_t outOrder[] = {0};
+    shape_t outShape = {
+        .dimensions = outDims, .numberOfDimensions = 1, .orderOfDimensions = outOrder};
+
+    /* FLOAT32 -> ASYM (the converter UnitTestLinear documents as the double-free) */
+    float floatData[6] = {1.f, 2.f, 3.f, 4.f, -1.f, -2.f};
+    quantization_t floatInQ;
+    initFloat32Quantization(&floatInQ);
+    tensor_t floatIn;
+    setTensorValues(&floatIn, (uint8_t *)floatData, &inShape, &floatInQ, NULL);
+    asymQConfig_t asymQC;
+    initAsymQConfig(5, HALF_AWAY, &asymQC);
+    quantization_t asymQ;
+    initAsymQuantization(&asymQC, &asymQ);
+    uint8_t asymData[calcNumberOfBytesForData(&asymQ, 6)];
+    tensor_t asymOut;
+    setTensorValues(&asymOut, asymData, &outShape, &asymQ, NULL);
+    convertTensor(&floatIn, &asymOut);
+    TEST_ASSERT_EQUAL_PTR(&outShape, asymOut.shape);
+
+    /* INT32 -> FLOAT32 */
+    int32_t intData[6] = {1, 2, 3, 4, -1, -2};
+    quantization_t intInQ;
+    initInt32Quantization(&intInQ);
+    tensor_t intIn;
+    setTensorValues(&intIn, (uint8_t *)intData, &inShape, &intInQ, NULL);
+    quantization_t floatOutQ;
+    initFloat32Quantization(&floatOutQ);
+    float floatOutData[6];
+    tensor_t floatOut;
+    setTensorValues(&floatOut, (uint8_t *)floatOutData, &outShape, &floatOutQ, NULL);
+    convertTensor(&intIn, &floatOut);
+    TEST_ASSERT_EQUAL_PTR(&outShape, floatOut.shape);
+
+    /* ASYM -> FLOAT32 */
+    asymQConfig_t asymInQC;
+    initAsymQConfig(5, HALF_AWAY, &asymInQC);
+    asymInQC.scale = 0.25f;
+    asymInQC.zeroPoint = -4;
+    quantization_t asymInQ;
+    initAsymQuantization(&asymInQC, &asymInQ);
+    int32_t asymCodes[6] = {12, 16, 20, 8, 24, 14};
+    uint8_t asymInData[calcNumberOfBytesForData(&asymInQ, 6)];
+    byteConversion((uint8_t *)asymCodes, 32, asymInData, 5, 6);
+    tensor_t asymIn;
+    setTensorValues(&asymIn, asymInData, &inShape, &asymInQ, NULL);
+    quantization_t floatOut2Q;
+    initFloat32Quantization(&floatOut2Q);
+    float floatOut2Data[6];
+    tensor_t floatOut2;
+    setTensorValues(&floatOut2, (uint8_t *)floatOut2Data, &outShape, &floatOut2Q, NULL);
+    convertTensor(&asymIn, &floatOut2);
+    TEST_ASSERT_EQUAL_PTR(&outShape, floatOut2.shape);
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -1407,6 +1524,9 @@ int main(void) {
     RUN_TEST(testConversionInt32ToSymNoRescaleScale1);
     RUN_TEST(testConversionInt32ToSymRejectsOutOfRange);
     RUN_TEST(testConversionAsymToSymRescaleOffCenterRoundTrips);
+    RUN_TEST(testConvertSymToInt32RejectsZeroQBits);
+    RUN_TEST(testConvertInt32ToSymRejectsZeroQBits);
+    RUN_TEST(testConvertersPreserveCallerOutputShape);
 
     return UNITY_END();
 }

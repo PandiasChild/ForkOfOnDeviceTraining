@@ -442,6 +442,46 @@ void testMatmulSymInt32RejectsOperandWiderThanInt12() {
     ASSERT_EXITS_WITH_FAILURE(matmulSymInt32Tensors(&a, &b, &out));
 }
 
+void testMatmulSymInt32TensorsWithBiasRejectsNonSymInt32Bias() {
+    /* aTensor/bTensor are valid SYM_INT32 operands, but the bias is FLOAT32.
+     * Without a type guard the bias branch reinterprets the float bytes as
+     * int32 and dereferences a FLOAT32 qConfig as symInt32QConfig_t (#247). */
+    tensor_t a, b, out;
+    int32_t aData[] = {1, 2, 3, 4, 5, 6};
+    int32_t bData[] = {1, 4, 2, 5, 3, 6};
+    int32_t outData[4];
+    size_t aDims[] = {2, 3}, bDims[] = {3, 2}, oDims[] = {2, 2}, order[] = {0, 1};
+    shape_t aS, bS, oS;
+    setShape(&aS, aDims, 2, order);
+    setShape(&bS, bDims, 2, order);
+    setShape(&oS, oDims, 2, order);
+
+    symInt32QConfig_t aQC, bQC, oQC;
+    initSymInt32QConfig(HALF_AWAY, &aQC);
+    initSymInt32QConfig(HALF_AWAY, &bQC);
+    initSymInt32QConfig(HALF_AWAY, &oQC);
+    quantization_t aQ, bQ, oQ;
+    initSymInt32Quantization(&aQC, &aQ);
+    initSymInt32Quantization(&bQC, &bQ);
+    initSymInt32Quantization(&oQC, &oQ);
+    setTensorValues(&a, (uint8_t *)aData, &aS, &aQ, NULL);
+    setTensorValues(&b, (uint8_t *)bData, &bS, &bQ, NULL);
+    setTensorValues(&out, (uint8_t *)outData, &oS, &oQ, NULL);
+
+    /* bias: FLOAT32, element count == output columns (2) so it clears the
+     * count check and reaches the type-confusing read. */
+    tensor_t bias;
+    float biasData[] = {1.f, 2.f};
+    size_t biasDims[] = {2}, biasOrder[] = {0};
+    shape_t biasS;
+    setShape(&biasS, biasDims, 1, biasOrder);
+    quantization_t biasQ;
+    initFloat32Quantization(&biasQ);
+    setTensorValues(&bias, (uint8_t *)biasData, &biasS, &biasQ, NULL);
+
+    ASSERT_EXITS_WITH_FAILURE(matmulSymInt32TensorsWithBias(&a, &b, &out, &bias));
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -456,6 +496,7 @@ int main(void) {
     RUN_TEST(testMatmulFloat32TensorsWithBiasNullEqualsPlain);
     RUN_TEST(testMatmulSymInt32TensorsWithBiasRescalesBias);
     RUN_TEST(testMatmulSymInt32RejectsOperandWiderThanInt12);
+    RUN_TEST(testMatmulSymInt32TensorsWithBiasRejectsNonSymInt32Bias);
 
     return UNITY_END();
 }

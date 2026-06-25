@@ -258,6 +258,13 @@ void matmulSymInt32TensorsWithBias(tensor_t *aTensor, tensor_t *bTensor, tensor_
     if (bias == NULL) {
         matmulIntCore(aTensor, bTensor, outputTensor, NULL);
     } else {
+        /* Bias is a value-sum seed (not a product operand), so it is exempt from
+         * the int12 operand bound but must still be SYM_INT32: the branch below
+         * reads its data as int32 and its qConfig as symInt32QConfig_t (#247). */
+        if (bias->quantization->type != SYM_INT32) {
+            PRINT_ERROR("matmul SYM_INT32: bias must be SYM_INT32");
+            exit(1);
+        }
         size_t bColumns =
             (bTensor->shape->numberOfDimensions < 2) ? 1 : getDimensionsByIndex(bTensor, 1);
         if (calcNumberOfElementsByTensor(bias) != bColumns) {
