@@ -7,7 +7,7 @@
  * SR_HALF_AWAY = stochastic rounding: uniform jitter in [-0.5, 0.5) is added
  *                before rounding half away from zero
  */
-typedef enum roundingMode { HALF_AWAY, SR_HALF_AWAY } roundingMode_t;
+typedef enum roundingMode { HALF_AWAY = 0, SR_HALF_AWAY = 1 } roundingMode_t;
 
 /**
  * Rounds a floating-point value to the nearest integer using half-to-even rule.
