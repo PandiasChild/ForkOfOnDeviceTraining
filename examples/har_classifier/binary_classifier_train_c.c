@@ -1,4 +1,4 @@
-#define SOURCE_FILE "har_classifier_train_c"
+#define SOURCE_FILE "binary_classifier_train_c"
 
 #include <errno.h>
 #include <stdint.h>
@@ -27,24 +27,20 @@
 #include "SoftmaxApi.h"
 #include "StorageApi.h"
 #include "Tensor.h"
-#include "TensorConversion.h"
 #include "TensorApi.h"
+#include "TensorConversion.h"
 #include "TrainingLoopApi.h"
 
+#include "../../src/layer/include/Dropout.h"
 #include "../../src/userApi/tensor/include/TensorApi.h"
 #include "npy_writer.h"
 
-#define EPOCHS 20
-#define BATCH 64
-#define LEARNING_RATE 0.01f
-#define MOMENTUM 0.9f
 #define SEED 42
 #define SHUFFLE_SEED 42
 #define NUM_CLASSES 6
 
 #define IN_CHANNELS 9
 #define LEN_INPUT 128
-
 
 #define L1_OUT 32
 #define WEIGHT_NDIM_0 2
@@ -54,10 +50,10 @@
 // #define L2_OUT NUM_CLASSES
 #define FLATTEN_SIZE (IN_CHANNELS * LEN_INPUT)
 #define MODEL_SIZE 5
-#define ROUNDING_MODE HALF_AWAY
+
+typedef enum deltaStatus { WITH_DELTAS, WITHOUT_DELTAS } deltaStatus_t;
 
 // har_classifier: FINAL test_loss=0.3498 test_acc=0.9046
-
 
 /* ------------------------------------------------------------------------- */
 /* Datasets and dataloader thunks (mirrors example/MnistExperiment.c).       */
@@ -134,8 +130,6 @@ static tensorArray_t *buildOneHotLabels(tensorArray_t *intLabels) {
     return out;
 }
 
-
-
 static void initDataSets(void) {
     tensorArray_t *trainItems = npyLoad("examples/har_classifier/data/train_x.npy");
     tensorArray_t *trainLabelsRaw = npyLoad("examples/har_classifier/data/train_y.npy");
@@ -183,24 +177,24 @@ static size_t getTestSize(void) {
 /* Model parameters (file-static — must outlive buildModel).                 */
 /* ------------------------------------------------------------------------- */
 
-static float weight0Data[L1_OUT*FLATTEN_SIZE] = {0};
+static float weight0Data[L1_OUT * FLATTEN_SIZE] = {0};
 static size_t weight0Dims[WEIGHT_NDIM_0] = {L1_OUT, FLATTEN_SIZE};
 
 static float bias0Data[L1_OUT] = {0};
 static size_t bias0Dims[BIAS_NDIM_0] = {L1_OUT};
 
-static float weight1Data[NUM_CLASSES*L1_OUT] = {0};
+static float weight1Data[NUM_CLASSES * L1_OUT] = {0};
 static size_t weight1Dims[WEIGHT_NDIM_1] = {NUM_CLASSES, L1_OUT};
 
 static float bias1Data[NUM_CLASSES] = {0};
 static size_t bias1Dims[BIAS_NDIM_1] = {NUM_CLASSES};
 
-static parameter_t *buildParam(distributionType_t dist, quantization_t *q, float *data, size_t *dims, size_t ndim) {
+static parameter_t *buildParam(quantization_t *q, float *data, size_t *dims, size_t ndim) {
     size_t *order = reserveMemory(ndim * sizeof(size_t));
     size_t *orderFloat = reserveMemory(ndim * sizeof(size_t));
     size_t *dimensionsFloat = reserveMemory(ndim * sizeof(size_t));
 
-    if( order == NULL || orderFloat == NULL || dimensionsFloat == NULL){
+    if (order == NULL || orderFloat == NULL || dimensionsFloat == NULL) {
         PRINT_ERROR("Memory Allocation Failed");
         exit(1);
     }
@@ -212,7 +206,7 @@ static parameter_t *buildParam(distributionType_t dist, quantization_t *q, float
 
     shape_t *shape = reserveMemory(sizeof(shape_t));
     shape_t *shapeFloat = reserveMemory(sizeof(shape_t));
-    if( shape == NULL || shapeFloat == NULL){
+    if (shape == NULL || shapeFloat == NULL) {
         PRINT_ERROR("Memory Allocation Failed");
         exit(1);
     }
@@ -227,70 +221,79 @@ static parameter_t *buildParam(distributionType_t dist, quantization_t *q, float
 
     quantization_t *floatq = quantizationInitFloat();
     tensor_t *floatTensor = initTensor(shapeFloat, floatq, NULL);
-    initDistribution(floatTensor, &dist);
 
     tensor_t *p = initTensor(shape, q, NULL);
     convertTensor(floatTensor, p);
     freeTensor(floatTensor);
-    printf("alles in ordnung\n");
     tensor_t *g = gradInitFloat(p, NULL);
     return parameterInit(p, g);
 }
 
-
-static void buildModel(layer_t **model) {
+static void buildModel(layer_t **model, uint8_t delta_reduction, roundingMode_t roundingMode,
+                       deltaStatus_t deltaStatus) {
     uint8_t qBits = 16;
-    roundingMode_t roundingMode = ROUNDING_MODE;
-    uint8_t deltabits = qBits - 2;
-    quantization_t *q0 = quantizationInitSymInt32(roundingMode);
+    uint8_t deltabits = qBits - delta_reduction;
+
     quantization_t *q1 = quantizationInitSymInt32(roundingMode);
     quantization_t *q2 = quantizationInitSymInt32(roundingMode);
     quantization_t *q3 = quantizationInitSymInt32(roundingMode);
-    quantization_t *q4 = quantizationInitSymInt32(roundingMode);
     quantization_t *q5 = quantizationInitSymInt32(roundingMode);
-    quantization_t *q6 = quantizationInitSymInt32(roundingMode);
     quantization_t *q7 = quantizationInitSymInt32(roundingMode);
     quantization_t *q8 = quantizationInitSymInt32(roundingMode);
     quantization_t *q9 = quantizationInitSymInt32(roundingMode);
-    quantization_t *q10 = quantizationInitSymInt32(roundingMode);
     quantization_t *q11 = quantizationInitSymInt32(roundingMode);
 
-    quantization_t *dq1 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
-    quantization_t *dq2 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
-    quantization_t *dq3 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
-    quantization_t *dq4 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
+    quantization_t *q0;
+    quantization_t *q4;
+    quantization_t *q6;
+    quantization_t *q10;
+    quantization_t *q12;
+    quantization_t *q13;
+    quantization_t *q14;
+    quantization_t *q15;
 
-    quantization_t *q12 = quantizationInitSymInt32(roundingMode);
-    quantization_t *q13 = quantizationInitSymInt32(roundingMode);
-    quantization_t *q14 = quantizationInitSymInt32(roundingMode);
-    quantization_t *q15 = quantizationInitSymInt32(roundingMode);
-
+    if (deltaStatus == WITHOUT_DELTAS) {
+        q0 = quantizationInitSymInt32(roundingMode);
+        q4 = quantizationInitSymInt32(roundingMode);
+        q6 = quantizationInitSymInt32(roundingMode);
+        q10 = quantizationInitSymInt32(roundingMode);
+        q12 = quantizationInitSymInt32(roundingMode);
+        q13 = quantizationInitSymInt32(roundingMode);
+        q14 = quantizationInitSymInt32(roundingMode);
+        q15 = quantizationInitSymInt32(roundingMode);
+    } else if (deltaStatus == WITH_DELTAS) {
+        q0 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
+        q4 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
+        q6 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
+        q10 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
+        q12 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
+        q13 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
+        q14 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
+        q15 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
+    }
 
     // 128 -> 1152
     model[0] = flattenLayerInit();
 
     // Linear 128→32
-    /* parameter_t *weight0 = buildParam(XAVIER_UNIFORM, dq1, weight0Data, weight0Dims, WEIGHT_NDIM_0);
-    parameter_t *bias0 = buildParam(ZEROS, dq2, bias0Data, bias0Dims, BIAS_NDIM_0);
-*/
-    parameter_t *weight0 = buildParam(XAVIER_UNIFORM, q14, weight0Data, weight0Dims, WEIGHT_NDIM_0);
-    parameter_t *bias0 = buildParam(ZEROS, q15, bias0Data, bias0Dims, BIAS_NDIM_0);
+    parameter_t *weight0 = buildParam(q14, weight0Data, weight0Dims, WEIGHT_NDIM_0);
+    parameter_t *bias0 = buildParam(q15, bias0Data, bias0Dims, BIAS_NDIM_0);
     model[1] = linearLayerInitLegacy(weight0, bias0, q0, q1, q2, q3);
 
     // ReLU
     model[2] = reluLayerInitLegacy(q4, q5);
     // Linear 32→6
-    /* parameter_t *weight1 = buildParam(XAVIER_UNIFORM, dq3, weight1Data, weight1Dims, WEIGHT_NDIM_1);
-    parameter_t *bias1 = buildParam(ZEROS, dq4, bias1Data, bias1Dims, BIAS_NDIM_1);
+    /* parameter_t *weight1 = buildParam(XAVIER_UNIFORM, dq3, weight1Data, weight1Dims,
+    WEIGHT_NDIM_1); parameter_t *bias1 = buildParam(ZEROS, dq4, bias1Data, bias1Dims, BIAS_NDIM_1);
     */
-    parameter_t *weight1 = buildParam(XAVIER_UNIFORM, q12, weight1Data, weight1Dims, WEIGHT_NDIM_1);
-    parameter_t *bias1 = buildParam(ZEROS, q13, bias1Data, bias1Dims, BIAS_NDIM_1);
+    parameter_t *weight1 = buildParam(q12, weight1Data, weight1Dims, WEIGHT_NDIM_1);
+    parameter_t *bias1 = buildParam(q13, bias1Data, bias1Dims, BIAS_NDIM_1);
 
     model[3] = linearLayerInitLegacy(weight1, bias1, q6, q7, q8, q9);
+
     // Softmax
     model[4] = softmaxLayerInitLegacy(q10, q11);
 }
-
 
 /* ------------------------------------------------------------------------- */
 /* Per-epoch JSON log writer + epoch callback.                               */
@@ -334,34 +337,32 @@ static int ensureDir(const char *p) {
     return 1;
 }
 
-int main(void) {
-    if (ensureDir("examples/har_classifier/logs") != 0) {
-        return 1;
-    }
-    if (ensureDir("examples/har_classifier/outputs") != 0) {
-        return 1;
-    }
-
-    initDataSets();
-
-    dataLoader_t *trainLoader = dataLoaderInit(getTrainSample, getTrainSize, BATCH, NULL, NULL,
-                                               /*shuffle*/ true, /*shuffleSeed*/ SHUFFLE_SEED,
-                                               /*dropLast*/ true);
-    dataLoader_t *valLoader = dataLoaderInit(getValSample, getValSize, 1, NULL, NULL,
-                                             /*shuffle*/ false, /*shuffleSeed*/ 0,
-                                             /*dropLast*/ true);
-    dataLoader_t *testLoader = dataLoaderInit(getTestSample, getTestSize, 1, NULL, NULL,
-                                              /*shuffle*/ false, /*shuffleSeed*/ 0,
-                                              /*dropLast*/ true);
-
+int runExperiment(dataLoader_t *trainLoader, dataLoader_t *valLoader, dataLoader_t *testLoader,
+                  int trial_number, uint8_t delta_reduction, double learning_rate, double momentum,
+                  uint8_t rounding_mode, int epochs, int batch, deltaStatus_t deltaStatus) {
     layer_t *model[MODEL_SIZE];
-    printf("main: start buildModel\n");
-    buildModel(model);
-    printf("main: start sgdMCreateOptim\n");
-    optimizer_t *sgd =
-        sgdMCreateOptim(LEARNING_RATE, MOMENTUM, /*weightDecay*/ 0.0f, model, MODEL_SIZE, SYM_INT32);
+    buildModel(model, delta_reduction, rounding_mode, deltaStatus);
+    optimizer_t *sgd = sgdMCreateOptim(learning_rate, momentum, /*weightDecay*/ 0.0f, model,
+                                       MODEL_SIZE, SYM_INT32);
 
-    g_log_file = fopen("examples/har_classifier/logs/c.json", "w");
+    const char *prefix;
+    if (deltaStatus == WITHOUT_DELTAS) {
+        prefix = "examples/har_classifier/logs/without_deltas/trial";
+    } else if (deltaStatus == WITH_DELTAS) {
+        prefix = "examples/har_classifier/logs/with_deltas/trial";
+    }
+
+    int len = snprintf(NULL, 0, "%s_%d_.json", prefix, trial_number);
+
+    char *filename = malloc(len + 1);
+    if (filename == NULL) {
+        return 1;
+    }
+
+    snprintf(filename, len + 1, "%s_%d.json", prefix, trial_number);
+
+    g_log_file = fopen(filename, "w");
+    free(filename);
     if (!g_log_file) {
         fprintf(stderr, "ERROR: cannot open log file for writing\n");
         return 1;
@@ -369,22 +370,21 @@ int main(void) {
     fprintf(g_log_file,
             "{\n"
             "  \"impl\": \"c\",\n"
-            "  \"example\": \"har_classifier\",\n"
+            "  \"example\": \"bin_classifier_trial_number%d\",\n"
             "  \"config\": {\"epochs\": %d, \"batch\": %d, \"lr\": %.6f, "
-            "\"momentum\": %.6f, \"seed\": %d, \"shuffle_seed\": %d},\n"
+            "\"momentum\": %.6f, \"seed\": %d, \"shuffle_seed\": %d, \"rounding_mode\": %d},\n"
             "  \"epochs\": [\n",
-            EPOCHS, BATCH, (double)LEARNING_RATE, (double)MOMENTUM, SEED, SHUFFLE_SEED);
+            trial_number, epochs, batch, (double)learning_rate, (double)momentum, SEED,
+            SHUFFLE_SEED);
     fflush(g_log_file);
 
     clock_gettime(CLOCK_MONOTONIC, &g_epoch_t0);
-    printf("main: start trainingRun\n");
     trainingRunResult_t result = trainingRun(
         model, MODEL_SIZE,
         (lossConfig_t){
             .funcType = CROSS_ENTROPY, .backwardReduction = REDUCTION_MEAN, .classWeights = NULL},
-        trainLoader, valLoader, sgd, EPOCHS, calculateGradsSequential, inferenceWithLoss,
+        trainLoader, valLoader, sgd, epochs, calculateGradsSequential, inferenceWithLoss,
         epochCallback);
-    printf("main: trainingRun done\n");
     (void)result;
 
     epochStats_t testStats = evaluationEpochWithMetrics(
@@ -428,15 +428,77 @@ int main(void) {
         freeSample(s);
     }
 
+    const char *npy_prefix;
+    if (deltaStatus == WITHOUT_DELTAS) {
+        prefix = "examples/har_classifier/outputs/without_deltas/c_predictions";
+    } else if (deltaStatus == WITH_DELTAS) {
+        prefix = "examples/har_classifier/outputs/with_deltas/c_predictions";
+    }
+
+    int npy_len = snprintf(NULL, 0, "%s_%d.npy", prefix, trial_number);
+
+    char *npy_filename = malloc(len + 1);
+    if (npy_filename == NULL) {
+        return 1;
+    }
+
+    snprintf(npy_filename, len + 1, "%s_%d.npy", prefix, trial_number);
+
     size_t outShape[] = {numTest};
     int status = 0;
-    int rc = npyWriteInt32("examples/har_classifier/outputs/c_predictions.npy", predictions,
-                           outShape, 1);
+    int rc = npyWriteInt32(npy_filename, predictions, outShape, 1);
     if (rc != 0) {
         fprintf(stderr, "ERROR: npyWriteInt32 failed (rc=%d)\n", rc);
         status = 1;
     }
     free(predictions);
+    free(npy_filename);
+
+    return status;
+}
+
+int main(int argc, char *argv[]) {
+    if (ensureDir("examples/har_classifier/logs/without_deltas") != 0) {
+        return 1;
+    }
+    if (ensureDir("examples/har_classifier/outputs/without_deltas") != 0) {
+        return 1;
+    }
+    if (ensureDir("examples/har_classifier/logs/with_deltas") != 0) {
+        return 1;
+    }
+    if (ensureDir("examples/har_classifier/outputs/with_deltas") != 0) {
+        return 1;
+    }
+
+    int trial_number = atof(argv[1]);
+    uint8_t delta_reduction = atoi(argv[2]);
+    double learning_rate = atof(argv[3]);
+    double momentum = atof(argv[4]);
+    uint8_t rounding_mode = atof(argv[5]);
+    int epochs = atof(argv[6]);
+    int batch = atof(argv[7]);
+
+    initDataSets();
+
+    dataLoader_t *trainLoader = dataLoaderInit(getTrainSample, getTrainSize, batch, NULL, NULL,
+                                               /*shuffle*/ true, /*shuffleSeed*/ SHUFFLE_SEED,
+                                               /*dropLast*/ true);
+    dataLoader_t *valLoader = dataLoaderInit(getValSample, getValSize, 1, NULL, NULL,
+                                             /*shuffle*/ false, /*shuffleSeed*/ 0,
+                                             /*dropLast*/ true);
+    dataLoader_t *testLoader = dataLoaderInit(getTestSample, getTestSize, 1, NULL, NULL,
+                                              /*shuffle*/ false, /*shuffleSeed*/ 0,
+                                              /*dropLast*/ true);
+
+    int status =
+        runExperiment(trainLoader, valLoader, testLoader, trial_number, delta_reduction,
+                      learning_rate, momentum, rounding_mode, epochs, batch, WITHOUT_DELTAS);
+    if (status != 0) {
+        return status;
+    }
+    status = runExperiment(trainLoader, valLoader, testLoader, trial_number, delta_reduction,
+                           learning_rate, momentum, rounding_mode, epochs, batch, WITH_DELTAS);
 
     return status;
 }
