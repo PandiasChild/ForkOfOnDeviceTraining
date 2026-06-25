@@ -407,20 +407,26 @@ void convertSymInt32TensorToSymQDeltaTensor(tensor_t *inputTensor, tensor_t *out
     for (int i= 1; i < sizeOfInt32DataArray; i++){
         deltasInInt32[i] = saturatingSubstraction(dataInInt32[i-1] ,dataInInt32[i], dMin, dMax);
     }
+
     symQDeltaConfig_t *symQDeltaConfig = outputTensor->quantization->qConfig;
     symInt32QConfig_t *symInt32QConfig = inputTensor->quantization->qConfig;
+    //hier gehts vermutlich schon schief oben
     uint8_t deltasInByteArray[sizeOfUInt8TDataArray];
     writeInt32ArrayToByteArray(sizeOfInt32DataArray, deltasInInt32, deltasInByteArray);
     uint8_t compressedDeltas[sizeof(int32_t) + (sizeOfInt32DataArray-1)*symQDeltaConfig->deltabits];
     for (int i = 0; i < sizeof(int32_t); i++){
         compressedDeltas[i] = deltasInByteArray[i];
     }
+    printf("1\n");
     byteConversion(&deltasInByteArray[sizeof(int32_t)-1], 32, &compressedDeltas[sizeof(int32_t)-1], symQDeltaConfig->deltabits, sizeOfInt32DataArray-1);
     memcpy(compressedDeltas, outputTensor->data, sizeof(compressedDeltas));
-    symQDeltaConfig->scale = symInt32QConfig->scale;
+    printf("2\n");
+    symQDeltaConfig->scale = 5;//symInt32QConfig->scale;
     symQDeltaConfig->roundingMode = symInt32QConfig->roundingMode;
+    printf("3\n");
     symQDeltaConfig->qBits = symInt32QConfig->qMaxBits;
     copyDimsAndSparsityToTensor(inputTensor, outputTensor);
+    printf("4\n");
 }
 
 void convertSymQDeltaTensorToSymInt32Tensor(
@@ -477,10 +483,61 @@ void convertSymQDeltaTensorToSymInt32Tensor(
     copyDimsAndSparsityToTensor(inputTensor, outputTensor);
 }
 
-void convertFloatTensorToSymQDeltaTensor(tensor_t *inputTensor, tensor_t *outputTensor) {
-    convertFloatTensorToSymInt32Tensor(inputTensor, outputTensor);
-    convertSymInt32TensorToSymQDeltaTensor(inputTensor, outputTensor);
+void convertFloatTensorToSymQDeltaTensor(tensor_t *inputTensor, tensor_t *outputTensor){
+    symQDeltaConfig_t *outputQConfig = outputTensor->quantization->qConfig;
+
+    size_t ndim = outputTensor->shape->numberOfDimensions;
+    size_t *dims = outputTensor->shape->dimensions;
+    size_t *order = malloc(ndim * sizeof(size_t));
+    size_t *dimension = malloc(ndim * sizeof(size_t));
+    if (order == NULL || dimension == NULL) {
+        PRINT_ERROR("Memory Allocation Failed");
+        exit(1);
+    }
+    for (size_t i = 0; i < ndim; i++) {
+        order[i] = i;
+        dimension[i] = dims[i];
+    }
+
+    shape_t *shape = malloc(sizeof(shape_t));
+    if (shape == NULL) {
+        PRINT_ERROR("Memory Allocation Failed");
+        exit(1);
+    }
+
+    shape->dimensions = dimension;
+    shape->orderOfDimensions = order;
+    shape->numberOfDimensions = ndim;
+
+    quantization_t symIntQ;
+    symInt32QConfig_t symInt32QConfig;
+    initSymInt32QConfig(outputQConfig->roundingMode,&symInt32QConfig);
+    initSymInt32Quantization(&symInt32QConfig,&symIntQ);
+    tensor_t *symInt32Tensor = malloc(sizeof(tensor_t));
+    if(symInt32Tensor == NULL){
+        PRINT_ERROR("Memory Allocation Failed");
+        exit(1);
+    }
+    symInt32Tensor->shape = shape;
+    symInt32Tensor->quantization = &symIntQ;
+    symInt32Tensor->sparsity = NULL;
+
+
+
+    size_t numberOfElements = calcNumberOfElementsByShape(shape);
+    size_t bytes = calcNumberOfBytesForData(&symIntQ, numberOfElements);
+    symInt32Tensor->data = malloc(bytes);
+    if(symInt32Tensor->data == NULL){
+        PRINT_ERROR("Memory Allocation Failed");
+        exit(1);
+    }
+
+    convertFloatTensorToSymInt32Tensor(inputTensor, symInt32Tensor);
+
+    convertSymInt32TensorToSymQDeltaTensor(symInt32Tensor, outputTensor);
+
 }
+
 
 
 
