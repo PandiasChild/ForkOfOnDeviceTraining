@@ -13,6 +13,26 @@
 #include "Rounding.h"
 #include "TensorConversion.h"
 
+
+char *AAquantTypeToString(qtype_t t) {
+    switch (t) {
+    case INT32:
+        return "INT32";
+    case FLOAT32:
+        return "FLOAT32";
+    case SYM_INT32:
+        return "SYMINT32";
+    case SYM:
+        return "SYM";
+    case ASYM:
+        return "ASYM";
+    case DELTA:
+        return "DELTA";
+    default:
+        return "UNKNOWN";
+    }
+}
+
 void linearInitConfig(linearConfig_t *linearConfig, parameter_t *weights, parameter_t *bias,
                       quantization_t *forwardQ, quantization_t *weightGradQ,
                       quantization_t *biasGradQ, quantization_t *propLossQ) {
@@ -37,8 +57,8 @@ void linearForwardSymInt32(tensor_t *w, tensor_t *b, tensor_t *input, tensor_t *
 }
 
 void linearForward(layer_t *linearLayer, tensor_t *input, tensor_t *output) {
-    linearConfig_t *linearConfig = linearLayer->config->linear;
 
+    linearConfig_t *linearConfig = linearLayer->config->linear;
     tensor_t *weights = getParamFromParameter(linearConfig->weights);
     tensor_t *bias = getParamFromParameter(linearConfig->bias);
 
@@ -47,9 +67,45 @@ void linearForward(layer_t *linearLayer, tensor_t *input, tensor_t *output) {
         linearForwardFloat(weights, bias, input, output);
         break;
     case SYM_INT32:
+
+        tensor_t symInt32Weights;
+        quantization_t symInt32QuantizationWeights;
+        symInt32QConfig_t symInt32QConfigWeights;
+        if (weights->quantization->type == DELTA){
+
+            symInt32Weights.shape = weights->shape;
+            symInt32Weights.sparsity = weights->sparsity;
+            symInt32Weights.quantization = &symInt32QuantizationWeights;
+            symInt32QuantizationWeights.type = SYM_INT32;
+            symInt32QuantizationWeights.qConfig = &symInt32QConfigWeights;
+            convertTensor(weights, &symInt32Weights);
+            weights = &symInt32Weights;
+        }
+        tensor_t symInt32Bias;
+        quantization_t symInt32QuantizationBias;
+        symInt32QConfig_t symInt32QConfigBias;
+        if (bias->quantization->type == DELTA){
+
+            symInt32Bias.shape = bias->shape;
+            symInt32Bias.sparsity = bias->sparsity;
+            symInt32Bias.quantization = &symInt32QuantizationBias;
+            symInt32QuantizationBias.type = SYM_INT32;
+            symInt32QuantizationBias.qConfig = &symInt32QConfigBias;
+
+            convertTensor(bias, &symInt32Bias);
+            bias = &symInt32Bias;
+        }
+        if(weights == NULL){
+
+        }
+        if(bias == NULL){
+
+        }
+
         linearForwardSymInt32(weights, bias, input, output);
         break;
     default:
+        printf(AAquantTypeToString(linearConfig->forwardQ->type));
         PRINT_ERROR("Unknown QType!");
         exit(1);
     }

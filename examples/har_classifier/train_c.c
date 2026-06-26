@@ -252,6 +252,8 @@ static layer_t *buildAvgPool1dLayer(size_t kSize, size_t stride) {
     return layer;
 }
 
+//hier model
+// 1x linear + softmax und dann trainieren lassen
 static void buildModel(layer_t **model) {
     quantization_t *q1 = quantizationInitFloat();
     quantization_t *q2 = quantizationInitFloat();

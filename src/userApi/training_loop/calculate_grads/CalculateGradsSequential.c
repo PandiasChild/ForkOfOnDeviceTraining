@@ -39,6 +39,7 @@ trainingStats_t *calculateGradsSequential(layer_t **model, size_t modelSize,
     tensor_t *layerOutputs[modelSize + 1];
     layerOutputs[0] = input;
     setDropoutLayersTraining(model, modelSize, true);
+
     initLayerOutputs(layerOutputs, model, modelSize);
 
     // Forward pass
@@ -46,7 +47,9 @@ trainingStats_t *calculateGradsSequential(layer_t **model, size_t modelSize,
         layer_t *currentLayer = model[i];
         layerType_t currentLayerType = currentLayer->type;
         forwardFn_t forward = layerFunctions[currentLayerType].forward;
+
         forward(currentLayer, layerOutputs[i], layerOutputs[i + 1]);
+
     }
 
     trainingStats_t *trainingStats = initTrainingStats(layerOutputs[modelSize]);
@@ -148,6 +151,10 @@ static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t si
         size_t *dims = reserveMemory(numberOfDims * sizeof(size_t));
         size_t *order = reserveMemory(numberOfDims * sizeof(size_t));
         shape_t *outShape = reserveMemory(sizeof(shape_t));
+        if( dims == NULL || order == NULL || outShape == NULL){
+            PRINT_ERROR("Memory Allocation Failed");
+            exit(1);
+        }
 
         outShape->dimensions = dims;
         outShape->numberOfDimensions = numberOfDims;
@@ -157,9 +164,13 @@ static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t si
 
         size_t numberOfValues = calcNumberOfElementsByShape(outShape);
         size_t sizeData = calcNumberOfBytesForData(currentQ, numberOfValues);
-        uint8_t *data = reserveMemory(sizeData);
 
+        uint8_t *data = reserveMemory(sizeData);
         quantization_t *q = reserveMemory(sizeof(quantization_t));
+        if( data == NULL || q == NULL){
+            PRINT_ERROR("Memory Allocation Failed");
+            exit(1);
+        }
         switch (currentQ->type) {
         case FLOAT32:
             initFloat32Quantization(q);
@@ -168,8 +179,23 @@ static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t si
             q->type = SYM_INT32;
             symInt32QConfig_t *currentQC = currentQ->qConfig;
             symInt32QConfig_t *qC = reserveMemory(sizeof(symInt32QConfig_t));
+	    if(qC == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	    }
             initSymInt32QConfig(currentQC->roundingMode, qC);
             initSymInt32Quantization(qC, q);
+            break;
+        case DELTA:
+            q->type = DELTA;
+            symQDeltaConfig_t *currentQConfig = currentQ->qConfig;
+            symQDeltaConfig_t *qConfig = reserveMemory(sizeof(symQDeltaConfig_t));
+            if(qConfig == NULL){
+                PRINT_ERROR("Memory Allocation Failed");
+                exit(1);
+            }
+            initSymQDeltaConfig(currentQConfig->qBits, currentQConfig->roundingMode, currentQConfig->deltabits, qConfig);
+            initSymQDeltaQuantization(qConfig, q);
             break;
         default:
             PRINT_ERROR("Unknown QType!");
@@ -177,6 +203,10 @@ static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t si
         }
 
         tensor_t *tensor = reserveMemory(sizeof(tensor_t));
+	if(tensor == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
         tensor->data = data;
         tensor->quantization = q;
         tensor->shape = outShape;
@@ -184,6 +214,10 @@ static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t si
         tensor->sparsity = NULL;
         if (layerOutputs[i]->sparsity != NULL) {
             sparsity_t *sparsity = reserveMemory(sizeof(sparsity_t));
+	if(sparsity == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
             tensor->sparsity = sparsity;
         }
 
@@ -204,7 +238,10 @@ static void initGradTensor(tensor_t *grad, tensor_t *layerOutput) {
     size_t *dims = reserveMemory(currentShape->numberOfDimensions * sizeof(size_t));
     size_t *order = reserveMemory(currentShape->numberOfDimensions * sizeof(size_t));
     shape_t *inShape = reserveMemory(sizeof(shape_t));
-
+    if( dims == NULL || order == NULL || inShape == NULL){
+        PRINT_ERROR("Memory Allocation Failed");
+        exit(1);
+    }
     inShape->dimensions = dims;
     inShape->numberOfDimensions = currentShape->numberOfDimensions;
     inShape->orderOfDimensions = order;
@@ -218,9 +255,13 @@ static void initGradTensor(tensor_t *grad, tensor_t *layerOutput) {
 
     size_t numberOfValues = calcNumberOfElementsByShape(currentShape);
     size_t sizeData = calcNumberOfBytesForData(currentQ, numberOfValues);
-    uint8_t *data = reserveMemory(sizeData);
 
+    uint8_t *data = reserveMemory(sizeData);
     quantization_t *q = reserveMemory(sizeof(quantization_t));
+    if( data == NULL || q == NULL){
+        PRINT_ERROR("Memory Allocation Failed");
+        exit(1);
+    }
     switch (currentQ->type) {
     case FLOAT32:
         initFloat32Quantization(q);
@@ -228,6 +269,10 @@ static void initGradTensor(tensor_t *grad, tensor_t *layerOutput) {
     case SYM_INT32:
         symInt32QConfig_t *currentQC = currentQ->qConfig;
         symInt32QConfig_t *qC = reserveMemory(sizeof(symInt32QConfig_t));
+	if(qC == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
         initSymInt32QConfig(currentQC->roundingMode, qC);
         initSymInt32Quantization(qC, q);
         break;
@@ -243,6 +288,10 @@ static void initGradTensor(tensor_t *grad, tensor_t *layerOutput) {
     grad->sparsity = NULL;
     if (layerOutput->sparsity != NULL) {
         sparsity_t *sparsity = reserveMemory(sizeof(sparsity_t));
+	if(sparsity == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
         grad->sparsity = sparsity;
     }
 }
@@ -255,6 +304,10 @@ static void deInitGradTensor(tensor_t *tensor) {
 
 static trainingStats_t *initTrainingStats(tensor_t *output) {
     trainingStats_t *trainingStats = reserveMemory(sizeof(trainingStats_t));
+	if(trainingStats == NULL){
+		PRINT_ERROR("Memory Allocation Failed");
+		exit(1);
+	}
 
     tensor_t *o = getTensorLike(output);
     trainingStats->output = o;

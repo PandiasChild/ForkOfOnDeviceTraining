@@ -8,6 +8,8 @@
 #include "Softmax.h"
 #include "SoftmaxApi.h"
 #include "StorageApi.h"
+#include <stdlib.h>
+#include "Common.h"
 
 layer_t *softmaxLayerInitLegacy(quantization_t *forwardQ, quantization_t *backwardQ) {
     layer_t *softmaxLayer = reserveMemory(sizeof(layer_t));
@@ -16,6 +18,10 @@ layer_t *softmaxLayerInitLegacy(quantization_t *forwardQ, quantization_t *backwa
 
     layerConfig_t *layerConfig = reserveMemory(sizeof(layerConfig_t));
     softmaxConfig_t *softmaxConfig = reserveMemory(sizeof(softmaxConfig_t));
+    if( layerConfig == NULL || softmaxConfig == NULL){
+        PRINT_ERROR("Memory Allocation Failed");
+        exit(1);
+    }
     layerConfig->softmax = softmaxConfig;
 
     softmaxConfig->forwardQ = forwardQ;

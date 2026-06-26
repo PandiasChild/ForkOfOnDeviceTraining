@@ -881,6 +881,226 @@ void testRequantToScaleSharedBufferAliasMatchesGold() {
     TEST_ASSERT_EQUAL_FLOAT(targetScale_requant_f6ToScaleSat, outQc.scale);
 }
 
+void testConversionSymQDeltaToSymInt32_basic() {
+    size_t numValues = 6;
+
+    size_t dims[] = {numValues};
+    size_t numberOfDims = 1;
+    size_t orderOfDims[] = {0};
+    shape_t shape = {
+        .dimensions = dims,
+        .numberOfDimensions = numberOfDims,
+        .orderOfDimensions = orderOfDims
+    };
+
+    // Simulierte SymQDelta-Konfiguration
+    symQDeltaConfig_t symQDeltaConfig;
+    symQDeltaConfig.deltabits = 8;
+    symQDeltaConfig.scale = 0.2f;
+    symQDeltaConfig.roundingMode = 0;
+    symQDeltaConfig.qBits = 8;
+
+    quantization_t qDeltaQ;
+    initSymQDeltaQuantization(&symQDeltaConfig, &qDeltaQ);
+
+    // Input: SymQDelta Tensor (Bytes repräsentieren Delta-komprimierte Werte)
+    uint8_t inputData[] = {
+        0x00, 0x00, 0x00, 0x10, // start value (16)
+        0x00, 0x00, 0x00, 0x01, // delta
+        0x00, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x01
+    };
+
+    tensor_t inputTensor;
+    setTensorValues(&inputTensor, inputData, &shape, &qDeltaQ, NULL);
+
+    quantization_t symIntQ;
+    initSymInt32Quantization(&(symInt32QConfig_t){0}, &symIntQ);
+
+    int32_t outputData[numValues];
+    tensor_t outputTensor;
+    setTensorValues(&outputTensor, (uint8_t *)outputData, &shape, &symIntQ, NULL);
+
+    convertTensor(&inputTensor, &outputTensor);
+
+    int32_t actual[numValues];
+    readBytesAsInt32Array(numValues, outputTensor.data, actual);
+
+    int32_t expected[] = {16, 15, 14, 13, 12, 11};
+
+    TEST_ASSERT_EQUAL_INT32_ARRAY(expected, actual, numValues);
+}
+
+void testConversionSymInt32ToSymQDelta_basic() {
+    size_t numValues = 6;
+
+    size_t dims[] = {numValues};
+    size_t numberOfDims = 1;
+    size_t orderOfDims[] = {0};
+    shape_t shape = {
+        .dimensions = dims,
+        .numberOfDimensions = numberOfDims,
+        .orderOfDimensions = orderOfDims
+    };
+
+    // Input SymInt32
+    symInt32QConfig_t symInt32QConfig;
+    initSymInt32QConfig(HALF_AWAY, &symInt32QConfig);
+    symInt32QConfig.scale = 1.f;
+
+    quantization_t symIntQ;
+    initSymInt32Quantization(&symInt32QConfig, &symIntQ);
+
+    int32_t intData[] = {16, 15, 14, 13, 12, 11};
+
+    tensor_t inputTensor;
+    setTensorValues(&inputTensor, (uint8_t *)intData, &shape, &symIntQ, NULL);
+
+    // Output SymQDelta
+    symQDeltaConfig_t symQDeltaConfig;
+    symQDeltaConfig.deltabits = 8;
+
+    quantization_t qDeltaQ;
+    initSymQDeltaQuantization(&symQDeltaConfig, &qDeltaQ);
+
+    uint8_t outputData[sizeof(int32_t) * numValues];
+    tensor_t outputTensor;
+    setTensorValues(&outputTensor, outputData, &shape, &qDeltaQ, NULL);
+
+    convertTensor(&inputTensor, &outputTensor);
+
+    // decode result back to int32 for validation
+    int32_t decoded[numValues];
+    readBytesAsInt32Array(numValues, outputTensor.data, decoded);
+
+    // expected deltas: [16, 1, 1, 1, 1, 1]
+    int32_t expected[] = {16, 1, 1, 1, 1, 1};
+
+    TEST_ASSERT_EQUAL_INT32_ARRAY(expected, decoded, numValues);
+
+    // check config propagation
+    symQDeltaConfig_t *cfg = outputTensor.quantization->qConfig;
+    TEST_ASSERT_EQUAL_FLOAT(symInt32QConfig.scale, cfg->scale);
+    TEST_ASSERT_EQUAL_INT32(symInt32QConfig.roundingMode, cfg->roundingMode);
+    TEST_ASSERT_EQUAL_INT32(symInt32QConfig.qMaxBits, cfg->qBits);
+}
+
+void testConversionSymQDelta_roundtrip() {
+    size_t numValues = 6;
+
+    size_t dims[] = {numValues};
+    size_t numberOfDims = 1;
+    size_t orderOfDims[] = {0};
+    shape_t shape = {
+        .dimensions = dims,
+        .numberOfDimensions = numberOfDims,
+        .orderOfDimensions = orderOfDims
+    };
+
+    symQDeltaConfig_t qDeltaConfig;
+    qDeltaConfig.deltabits = 8;
+    qDeltaConfig.scale = 0.25f;
+    qDeltaConfig.roundingMode = 1;
+    qDeltaConfig.qBits = 8;
+
+    quantization_t qDeltaQ;
+    initSymQDeltaQuantization(&qDeltaConfig, &qDeltaQ);
+
+    uint8_t deltaData[] = {
+        0x00,0x00,0x00,0x20,
+        0x00,0x00,0x00,0x01,
+        0x00,0x00,0x00,0x01,
+        0x00,0x00,0x00,0x01,
+        0x00,0x00,0x00,0x01,
+        0x00,0x00,0x00,0x01
+    };
+
+    tensor_t deltaTensor;
+    setTensorValues(&deltaTensor, deltaData, &shape, &qDeltaQ, NULL);
+
+    // target SymInt32
+    symInt32QConfig_t symInt32QConfig;
+    initSymInt32QConfig(HALF_AWAY, &symInt32QConfig);
+
+    quantization_t symIntQ;
+    initSymInt32Quantization(&symInt32QConfig, &symIntQ);
+
+    int32_t intBuf[numValues];
+    tensor_t intTensor;
+    setTensorValues(&intTensor, (uint8_t *)intBuf, &shape, &symIntQ, NULL);
+
+    convertTensor(&deltaTensor, &intTensor);
+
+    // back conversion
+    symQDeltaConfig_t outQDeltaConfig;
+    outQDeltaConfig.deltabits = 8;
+
+    quantization_t outQDeltaQ;
+    initSymQDeltaQuantization(&outQDeltaConfig, &outQDeltaQ);
+
+    uint8_t outDeltaBuf[sizeof(int32_t) * numValues];
+    tensor_t outDeltaTensor;
+    setTensorValues(&outDeltaTensor, outDeltaBuf, &shape, &outQDeltaQ, NULL);
+
+    convertTensor(&intTensor, &outDeltaTensor);
+
+    int32_t final[numValues];
+    readBytesAsInt32Array(numValues, outDeltaTensor.data, final);
+
+    int32_t expected[] = {32, 1, 1, 1, 1, 1};
+
+    TEST_ASSERT_EQUAL_INT32_ARRAY(expected, final, numValues);
+}
+
+void testSymInt32ToSymQDelta_positiveOverflowSaturation() {
+    size_t numValues = 4;
+
+    size_t dims[] = {numValues};
+    size_t numberOfDims = 1;
+    size_t orderOfDims[] = {0};
+
+    shape_t shape = {
+        .dimensions = dims,
+        .numberOfDimensions = numberOfDims,
+        .orderOfDimensions = orderOfDims
+    };
+
+    symInt32QConfig_t cfg;
+    initSymInt32QConfig(HALF_AWAY, &cfg);
+    cfg.scale = 1.f;
+
+    quantization_t qInt;
+    initSymInt32Quantization(&cfg, &qInt);
+
+    int32_t inputData[] = {1000, 2000, 3000, 4000};
+
+    tensor_t input;
+    setTensorValues(&input, (uint8_t *)inputData, &shape, &qInt, NULL);
+
+    symQDeltaConfig_t outCfg;
+    outCfg.deltabits = 2; // VERY SMALL -> forces saturation [-4..3]
+
+    quantization_t qDelta;
+    initSymQDeltaQuantization(&outCfg, &qDelta);
+
+    uint8_t outBuf[sizeof(int32_t) * numValues];
+    tensor_t output;
+    setTensorValues(&output, outBuf, &shape, &qDelta, NULL);
+
+    convertTensor(&input, &output);
+
+    int32_t decoded[4];
+    readBytesAsInt32Array(4, output.data, decoded);
+
+    //TODO: kommentar bearbeiten
+    // erwartung: erste = 1000, danach stark begrenzt
+    // (exakte Werte hängen von saturatingSubstraction ab)
+    TEST_ASSERT_TRUE(decoded[1] <= 3);
+    TEST_ASSERT_TRUE(decoded[1] >= -4);
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -916,5 +1136,8 @@ int main(void) {
     RUN_TEST(testConversionSymInt32SameTypeCopyPropagatesScale);
     RUN_TEST(testQuantTypeToStringBool);
 
+    RUN_TEST(testSymInt32ToSymQDelta_positiveOverflowSaturation);
+    RUN_TEST(testConversionSymQDelta_roundtrip);
+    RUN_TEST(testConversionSymInt32ToSymQDelta_basic);
     return UNITY_END();
 }

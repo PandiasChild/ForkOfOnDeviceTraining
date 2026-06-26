@@ -7,9 +7,11 @@
 #include "Flatten.h"
 
 void flattenForward(layer_t *flattenLayer, tensor_t *input, tensor_t *output) {
+
     (void)flattenLayer;
 
     size_t numberOfElements = calcNumberOfElementsByTensor(input);
+
     size_t numberOfBytes = calcNumberOfBytesForData(input->quantization, numberOfElements);
     memcpy(output->data, input->data, numberOfBytes);
 
@@ -25,8 +27,13 @@ void flattenBackward(layer_t *flattenLayer, tensor_t *forwardInput, tensor_t *lo
     (void)flattenLayer;
     (void)forwardInput;
 
-    size_t numberOfElements = calcNumberOfElementsByTensor(loss);
-    size_t numberOfBytes = calcNumberOfBytesForData(loss->quantization, numberOfElements);
+    size_t numberOfLossElements = calcNumberOfElementsByTensor(loss);
+    size_t numberOfPropLossElements = calcNumberOfElementsByTensor(propLoss);
+    if (numberOfLossElements != numberOfPropLossElements) {
+        PRINT_DEBUG("FLATTEN ERROR: shape mismatch\n");
+        return;
+    }
+    size_t numberOfBytes = calcNumberOfBytesForData(loss->quantization, numberOfLossElements);
     memcpy(propLoss->data, loss->data, numberOfBytes);
 
     if (loss->quantization->type == SYM_INT32) {

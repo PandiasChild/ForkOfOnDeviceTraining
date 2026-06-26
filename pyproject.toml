@@ -6,6 +6,7 @@ requires-python = ">=3.12"
 dependencies = [
     "elasticai-creator @ git+https://github.com/es-ude/elastic-ai.creator.git@training-implementation-provider",
     "matplotlib>=3.10.9",
+    "optuna>=4.9.0",
     "torch>=2.9.1",
     "torchvision>=0.26.0",
 ]

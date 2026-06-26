@@ -32,6 +32,14 @@ void initAsymQConfig(uint8_t qBits, roundingMode_t roundingMode, asymQConfig_t *
     asymQConfig->zeroPoint = (uint16_t)0;
 }
 
+
+void initSymQDeltaConfig(uint8_t qBits, roundingMode_t roundingMode, uint8_t deltabits, symQDeltaConfig_t *symQDeltaConfig) {
+    symQDeltaConfig-> qBits = qBits;
+    symQDeltaConfig->roundingMode = roundingMode;
+    symQDeltaConfig->scale = 1.f;
+    symQDeltaConfig-> deltabits = deltabits;
+}
+
 void initInt32Quantization(quantization_t *quantization) {
     quantization->type = INT32;
     quantization->qConfig = NULL;
@@ -60,4 +68,9 @@ void initSymQuantization(symQConfig_t *symQConfig, quantization_t *quantization)
 void initAsymQuantization(asymQConfig_t *asymQConfig, quantization_t *quantization) {
     quantization->type = ASYM;
     quantization->qConfig = asymQConfig;
+}
+
+void initSymQDeltaQuantization(symQDeltaConfig_t *symQDeltaConfig, quantization_t *quantization) {
+    quantization->type = DELTA;
+    quantization->qConfig = symQDeltaConfig;
 }

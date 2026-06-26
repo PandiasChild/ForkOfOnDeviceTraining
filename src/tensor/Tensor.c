@@ -44,7 +44,11 @@ size_t calcBytesPerElement(quantization_t *quantization) {
     case ASYM:
         asymQConfig_t *asymQConfig = quantization->qConfig;
         uint32_t qBits = asymQConfig->qBits;
-        return ceil((float)qBits / (float)8);
+        return (size_t) ceilf((float)qBits / 8.0f);
+    case DELTA: {
+        symQDeltaConfig_t *symQDeltaConfig = quantization->qConfig;
+        return (size_t)ceilf((float)symQDeltaConfig->deltabits / 8.0f);
+    }
     case BOOL:
         return 1;
     default:
@@ -70,6 +74,10 @@ size_t calcBitsPerElement(quantization_t *quantization) {
         return asymQConfig->qBits;
     case BOOL:
         return 1;
+    case DELTA:
+        symQDeltaConfig_t *symQDeltaConfig = quantization->qConfig;
+        return symQDeltaConfig->deltabits;
+
     default:
         PRINT_ERROR("Unknown QType!");
         exit(1);
@@ -102,6 +110,12 @@ size_t calcNumberOfBytesForData(quantization_t *q, size_t numberOfElements) {
         return (bitsPerElement * numberOfElements + 7) / 8;
     case BOOL:
         return (numberOfElements + 7) / 8;
+    case DELTA:
+        size_t deltabits = calcBitsPerElement(q);
+        size_t sizeOfDeltas = (deltabits * (numberOfElements-1) + 7) / 8;
+        size_t sizeOfFirstElementInFullPrecision = sizeof(int32_t);
+        size_t totalNumberOfBytes = sizeOfFirstElementInFullPrecision + sizeOfDeltas;
+        return totalNumberOfBytes;
     default:
         PRINT_ERROR("Unknown QType!");
         exit(1);
@@ -338,7 +352,7 @@ void printTensor(tensor_t *t) {
         }
         break;
     case SYM_INT32:
-        symInt32QConfig_t *symQC = q->qConfig;
+        symInt32QConfig_t *symQC = (symInt32QConfig_t *)q->qConfig;
         printf("SYM_INT32 \n");
         printf("scale=%e\n", symQC->scale);
         printf("Data \n");
@@ -368,6 +382,38 @@ void printTensor(tensor_t *t) {
             }
         }
         printf("]\n");
+        break;
+    case DELTA:
+        symQDeltaConfig_t *symQDeltaConfig = t->quantization->qConfig;
+        uint8_t  deltabits = symQDeltaConfig->deltabits;
+
+        size_t totalBitAmountOfUInt8TDataArray = ((numValues-1) * deltabits) + sizeof(int32_t)*8;
+        size_t sizeOfUInt8TDataArray =  (totalBitAmountOfUInt8TDataArray + 7) / 8;
+        size_t sizeOfInt32DataArray = sizeOfUInt8TDataArray/sizeof(int32_t);
+        uint8_t *deltasInByteArray = calloc(1,sizeOfUInt8TDataArray);
+        for (int i = 0; i < sizeOfUInt8TDataArray; i++) {
+            deltasInByteArray[i] = t->data[i];
+        }
+
+        uint8_t indexOfSecondElement = sizeof(int32_t) - 1;
+        byteConversion(
+            &t->data[indexOfSecondElement],
+            deltabits,
+            &deltasInByteArray[indexOfSecondElement],
+            32,
+            sizeOfInt32DataArray - 1);
+
+        readBytesAsInt32Array(
+            sizeOfInt32DataArray,
+            deltasInByteArray,
+            data);
+        free(deltasInByteArray);
+        printf("DELTA \n");
+        printf("scale=%e\n", symQDeltaConfig->scale);
+        printf("Data \n");
+        for (size_t i = 0; i < numValues; i++) {
+            printf("%i\n", data[i]);
+        }
         break;
     default:
         printf("WTF\n");

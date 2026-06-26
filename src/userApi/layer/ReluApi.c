@@ -8,6 +8,8 @@
 #include "Relu.h"
 #include "ReluApi.h"
 #include "StorageApi.h"
+#include "stdlib.h"
+#include "Common.h"
 
 layer_t *reluLayerInitLegacy(quantization_t *forwardQ, quantization_t *backwardQ) {
     layer_t *reluLayer = reserveMemory(sizeof(layer_t));
@@ -15,8 +17,11 @@ layer_t *reluLayerInitLegacy(quantization_t *forwardQ, quantization_t *backwardQ
     reluLayer->type = RELU;
 
     layerConfig_t *reluConfig = reserveMemory(sizeof(layerConfig_t));
-
     reluConfig_t *reluCfg = reserveMemory(sizeof(reluConfig_t));
+    if( reluCfg == NULL || reluConfig == NULL){
+        PRINT_ERROR("Memory Allocation Failed");
+        exit(1);
+    }
     reluConfig->relu = reluCfg;
     reluCfg->forwardQ = forwardQ;
     reluCfg->backwardQ = backwardQ;

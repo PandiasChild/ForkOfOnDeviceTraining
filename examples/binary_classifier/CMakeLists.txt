@@ -1,11 +1,12 @@
-add_executable(train_c_binary_classifier_speech_commands train_SPEECH_COMMANDS_c.c)
-link_libraries(train_c_binary_classifier_speech_commands PRIVATE
+add_executable(train_c_binary_classifier_speech_commands train_SPEECH_COMMANDS_c_NEW.c)
+target_link_libraries(train_c_binary_classifier_speech_commands PRIVATE
         DataLoaderApi
         DataLoader
         NPYLoaderApi
         NPYLoader
 
         Layer
+        CSVHelper
 
         Conv1dApi
         Conv1d
@@ -62,9 +63,6 @@ target_link_libraries(train_c_binary_classifier PRIVATE
 
         Layer
 
-        Conv1dApi
-        Conv1d
-
         LinearApi
         Linear
 
@@ -73,9 +71,6 @@ target_link_libraries(train_c_binary_classifier PRIVATE
 
         FlattenApi
         Flatten
-
-        MaxPool1d
-        AvgPool1d
 
         QuantizationApi
         Quantization
@@ -91,10 +86,6 @@ target_link_libraries(train_c_binary_classifier PRIVATE
         Optimizer
 
         LossFunction
-        CrossEntropy
-
-        SoftmaxApi
-        Softmax
 
         Sgd
         SgdApi

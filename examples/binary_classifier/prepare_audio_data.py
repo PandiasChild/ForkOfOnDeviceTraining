@@ -24,18 +24,6 @@ def read_wav(path):
         audio /= 32768.0
     return sr, audio
 
-def _download_if_missing(archive_path: Path, extracted_dir: Path, zip_url: str) -> None:
-    RAW_DIR.mkdir(parents=True, exist_ok=True)
-
-    if not archive_path.exists():
-        print(f"downloading {zip_url}")
-        urllib.request.urlretrieve(zip_url, archive_path)
-
-    if not extracted_dir.exists():
-        print("extracting archive...")
-        import tarfile
-        with tarfile.open(archive_path, "r:gz") as tar:
-            tar.extractall(RAW_DIR, filter="data")
 
 
 def _split(X: np.ndarray, y: np.ndarray):
