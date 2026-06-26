@@ -282,44 +282,72 @@ void partlyRequantTensorToScale(tensor_t *inputTensor, tensor_t *outputTensor, s
                         roundingMode);
     }
 }
-
-void requantSymInt32Tensor(tensor_t *inputTensor, tensor_t *outputTensor) {
-    size_t numberOfElements = calcNumberOfElementsByTensor(inputTensor);
-
-    symInt32QConfig_t *inputSymInt32QC = inputTensor->quantization->qConfig;
-    symInt32QConfig_t *outputSymInt32QC = outputTensor->quantization->qConfig;
-    /* latch BEFORE writing outputSymInt32QC->scale: when called in-place
-     * (inputTensor == outputTensor) both pointers alias the same config */
-    float inScale = inputSymInt32QC->scale;
-
-    const float qMax = powf(2, (float)outputSymInt32QC->qMaxBits - 1) - 1;
-    const float qMin = -powf(2, (float)outputSymInt32QC->qMaxBits - 1);
-
+float calculateScaleForRequantization(tensor_t *inputTensor, tensor_t *outputTensor, size_t firstIndexToRequantize, size_t lastIndexToRequantize, size_t inScale, float qMax){
     int32_t *inputInt32 = (int32_t *)inputTensor->data;
-    int32_t *outputInt32 = (int32_t *)outputTensor->data;
 
     /* pass A: absmax over dequantized values — reads only (alias-safe) */
     float absMax = 0.f;
-    for (size_t i = 0; i < numberOfElements; i++) {
+    for (size_t i = firstIndexToRequantize; i <= lastIndexToRequantize; i++) {
         float dequant = fabsf((float)inputInt32[i] * inScale);
         if (dequant > absMax) {
             absMax = dequant;
         }
     }
 
-    float scale;
     if (absMax == 0.f) {
-        scale = 1.f;
-    } else {
-        scale = absMax / qMax;
+        return 1.f;
+    } return (float) absMax / qMax;
+}
+
+void partlyRequantTensor(tensor_t *inputTensor, tensor_t *outputTensor, size_t firstIndexToRequantize, size_t lastIndexToRequantize){
+    qtype_t qtype = outputTensor->quantization->type;
+    float inScale;
+    float scale;
+    float qMax;
+    float qMin;
+    roundingMode_t roundingMode;
+    int32_t *outputInt32 = (int32_t *)outputTensor->data;
+    int32_t *inputInt32 = (int32_t *)inputTensor->data;
+
+    switch (qtype) {
+    case SYM_INT32:
+        symInt32QConfig_t *outputSymInt32QC = outputTensor->quantization->qConfig;
+        qMax = powf(2, (float)outputSymInt32QC->qMaxBits - 1) - 1;
+        qMin = -powf(2, (float)outputSymInt32QC->qMaxBits - 1);
+        roundingMode = outputSymInt32QC->roundingMode;
+        symInt32QConfig_t *inputSymInt32QC = inputTensor->quantization->qConfig;
+        /* latch BEFORE writing outputSymInt32QC->scale: when called in-place
+        * (inputTensor == outputTensor) both pointers alias the same config */
+        inScale = inputSymInt32QC->scale;
+        scale = calculateScaleForRequantization(inputTensor, outputTensor, firstIndexToRequantize, lastIndexToRequantize, inScale, qMax);
+        outputSymInt32QC->scale = scale;
+        break;
+    case DELTA:
+        symQDeltaConfig_t *outputSymQDeltaConfig = outputTensor->quantization->qConfig;
+        qMax = powf(2, (float)outputSymQDeltaConfig->deltabits - 1) - 1;
+        qMin = -powf(2, (float)outputSymQDeltaConfig->deltabits - 1);
+        roundingMode = outputSymQDeltaConfig->roundingMode;
+        symQDeltaConfig_t *inputSymQDeltaConfig = inputTensor->quantization->qConfig;
+        inScale = inputSymQDeltaConfig->scale;
+        scale = calculateScaleForRequantization(inputTensor, outputTensor, firstIndexToRequantize, lastIndexToRequantize, inScale, qMax);
+        outputSymQDeltaConfig->scale = scale;
+        break;
+    default:
+        PRINT_ERROR("partlyRequantTensorToScale: quantization type not implemented");
+        exit(1);
     }
-    outputSymInt32QC->scale = scale;
 
     /* pass B: same-index read-then-write — in-place safe (int32 both sides) */
-    for (size_t i = 0; i < numberOfElements; i++) {
+    for (size_t i = firstIndexToRequantize; i <= lastIndexToRequantize; i++) {
         outputInt32[i] = roundByMode(clamp(((float)inputInt32[i] * inScale) / scale, qMin, qMax),
-                                     outputSymInt32QC->roundingMode);
+                                     roundingMode);
     }
+}
+
+
+void requantSymInt32Tensor(tensor_t *inputTensor, tensor_t *outputTensor) {
+    size_t lastIndex = calcNumberOfElementsByTensor(inputTensor)-1;
+    partlyRequantTensor(inputTensor, outputTensor, 0, lastIndex);
 }
 
 void requantSymInt32TensorToScale(tensor_t *inputTensor, tensor_t *outputTensor) {
@@ -425,7 +453,6 @@ void convertAsymTensorToSymInt32Tensor(tensor_t *inputTensor, tensor_t *outputTe
 }
 /* endregion convertAsymTensor */
 
-
 /* region unsorted */
 void convertSymInt32TensorToSymQDeltaTensor(tensor_t *inputTensor, tensor_t *outputTensor) {
     size_t numberOfElements = calcNumberOfElementsByTensor(inputTensor);
@@ -433,14 +460,16 @@ void convertSymInt32TensorToSymQDeltaTensor(tensor_t *inputTensor, tensor_t *out
     int32_t *outputData = (int32_t *)outputTensor->data;
     outputData[0] = inputData[0];
 
-    symQDeltaConfig_t *outputDeltaConfig = outputTensor->quantization->qConfig;
+    symInt32QConfig_t *inputQC = inputTensor->quantization->qConfig;
+    symQDeltaConfig_t *outputQC = outputTensor->quantization->qConfig;
+    outputQC->scale = inputQC->scale;
 
-    const float dMax = powf(2, (float)outputDeltaConfig->deltabits - 1) - 1;
-    const float dMin = -powf(2, (float)outputDeltaConfig->deltabits - 1);
+    const float qMax = powf(2, (float)inputQC->qMaxBits - 1) - 1;
+    const float qMin = -powf(2, (float)inputQC->qMaxBits - 1);
     size_t firstIndex = 1;
     size_t lastIndex = numberOfElements-1;
     for (int i= firstIndex; i <= lastIndex; i++){
-        outputData[i] = saturatingSubstraction(inputData[i] ,inputData[i-1], dMin, dMax);
+        outputData[i] = saturatingSubstraction(inputData[i] ,inputData[i-1], qMin, qMax);
     }
     partlyRequantTensorToScale(inputTensor, outputTensor, firstIndex, lastIndex);
 }
@@ -463,60 +492,32 @@ void convertSymQDeltaTensorToSymInt32Tensor(tensor_t *inputTensor, tensor_t *out
 }
 
 void convertFloatTensorToSymQDeltaTensor(tensor_t *inputTensor, tensor_t *outputTensor){
-    tensor_t *symInt32Tensor = calloc(1, sizeof(tensor_t));
-    if(symInt32Tensor == NULL){
-        PRINT_ERROR("Memory Allocation Failed");
-        exit(1);
-    }
-    size_t numberOfValues = calcNumberOfElementsByShape(inputTensor->shape);
-    uint8_t *symInt32Data = calloc(1, numberOfValues * sizeof(int32_t));
-        if(symInt32Data == NULL){
-            PRINT_ERROR("Memory Allocation Failed");
-            exit(1);
-        }
-        symInt32Tensor->data = symInt32Data;
-    //--?
-    quantization_t *symInt32Q = calloc(1, sizeof(quantization_t));
-    if(symInt32Q == NULL){
-        PRINT_ERROR("Memory Allocation Failed");
-        exit(1);
-    }
-    symInt32Tensor->quantization = symInt32Q;
-    symInt32QConfig_t *symInt32QC = calloc(1, sizeof(symInt32QConfig_t));
-    if(symInt32QC == NULL){
-            PRINT_ERROR("Memory Allocation Failed");
-            exit(1);
-    }
+   /* uint8_t numValues = 6;
+
+    float floatData[] = {1.5f, 2.9f, 3.2f, 4.5f, -1.2f, -6.7f};
+    size_t dims[] = {numValues};
+    size_t numberOfDims = 1;
+    size_t orderOfDims[] = {0};
+    shape_t shape = {
+        .dimensions = dims, .numberOfDimensions = numberOfDims, .orderOfDimensions = orderOfDims};
+
+    quantization_t floatQ;
+    initFloat32Quantization(&floatQ);
+
+    tensor_t floatTensor;
+    setTensorValues(&floatTensor, (uint8_t *)floatData, &shape, &floatQ, NULL);
+*/
     symQDeltaConfig_t *symQDeltaConfig = outputTensor->quantization->qConfig;
-    initSymInt32QConfig(symQDeltaConfig->roundingMode, symInt32QC);
-    initSymInt32Quantization(symInt32QC, symInt32Q);
-    shape_t *symInt32Shape = calloc(1, sizeof(shape_t));
-    if(symInt32Shape == NULL){
-        PRINT_ERROR("Memory Allocation Failed");
-        exit(1);
-    }
-    symInt32Tensor->shape = symInt32Shape;
-    size_t numberOfDims = inputTensor->shape->numberOfDimensions;
-
-    size_t *symInt32Dims = calloc(1, numberOfDims * sizeof(size_t));
-    memcpy(symInt32Dims, inputTensor->shape->dimensions, numberOfDims * sizeof(size_t));
-
-    size_t *symInt32Order = calloc( 1, numberOfDims * sizeof(size_t));
-    setOrderOfDimsForNewTensor(numberOfDims, symInt32Order);
-
-    setShape(symInt32Shape, symInt32Dims, numberOfDims, symInt32Order);
-    if (inputTensor->sparsity == NULL) {
-        symInt32Tensor->sparsity = NULL;}
-    else{sparsity_t *likeSparsity = calloc(1, sizeof(sparsity_t));
-        if(likeSparsity == NULL){
-            PRINT_ERROR("Memory Allocation Failed");
-            exit(1);
-        }
-        symInt32Tensor->sparsity = likeSparsity;
-    }
-    convertFloatTensorToSymInt32Tensor(inputTensor, symInt32Tensor);
-    convertSymInt32TensorToSymQDeltaTensor(symInt32Tensor, outputTensor);
-    //alles noch freen!!
+    symInt32QConfig_t symInt32QConfig;
+    initSymInt32QConfig(symQDeltaConfig->roundingMode, &symInt32QConfig);
+    quantization_t symInt32Q;
+    initSymInt32Quantization(&symInt32QConfig, &symInt32Q);
+    size_t numberOfElements = calcNumberOfElementsByTensor(inputTensor);
+    int32_t symInt32Data[numberOfElements];
+    tensor_t symInt32Tensor;
+    setTensorValues(&symInt32Tensor, (uint8_t *)symInt32Data, inputTensor->shape, &symInt32Q, NULL);
+    convertFloatTensorToSymInt32Tensor(inputTensor, &symInt32Tensor);
+    convertSymInt32TensorToSymQDeltaTensor(&symInt32Tensor, outputTensor);
 }
 
 
