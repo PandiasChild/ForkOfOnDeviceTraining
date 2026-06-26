@@ -191,27 +191,31 @@ static size_t bias1Dims[BIAS_NDIM_1] = {NUM_CLASSES};
 
 static parameter_t *buildParam(quantization_t *q, float *data, size_t *dims, size_t ndim) {
     size_t *order = reserveMemory(ndim * sizeof(size_t));
+    size_t *dimensions = reserveMemory(ndim * sizeof(size_t));
     size_t *orderFloat = reserveMemory(ndim * sizeof(size_t));
     size_t *dimensionsFloat = reserveMemory(ndim * sizeof(size_t));
 
-    if (order == NULL || orderFloat == NULL || dimensionsFloat == NULL) {
+    if (order == NULL || dimensions == NULL || orderFloat == NULL || dimensionsFloat == NULL) {
         PRINT_ERROR("Memory Allocation Failed");
         exit(1);
     }
+
     for (size_t i = 0; i < ndim; i++) {
         order[i] = i;
         orderFloat[i] = i;
+        dimensions[i] = dims[i];
         dimensionsFloat[i] = dims[i];
     }
 
     shape_t *shape = reserveMemory(sizeof(shape_t));
     shape_t *shapeFloat = reserveMemory(sizeof(shape_t));
+
     if (shape == NULL || shapeFloat == NULL) {
         PRINT_ERROR("Memory Allocation Failed");
         exit(1);
     }
 
-    shape->dimensions = dims;
+    shape->dimensions = dimensions;
     shape->orderOfDimensions = order;
     shape->numberOfDimensions = ndim;
 
@@ -221,9 +225,12 @@ static parameter_t *buildParam(quantization_t *q, float *data, size_t *dims, siz
 
     quantization_t *floatq = quantizationInitFloat();
     tensor_t *floatTensor = initTensor(shapeFloat, floatq, NULL);
+    size_t numberOfElements = calcNumberOfElementsByTensor(floatTensor);
+    memcpy(floatTensor->data, data, numberOfElements * sizeof(float));
 
     tensor_t *p = initTensor(shape, q, NULL);
     convertTensor(floatTensor, p);
+
     freeTensor(floatTensor);
     tensor_t *g = gradInitFloat(p, NULL);
     return parameterInit(p, g);
@@ -275,10 +282,15 @@ static void buildModel(layer_t **model, uint8_t delta_reduction, roundingMode_t 
     // 128 -> 1152
     model[0] = flattenLayerInit();
 
+
+
     // Linear 128→32
     parameter_t *weight0 = buildParam(q14, weight0Data, weight0Dims, WEIGHT_NDIM_0);
+    printf("buildModel: done buildParam\n");
     parameter_t *bias0 = buildParam(q15, bias0Data, bias0Dims, BIAS_NDIM_0);
+    printf("buildModel: done buildParam\n");
     model[1] = linearLayerInitLegacy(weight0, bias0, q0, q1, q2, q3);
+    printf("buildModel: done linearLayerInitLegacy\n");
 
     // ReLU
     model[2] = reluLayerInitLegacy(q4, q5);
@@ -342,8 +354,11 @@ int runExperiment(dataLoader_t *trainLoader, dataLoader_t *valLoader, dataLoader
                   uint8_t rounding_mode, int epochs, int batch, deltaStatus_t deltaStatus) {
     layer_t *model[MODEL_SIZE];
     buildModel(model, delta_reduction, rounding_mode, deltaStatus);
+    printf("runExperiment: done buildModel\n");
     optimizer_t *sgd = sgdMCreateOptim(learning_rate, momentum, /*weightDecay*/ 0.0f, model,
                                        MODEL_SIZE, SYM_INT32);
+
+    printf("runExperiment: done sgdMCreateOptim\n");
 
     const char *prefix;
     if (deltaStatus == WITHOUT_DELTAS) {
@@ -470,14 +485,28 @@ int main(int argc, char *argv[]) {
     if (ensureDir("examples/har_classifier/outputs/with_deltas") != 0) {
         return 1;
     }
+    if (argc < 2) {
+        printf("Keine (negative) trial_number angegeben\n");
+        return 1;
+    }
 
     int trial_number = atof(argv[1]);
-    uint8_t delta_reduction = atoi(argv[2]);
-    double learning_rate = atof(argv[3]);
-    double momentum = atof(argv[4]);
-    uint8_t rounding_mode = atof(argv[5]);
-    int epochs = atof(argv[6]);
-    int batch = atof(argv[7]);
+    uint8_t delta_reduction = 2;
+    double learning_rate = 0.01f;
+    double momentum = 0.9f;
+    roundingMode_t rounding_mode = HALF_AWAY;
+    int epochs = 20;
+    int batch = 64;
+
+    if (argc > 2) {
+        trial_number = atof(argv[1]);
+        delta_reduction = atoi(argv[2]);
+        learning_rate = atof(argv[3]);
+        momentum = atof(argv[4]);
+        rounding_mode = atof(argv[5]);
+        epochs = atof(argv[6]);
+        batch = atof(argv[7]);
+    }
 
     initDataSets();
 
@@ -491,13 +520,15 @@ int main(int argc, char *argv[]) {
                                               /*shuffle*/ false, /*shuffleSeed*/ 0,
                                               /*dropLast*/ true);
 
-    int status =
+
+
+/*int status =
         runExperiment(trainLoader, valLoader, testLoader, trial_number, delta_reduction,
                       learning_rate, momentum, rounding_mode, epochs, batch, WITHOUT_DELTAS);
     if (status != 0) {
         return status;
-    }
-    status = runExperiment(trainLoader, valLoader, testLoader, trial_number, delta_reduction,
+    }*/
+    int status = runExperiment(trainLoader, valLoader, testLoader, trial_number, delta_reduction,
                            learning_rate, momentum, rounding_mode, epochs, batch, WITH_DELTAS);
 
     return status;
