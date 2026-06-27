@@ -31,6 +31,7 @@
 #include "TensorConversion.h"
 #include "TrainingLoopApi.h"
 
+#include "../../src/data_loader/include/Dataset.h"
 #include "../../src/layer/include/Dropout.h"
 #include "../../src/userApi/tensor/include/TensorApi.h"
 #include "npy_writer.h"
@@ -49,7 +50,7 @@
 #define BIAS_NDIM_1 1
 // #define L2_OUT NUM_CLASSES
 #define FLATTEN_SIZE (IN_CHANNELS * LEN_INPUT)
-#define MODEL_SIZE 5
+#define MODEL_SIZE 4
 
 typedef enum deltaStatus { WITH_DELTAS, WITHOUT_DELTAS } deltaStatus_t;
 
@@ -97,9 +98,9 @@ static void reshapeItemsAddBatchDim(tensorArray_t *items) {
         t->shape->numberOfDimensions = newRank;
     }
 }
-static tensorArray_t *buildOneHotLabels(tensorArray_t *intLabels) {
+static tensorArray_t *buildSymInt32OneHotLabels(tensorArray_t *intLabels, roundingMode_t roundingMode) {
     /* intLabels->array[i] is a rank-0 int32 tensor (single class index 0..5).
-     * We allocate a brand-new tensorArray_t whose entries are rank-1 float32
+     * We allocate a brand-new tensorArray_t whose entries are rank-1 int32
      * one-hot tensors of shape [NUM_CLASSES]. The original int32 array is
      * left intact (caller still owns it). */
     tensorArray_t *out = reserveMemory(sizeof(tensorArray_t));
@@ -117,39 +118,106 @@ static tensorArray_t *buildOneHotLabels(tensorArray_t *intLabels) {
         shape->orderOfDimensions = order;
         shape->numberOfDimensions = 1;
 
-        quantization_t *q = quantizationInitFloat();
+        quantization_t *q = quantizationInitSymInt32(roundingMode);
         tensor_t *t = initTensor(shape, q, NULL);
 
         int32_t cls = ((int32_t *)intLabels->array[i]->data)[0];
-        float *data = (float *)t->data;
+        int32_t *data = (int32_t *)t->data;
         for (size_t c = 0; c < NUM_CLASSES; ++c) {
-            data[c] = (c == (size_t)cls) ? 1.0f : 0.0f;
+            data[c] = (c == (size_t)cls) ? 1 : 0;
         }
         arr[i] = t;
     }
     return out;
 }
 
-static void initDataSets(void) {
+/*
+param shape: Caller-allocated shape; ownership transferred to the tensor
+param quantization: Caller-allocated quantization; ownership transferred.
+param sparsity: Optional; ownership transferred (NULL means no sparsity)
+returns Pointer to an initialized tensor with own-allocated zero data.
+
+tensor_t *initTensor(shape_t *shape, quantization_t *quantization, sparsity_t *sparsity);
+ -----
+
+
+
+
+*/
+
+static tensorArray_t *createSymInt32TensorArrayFromFloatTensorArray(tensorArray_t *tensorArray, roundingMode_t roundingMode){
+    quantization_t *q = quantizationInitSymInt32(roundingMode);
+    size_t numberOfTensors = tensorArray->size;
+
+    tensorArray_t *newTensorArray = reserveMemory(sizeof(tensorArray_t));
+    tensor_t **newArray = reserveMemory(numberOfTensors * sizeof(tensor_t *));
+    newTensorArray->array = newArray;
+    newTensorArray->size = numberOfTensors;
+
+    for (size_t i = 0; i < numberOfTensors; i++) {
+        tensor_t *currentTensor = tensorArray->array[i];
+        shape_t *currentShape = currentTensor->shape;
+        size_t currentNumberOfDimensions = currentShape->numberOfDimensions;
+        size_t *dims = reserveMemory(currentNumberOfDimensions * sizeof(size_t));
+        if (dims == NULL) {
+            PRINT_ERROR("Memory Allocation Failed");
+            exit(1);
+        }
+        memcpy(dims, currentShape->dimensions, currentNumberOfDimensions * sizeof(size_t));
+        size_t *order = reserveMemory(currentNumberOfDimensions * sizeof(size_t));
+        if (order == NULL) {
+            PRINT_ERROR("Memory Allocation Failed");
+            exit(1);
+        }
+        setOrderOfDimsForNewTensor(currentNumberOfDimensions, order);
+        shape_t *shape = reserveMemory(sizeof(shape_t));
+        if (shape == NULL) {
+            PRINT_ERROR("Memory Allocation Failed");
+            exit(1);
+        }
+        setShape(shape, dims, currentNumberOfDimensions, order);
+
+        /* Fresh quantization clone per tensor: every array entry now owns its
+         * own quantization, so freeTensor on any one doesn't double-free a
+         * shared `q`. */
+        quantization_t *newQ = getQLike(q);
+
+        tensor_t *t = initTensor(shape, newQ, NULL);
+        newTensorArray->array[i] = t;
+        convertTensor(currentTensor, t);
+    }
+    /* `q` was deep-copied per tensor via getQLike; free the original. */
+    freeQuantization(q);
+    return newTensorArray;
+}
+
+
+static void initDataSets(roundingMode_t roundingMode) {
     tensorArray_t *trainItems = npyLoad("examples/har_classifier/data/train_x.npy");
     tensorArray_t *trainLabelsRaw = npyLoad("examples/har_classifier/data/train_y.npy");
     reshapeItemsAddBatchDim(trainItems);
-    g_trainDataset.items = trainItems;
-    g_trainDataset.labels = buildOneHotLabels(trainLabelsRaw);
+    tensorArray_t *trainItemsSymInt32 = createSymInt32TensorArrayFromFloatTensorArray(trainItems, roundingMode);
+    g_trainDataset.items = trainItemsSymInt32;
+    g_trainDataset.labels = buildSymInt32OneHotLabels(trainLabelsRaw, roundingMode);
+    freeTensorArray(trainItems);
     freeTensorArray(trainLabelsRaw);
 
     tensorArray_t *valItems = npyLoad("examples/har_classifier/data/val_x.npy");
     tensorArray_t *valLabelsRaw = npyLoad("examples/har_classifier/data/val_y.npy");
     reshapeItemsAddBatchDim(valItems);
-    g_valDataset.items = valItems;
-    g_valDataset.labels = buildOneHotLabels(valLabelsRaw);
+    tensorArray_t *valItemsSymInt32 = createSymInt32TensorArrayFromFloatTensorArray(valItems, roundingMode);
+    g_valDataset.items = valItemsSymInt32;
+    g_valDataset.labels = buildSymInt32OneHotLabels(valLabelsRaw, roundingMode);
+    freeTensorArray(valItems);
     freeTensorArray(valLabelsRaw);
 
-    tensorArray_t *testItems = npyLoad("examples/har_classifier/data/test_x.npy");
-    tensorArray_t *testLabelsRaw = npyLoad("examples/har_classifier/data/test_y.npy");
+    tensorArray_t *testItems = npyLoad("examples/har_classifier/data/val_x.npy");
+    tensorArray_t *testLabelsRaw = npyLoad("examples/har_classifier/data/val_y.npy");
     reshapeItemsAddBatchDim(testItems);
-    g_testDataset.items = testItems;
-    g_testDataset.labels = buildOneHotLabels(testLabelsRaw);
+    tensorArray_t *testItemsSymInt32 = createSymInt32TensorArrayFromFloatTensorArray(testItems, roundingMode);
+    g_testDataset.items = testItemsSymInt32;
+    g_testDataset.labels = buildSymInt32OneHotLabels(testLabelsRaw, roundingMode);
+    freeTensorArray(testItems);
     freeTensorArray(testLabelsRaw);
 }
 
@@ -304,7 +372,7 @@ static void buildModel(layer_t **model, uint8_t delta_reduction, roundingMode_t 
     model[3] = linearLayerInitLegacy(weight1, bias1, q6, q7, q8, q9);
 
     // Softmax
-    model[4] = softmaxLayerInitLegacy(q10, q11);
+    //model[4] = softmaxLayerInitLegacy(q10, q11);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -397,13 +465,13 @@ int runExperiment(dataLoader_t *trainLoader, dataLoader_t *valLoader, dataLoader
     trainingRunResult_t result = trainingRun(
         model, MODEL_SIZE,
         (lossConfig_t){
-            .funcType = CROSS_ENTROPY, .backwardReduction = REDUCTION_MEAN, .classWeights = NULL},
+            .funcType = MSE, .backwardReduction = REDUCTION_MEAN, .classWeights = NULL},
         trainLoader, valLoader, sgd, epochs, calculateGradsSequential, inferenceWithLoss,
         epochCallback);
     (void)result;
 
     epochStats_t testStats = evaluationEpochWithMetrics(
-        model, MODEL_SIZE, CROSS_ENTROPY, testLoader, inferenceWithLoss, REDUCTION_MEAN);
+        model, MODEL_SIZE, MSE, testLoader, inferenceWithLoss, REDUCTION_MEAN);
 
     fprintf(g_log_file,
             "\n  ],\n"
@@ -508,7 +576,8 @@ int main(int argc, char *argv[]) {
         batch = atof(argv[7]);
     }
 
-    initDataSets();
+    initDataSets(rounding_mode);
+    printf("main: start dataLoaderInit\n");
 
     dataLoader_t *trainLoader = dataLoaderInit(getTrainSample, getTrainSize, batch, NULL, NULL,
                                                /*shuffle*/ true, /*shuffleSeed*/ SHUFFLE_SEED,
@@ -521,14 +590,14 @@ int main(int argc, char *argv[]) {
                                               /*dropLast*/ true);
 
 
-
-/*int status =
+    printf("main: start runExperiment\n");
+    int status =
         runExperiment(trainLoader, valLoader, testLoader, trial_number, delta_reduction,
                       learning_rate, momentum, rounding_mode, epochs, batch, WITHOUT_DELTAS);
     if (status != 0) {
         return status;
-    }*/
-    int status = runExperiment(trainLoader, valLoader, testLoader, trial_number, delta_reduction,
+    }
+    status = runExperiment(trainLoader, valLoader, testLoader, trial_number, delta_reduction,
                            learning_rate, momentum, rounding_mode, epochs, batch, WITH_DELTAS);
 
     return status;
