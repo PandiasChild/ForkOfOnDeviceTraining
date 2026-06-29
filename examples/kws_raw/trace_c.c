@@ -306,14 +306,15 @@ static size_t g_actSamples = 4;
 static size_t g_steps = 1;
 static void parseArgs(int argc, char **argv) {
     for (int i = 1; i < argc - 1; i++) {
-        if (strcmp(argv[i], "--sample-start") == 0)
+        if (strcmp(argv[i], "--sample-start") == 0) {
             g_sampleStart = (size_t)strtoul(argv[++i], 0, 10);
-        else if (strcmp(argv[i], "--batch") == 0)
+        } else if (strcmp(argv[i], "--batch") == 0) {
             g_batch = (size_t)strtoul(argv[++i], 0, 10);
-        else if (strcmp(argv[i], "--act-samples") == 0)
+        } else if (strcmp(argv[i], "--act-samples") == 0) {
             g_actSamples = (size_t)strtoul(argv[++i], 0, 10);
-        else if (strcmp(argv[i], "--steps") == 0)
+        } else if (strcmp(argv[i], "--steps") == 0) {
             g_steps = (size_t)strtoul(argv[++i], 0, 10);
+        }
     }
 }
 
@@ -341,9 +342,8 @@ int main(int argc, char **argv) {
         sgdMCreateOptim(LR, MOMENTUM, /*weightDecay*/ 0.0f, model, MODEL_SIZE, FLOAT32);
     optimizerFunctions_t optimFns = optimizerFunctions[sgd->type];
 
-    lossConfig_t lossCfg = {.funcType = CROSS_ENTROPY,
-                            .backwardReduction = REDUCTION_MEAN,
-                            .classWeights = NULL};
+    lossConfig_t lossCfg = {
+        .funcType = CROSS_ENTROPY, .backwardReduction = REDUCTION_MEAN, .classWeights = NULL};
 
     /* Effective batch: support ANY --batch, clamped to the samples available from
      * --sample-start. effB is used for the loop, the mean-scale (1/effB) and the

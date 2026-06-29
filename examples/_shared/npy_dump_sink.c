@@ -26,8 +26,7 @@ void npyDumpSink(void *ctxV, size_t layerIdx, layerType_t layerType, const char 
     if (ctx->sampleIdx == NPY_DUMP_NO_SAMPLE) {
         snprintf(path, sizeof(path), "%s/%s.%s.npy", ctx->dir, probe, phase);
     } else {
-        snprintf(path, sizeof(path), "%s/%s.%s.s%03zu.npy", ctx->dir, probe, phase,
-                 ctx->sampleIdx);
+        snprintf(path, sizeof(path), "%s/%s.%s.s%03zu.npy", ctx->dir, probe, phase, ctx->sampleIdx);
     }
 
     int rc = npyWriteFloat32(path, (float *)tensor->data, tensor->shape->dimensions,
