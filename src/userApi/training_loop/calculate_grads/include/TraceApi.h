@@ -4,7 +4,9 @@
 #include <stddef.h>
 
 #include "Layer.h"
+#include "LossFunction.h"
 #include "Tensor.h"
+#include "TrainingLoopApi.h"
 
 /*! Fired at every probe point of one traced training step. The framework hands
  *  a tensor to the sink and never opens a file; the sink (above the src/
@@ -18,8 +20,15 @@
 typedef void (*traceSink_t)(void *ctx, size_t layerIdx, layerType_t layerType, const char *phase,
                             tensor_t *tensor);
 
-/* tracedGrads(), traceModelWeights(), traceModelGrads() declarations are added
- * here in Tasks 2 and 3 — each declaration lands together with its failing test
+/*! Same forward+backward as calculateGradsSequential, but fires `sink` after
+ *  each layer's forward ("fwd"), after the loss backward ("lossgrad",
+ *  layerIdx == modelSize), and after each layer's backward ("agrad"). */
+trainingStats_t *tracedGrads(layer_t **model, size_t modelSize, lossConfig_t lossConfig,
+                             reduction_t forwardReduction, tensor_t *input, tensor_t *label,
+                             traceSink_t sink, void *ctx);
+
+/* traceModelWeights(), traceModelGrads() declarations are added here in Task 3
+ * — each declaration lands together with its failing test
  * (TDD-strict: no decl/stub before the test that drives it). */
 
 #endif /* TRACE_API_H */

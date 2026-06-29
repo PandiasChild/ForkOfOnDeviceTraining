@@ -106,6 +106,13 @@ trainingStats_t *calculateGradsSequential(layer_t **model, size_t modelSize,
                               NULL);
 }
 
+trainingStats_t *tracedGrads(layer_t **model, size_t modelSize, lossConfig_t lossConfig,
+                             reduction_t forwardReduction, tensor_t *input, tensor_t *label,
+                             traceSink_t sink, void *ctx) {
+    return calculateGradsImpl(model, modelSize, lossConfig, forwardReduction, input, label, sink,
+                              ctx);
+}
+
 static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t sizeNetwork) {
     for (size_t i = 0; i < sizeNetwork; i++) {
         layer_t *currentLayer = model[i];

@@ -1,5 +1,7 @@
 #define SOURCE_FILE "UnitTestCalculateGradsSequential"
 
+#include <stdio.h>
+
 #include "CalculateGradsSequential.h"
 #include "Common.h"
 #include "Layer.h"
@@ -12,6 +14,7 @@
 #include "StorageApi.h"
 #include "Tensor.h"
 #include "TensorApi.h"
+#include "TraceApi.h"
 #include "unity.h"
 
 void setUp() {}
@@ -77,8 +80,66 @@ void testCalculateGradsSequentialClosedForm() {
     freeSoftmaxLayer(model[1]);
 }
 
+#define MAX_EVENTS 64
+typedef struct {
+    size_t idx;
+    char phase[16];
+    size_t ndim;
+} traceEvent_t;
+static traceEvent_t g_events[MAX_EVENTS];
+static size_t g_eventCount;
+
+static void recordingSink(void *ctx, size_t layerIdx, layerType_t type, const char *phase,
+                          tensor_t *t) {
+    (void)ctx;
+    (void)type;
+    if (g_eventCount >= MAX_EVENTS) return;
+    g_events[g_eventCount].idx = layerIdx;
+    snprintf(g_events[g_eventCount].phase, sizeof(g_events[g_eventCount].phase), "%s", phase);
+    g_events[g_eventCount].ndim = t->shape->numberOfDimensions;
+    g_eventCount++;
+}
+
+void testTracedGradsFiresInOrder() {
+    g_eventCount = 0;
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, quantizationInitFloat());
+    layer_t *model[2];
+    model[0] = linearLayerInit(&(linearInit_t){.inFeatures = 2, .outFeatures = 2}, &lq);
+    model[1] = softmaxLayerInit(&lq);
+    float W[4] = {0.1f, 0.2f, 0.3f, 0.4f}, B[2] = {0};
+    modelLoadStateDict(model, 2,
+                       (stateDictEntry_t[]){{.name = "fc", .weightData = W, .biasData = B}}, 1);
+    tensor_t *x = makeRowVec2(1.0f, 1.0f);
+    tensor_t *label = makeRowVec2(1.0f, 0.0f);
+
+    trainingStats_t *stats = tracedGrads(
+        model, 2,
+        (lossConfig_t){
+            .funcType = CROSS_ENTROPY, .backwardReduction = REDUCTION_MEAN, .classWeights = NULL},
+        REDUCTION_MEAN, x, label, recordingSink, NULL);
+
+    /* fwd L0, fwd L1, lossgrad@2, agrad L0  (Softmax skipped under CE) */
+    TEST_ASSERT_EQUAL_size_t(4, g_eventCount);
+    TEST_ASSERT_EQUAL_size_t(0, g_events[0].idx);
+    TEST_ASSERT_EQUAL_STRING("fwd", g_events[0].phase);
+    TEST_ASSERT_EQUAL_size_t(1, g_events[1].idx);
+    TEST_ASSERT_EQUAL_STRING("fwd", g_events[1].phase);
+    TEST_ASSERT_EQUAL_size_t(2, g_events[2].idx);
+    TEST_ASSERT_EQUAL_STRING("lossgrad", g_events[2].phase);
+    TEST_ASSERT_EQUAL_size_t(0, g_events[3].idx);
+    TEST_ASSERT_EQUAL_STRING("agrad", g_events[3].phase);
+
+    freeTrainingStats(stats);
+    freeTensor(x);
+    freeTensor(label);
+    freeLinearLayer(model[0]);
+    freeSoftmaxLayer(model[1]);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testCalculateGradsSequentialClosedForm);
+    RUN_TEST(testTracedGradsFiresInOrder);
     return UNITY_END();
 }
