@@ -22,7 +22,7 @@ typedef struct npyDumpCtx {
     size_t sampleIdx; /* NPY_DUMP_NO_SAMPLE for batch-level (param/grad) dumps */
 } npyDumpCtx_t;
 
-/* Matches traceSink_t. FLOAT32 only (asserts otherwise). */
+/* Matches traceSink_t. FLOAT32 only (hard-errors (exit 1) otherwise). */
 void npyDumpSink(void *ctx, size_t layerIdx, layerType_t layerType, const char *phase,
                  tensor_t *tensor);
 

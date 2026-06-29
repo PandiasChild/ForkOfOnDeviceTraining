@@ -89,7 +89,7 @@ def compare_dir(c_dir: Path, pt_dir: Path, abs_floor: float = 1e-4) -> int:
     files = sorted(c_dir.glob("*.npy"), key=sort_key)
     if not files:
         print(f"no dumps in {c_dir}", file=sys.stderr)
-        return 2
+        return 2, None
     pairs_by_name = {(d["probe"], d["phase"]): d for d in compare_pairs(c_dir, pt_dir)}
     floor, cur_tier, first_drift = 1e-6, None, None
     print(f"{'probe':12}{'phase':24}{'max_abs':>12}{'max_rel':>12}  status")
@@ -116,7 +116,7 @@ def compare_dir(c_dir: Path, pt_dir: Path, abs_floor: float = 1e-4) -> int:
               f"(max_abs={first_drift[2]:.2e}, max_rel={first_drift[3]:.2e})")
     else:
         print("\nno drift above threshold - all tiers agree")
-    return 0
+    return 0, first_drift
 
 
 def self_test() -> int:
@@ -132,8 +132,9 @@ def self_test() -> int:
         bad = wbase.copy(); bad[0, 0, 0] += 5.0
         np.save(c / "conv1.grad_raw.weight.npy", bad)
         np.save(pt / "conv1.grad_raw.weight.npy", wbase)
-        rc = compare_dir(c, pt)
+        rc, fd = compare_dir(c, pt)
         assert rc == 0
+        assert fd is not None and fd[0] == "conv1" and fd[1] == "grad_raw.weight", fd
         # also verify compare_pairs returns the matched files
         pairs = compare_pairs(c, pt)
         assert len(pairs) == 3, f"expected 3 pairs, got {len(pairs)}"
@@ -156,7 +157,7 @@ def main() -> None:
     root = Path(__file__).resolve().parents[1] / args.example
     step = f"step{args.step:03d}"
     sys.exit(compare_dir(root / "dump_c" / step, root / "dump_pt" / step,
-                         abs_floor=args.abs_floor))
+                         abs_floor=args.abs_floor)[0])
 
 
 if __name__ == "__main__":

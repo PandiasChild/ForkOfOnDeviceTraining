@@ -38,6 +38,9 @@ static tensor_t *makeRowVec2(float a, float b) {
     return t;
 }
 
+/* Structural note: tracedGrads and calculateGradsSequential both call calculateGradsImpl
+ * internally; npyDumpSink (and any other sink) observes tensors but does not mutate them.
+ * This means the closed-form characterisation test pins both paths simultaneously. */
 void testCalculateGradsSequentialClosedForm() {
     layerQuant_t lq;
     layerQuantInitUniform(&lq, quantizationInitFloat());
@@ -125,12 +128,16 @@ void testTracedGradsFiresInOrder() {
     TEST_ASSERT_EQUAL_size_t(4, g_eventCount);
     TEST_ASSERT_EQUAL_size_t(0, g_events[0].idx);
     TEST_ASSERT_EQUAL_STRING("fwd", g_events[0].phase);
+    TEST_ASSERT_EQUAL_size_t(2, g_events[0].ndim);
     TEST_ASSERT_EQUAL_size_t(1, g_events[1].idx);
     TEST_ASSERT_EQUAL_STRING("fwd", g_events[1].phase);
+    TEST_ASSERT_EQUAL_size_t(2, g_events[1].ndim);
     TEST_ASSERT_EQUAL_size_t(2, g_events[2].idx);
     TEST_ASSERT_EQUAL_STRING("lossgrad", g_events[2].phase);
+    TEST_ASSERT_EQUAL_size_t(2, g_events[2].ndim);
     TEST_ASSERT_EQUAL_size_t(0, g_events[3].idx);
     TEST_ASSERT_EQUAL_STRING("agrad", g_events[3].phase);
+    TEST_ASSERT_EQUAL_size_t(2, g_events[3].ndim);
 
     freeTrainingStats(stats);
     freeTensor(x);

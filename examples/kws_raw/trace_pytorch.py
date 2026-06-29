@@ -42,6 +42,7 @@ def forward_traced(model: KwsRawCnn, x: torch.Tensor, acts: dict) -> torch.Tenso
     acts["flatten"] = (h := h.flatten(start_dim=1))
     acts["fc"] = (logits := model.fc(h))
     acts["softmax"] = F.softmax(logits, dim=1)
+    assert list(acts) == FWD_PROBES, (list(acts), FWD_PROBES)
     return logits
 
 

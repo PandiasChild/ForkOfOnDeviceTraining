@@ -356,8 +356,8 @@ int main(int argc, char **argv) {
     size_t effB = g_batch;
     if (g_sampleStart + effB > testSize) {
         effB = testSize - g_sampleStart;
-        fprintf(stderr, "trace_c: batch clamped to %zu (only %zu samples from start %zu)\n", effB,
-                effB, g_sampleStart);
+        fprintf(stderr, "trace_c: batch clamped to %zu (requested %zu, only %zu from start %zu)\n",
+                effB, g_batch, effB, g_sampleStart);
     }
 
     /* mean over effB samples; same vtable entry TrainingEpochDefault.c:35 uses (== 1/effB for

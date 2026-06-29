@@ -18,7 +18,7 @@ Options:
     --stride      step between batch start indices (default: B)
 """
 from __future__ import annotations
-import argparse, os, subprocess, sys
+import argparse, os, shutil, subprocess, sys
 from collections import defaultdict
 from pathlib import Path
 import numpy as np
@@ -100,6 +100,8 @@ def main() -> None:
     for i in range(args.batches):
         start = args.start0 + i * stride
         print(f"\n--- batch {i:2d}  sample_start={start} ---", flush=True)
+        shutil.rmtree(c_dump, ignore_errors=True)
+        shutil.rmtree(pt_dump, ignore_errors=True)
         try:
             c_out = run_c(args.example, start, B, args.act_samples, args.classes)
         except subprocess.CalledProcessError as exc:
@@ -145,7 +147,7 @@ def main() -> None:
     # --- Full aggregate table ---
     rows = sorted(accum.items(), key=row_sort_key)
     print("\nAGGREGATE TABLE (sorted by tier then network depth):")
-    hdr = f"{'probe':12}{'phase':30}{'mean_abs':>12}{'max_abs':>12}{'mean_rel':>12}{'n':>4}"
+    hdr = f"{'probe':12}{'phase':30}{'mean(maxabs)':>12}{'max_abs':>12}{'mean_rel':>12}{'n':>4}"
     print(hdr)
     print("-" * len(hdr))
     for (probe, phase), entry in rows:
@@ -165,7 +167,7 @@ def main() -> None:
         if phase.startswith("grad_raw") or phase.startswith("grad_scaled")
     ]
     grad_rows.sort(key=lambda kv: -float(np.mean(kv[1]["max_abs_list"])))
-    hdr2 = f"{'probe':12}{'phase':30}{'mean_abs':>12}{'max_abs':>12}{'n':>4}"
+    hdr2 = f"{'probe':12}{'phase':30}{'mean(maxabs)':>12}{'max_abs':>12}{'n':>4}"
     print(hdr2)
     print("-" * len(hdr2))
     for (probe, phase), entry in grad_rows:
