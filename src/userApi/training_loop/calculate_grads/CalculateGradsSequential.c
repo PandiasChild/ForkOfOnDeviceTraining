@@ -77,17 +77,16 @@ static trainingStats_t *calculateGradsImpl(layer_t **model, size_t modelSize,
     }
 
     for (int i = (int)backwardIndex; i >= 0; i--) {
+        layerType_t layerType = model[i]->type;
+        /* agrad@i = gradient w.r.t. layer i's OUTPUT (the wire grad entering layer i's
+         * backward), matching the PyTorch forward-hook activation.grad. */
+        if (sink != NULL) {
+            sink(sinkCtx, (size_t)i, layerType, "agrad", &gradNext);
+        }
         tensor_t gradCurr;
         initGradTensor(&gradCurr, layerOutputs[i]);
-
-        layerType_t layerType = model[i]->type;
         backwardFn_t backward = layerFunctions[layerType].backward;
-
         backward(model[i], layerOutputs[i], &gradNext, &gradCurr);
-        if (sink != NULL) {
-            sink(sinkCtx, (size_t)i, layerType, "agrad", &gradCurr);
-        }
-
         deInitGradTensor(&gradNext);
         gradNext = gradCurr;
     }
