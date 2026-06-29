@@ -22,6 +22,7 @@
 #include "Softmax.h"
 #include "StorageApi.h"
 #include "TensorApi.h"
+#include "TraceApi.h"
 #include "TrainingLoopApiInternal.h"
 
 static void setDropoutLayersTraining(layer_t **model, size_t modelSize, bool training) {
@@ -32,9 +33,10 @@ static void setDropoutLayersTraining(layer_t **model, size_t modelSize, bool tra
     }
 }
 
-trainingStats_t *calculateGradsSequential(layer_t **model, size_t modelSize,
-                                          lossConfig_t lossConfig, reduction_t forwardReduction,
-                                          tensor_t *input, tensor_t *label) {
+static trainingStats_t *calculateGradsImpl(layer_t **model, size_t modelSize,
+                                           lossConfig_t lossConfig, reduction_t forwardReduction,
+                                           tensor_t *input, tensor_t *label, traceSink_t sink,
+                                           void *sinkCtx) {
 
     tensor_t *layerOutputs[modelSize + 1];
     layerOutputs[0] = input;
@@ -47,6 +49,9 @@ trainingStats_t *calculateGradsSequential(layer_t **model, size_t modelSize,
         layerType_t currentLayerType = currentLayer->type;
         forwardFn_t forward = layerFunctions[currentLayerType].forward;
         forward(currentLayer, layerOutputs[i], layerOutputs[i + 1]);
+        if (sink != NULL) {
+            sink(sinkCtx, i, currentLayerType, "fwd", layerOutputs[i + 1]);
+        }
     }
 
     trainingStats_t *trainingStats = initTrainingStats(layerOutputs[modelSize]);
@@ -67,6 +72,9 @@ trainingStats_t *calculateGradsSequential(layer_t **model, size_t modelSize,
     tensor_t gradNext;
     initGradTensor(&gradNext, layerOutputs[modelSize]);
     lossFns.backward(layerOutputs[modelSize], label, &gradNext);
+    if (sink != NULL) {
+        sink(sinkCtx, modelSize, model[modelSize - 1]->type, "lossgrad", &gradNext);
+    }
 
     for (int i = (int)backwardIndex; i >= 0; i--) {
         tensor_t gradCurr;
@@ -76,6 +84,9 @@ trainingStats_t *calculateGradsSequential(layer_t **model, size_t modelSize,
         backwardFn_t backward = layerFunctions[layerType].backward;
 
         backward(model[i], layerOutputs[i], &gradNext, &gradCurr);
+        if (sink != NULL) {
+            sink(sinkCtx, (size_t)i, layerType, "agrad", &gradCurr);
+        }
 
         deInitGradTensor(&gradNext);
         gradNext = gradCurr;
@@ -86,6 +97,13 @@ trainingStats_t *calculateGradsSequential(layer_t **model, size_t modelSize,
 
     setDropoutLayersTraining(model, modelSize, false);
     return trainingStats;
+}
+
+trainingStats_t *calculateGradsSequential(layer_t **model, size_t modelSize,
+                                          lossConfig_t lossConfig, reduction_t forwardReduction,
+                                          tensor_t *input, tensor_t *label) {
+    return calculateGradsImpl(model, modelSize, lossConfig, forwardReduction, input, label, NULL,
+                              NULL);
 }
 
 static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t sizeNetwork) {

@@ -12,4 +12,4 @@ add_subdirectory(rng)
 add_subdirectory(serial)
 add_subdirectory(tensor)
 add_subdirectory(userAPI)
-
+add_subdirectory(training_loop)

@@ -1,0 +1,28 @@
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
+        CalculateGradsSequential
+        MORE_LIBS
+        CommonLayerLibs
+        LinearApi
+        SoftmaxApi
+        LayerQuant
+        LayerCommon
+        LayerWeightsApi
+        StateDictApi
+        QuantizationApi
+        Quantization
+        Rounding
+        TensorApi
+        Tensor
+        StorageApi
+        Common
+        Optimizer
+        TrainingLoopApi
+        InferenceApi
+        DataLoader
+        DataLoaderApi
+        LossFunction
+        CrossEntropy
+        Distributions
+        RNG
+)
