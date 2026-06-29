@@ -93,7 +93,9 @@ static void recordingSink(void *ctx, size_t layerIdx, layerType_t type, const ch
                           tensor_t *t) {
     (void)ctx;
     (void)type;
-    if (g_eventCount >= MAX_EVENTS) return;
+    if (g_eventCount >= MAX_EVENTS) {
+        return;
+    }
     g_events[g_eventCount].idx = layerIdx;
     snprintf(g_events[g_eventCount].phase, sizeof(g_events[g_eventCount].phase), "%s", phase);
     g_events[g_eventCount].ndim = t->shape->numberOfDimensions;
@@ -113,11 +115,11 @@ void testTracedGradsFiresInOrder() {
     tensor_t *x = makeRowVec2(1.0f, 1.0f);
     tensor_t *label = makeRowVec2(1.0f, 0.0f);
 
-    trainingStats_t *stats = tracedGrads(
-        model, 2,
-        (lossConfig_t){
-            .funcType = CROSS_ENTROPY, .backwardReduction = REDUCTION_MEAN, .classWeights = NULL},
-        REDUCTION_MEAN, x, label, recordingSink, NULL);
+    trainingStats_t *stats = tracedGrads(model, 2,
+                                         (lossConfig_t){.funcType = CROSS_ENTROPY,
+                                                        .backwardReduction = REDUCTION_MEAN,
+                                                        .classWeights = NULL},
+                                         REDUCTION_MEAN, x, label, recordingSink, NULL);
 
     /* fwd L0, fwd L1, lossgrad@2, agrad L0  (Softmax skipped under CE) */
     TEST_ASSERT_EQUAL_size_t(4, g_eventCount);
@@ -150,8 +152,8 @@ void testTraceModelParamsFiresPerTrainableParam() {
     tensor_t *x = makeRowVec2(1.0f, 1.0f), *label = makeRowVec2(1.0f, 0.0f);
     trainingStats_t *stats = calculateGradsSequential(
         model, 2,
-        (lossConfig_t){.funcType = CROSS_ENTROPY, .backwardReduction = REDUCTION_MEAN,
-                       .classWeights = NULL},
+        (lossConfig_t){
+            .funcType = CROSS_ENTROPY, .backwardReduction = REDUCTION_MEAN, .classWeights = NULL},
         REDUCTION_MEAN, x, label);
 
     traceModelWeights(model, 2, "w_before", recordingSink, NULL);
