@@ -27,8 +27,14 @@ trainingStats_t *tracedGrads(layer_t **model, size_t modelSize, lossConfig_t los
                              reduction_t forwardReduction, tensor_t *input, tensor_t *label,
                              traceSink_t sink, void *ctx);
 
-/* traceModelWeights(), traceModelGrads() declarations are added here in Task 3
- * — each declaration lands together with its failing test
- * (TDD-strict: no decl/stub before the test that drives it). */
+/*! Fire `sink` for each trainable layer's weight and bias PARAM tensors, with
+ *  phase "<tag>.weight" / "<tag>.bias". Param-less layers and NULL bias are
+ *  skipped. (Trainable: LINEAR, CONV1D, CONV1D_TRANSPOSED, LAYERNORM.) */
+void traceModelWeights(layer_t **model, size_t modelSize, const char *tag, traceSink_t sink,
+                       void *ctx);
+
+/*! Same, for the GRAD tensor of each parameter_t. */
+void traceModelGrads(layer_t **model, size_t modelSize, const char *tag, traceSink_t sink,
+                     void *ctx);
 
 #endif /* TRACE_API_H */

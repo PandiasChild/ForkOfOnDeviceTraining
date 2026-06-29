@@ -83,7 +83,7 @@ void testCalculateGradsSequentialClosedForm() {
 #define MAX_EVENTS 64
 typedef struct {
     size_t idx;
-    char phase[16];
+    char phase[32];
     size_t ndim;
 } traceEvent_t;
 static traceEvent_t g_events[MAX_EVENTS];
@@ -137,9 +137,44 @@ void testTracedGradsFiresInOrder() {
     freeSoftmaxLayer(model[1]);
 }
 
+void testTraceModelParamsFiresPerTrainableParam() {
+    g_eventCount = 0;
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, quantizationInitFloat());
+    layer_t *model[2];
+    model[0] = linearLayerInit(&(linearInit_t){.inFeatures = 2, .outFeatures = 2}, &lq);
+    model[1] = softmaxLayerInit(&lq);
+    float W[4] = {0.1f, 0.2f, 0.3f, 0.4f}, B[2] = {0};
+    modelLoadStateDict(model, 2,
+                       (stateDictEntry_t[]){{.name = "fc", .weightData = W, .biasData = B}}, 1);
+    tensor_t *x = makeRowVec2(1.0f, 1.0f), *label = makeRowVec2(1.0f, 0.0f);
+    trainingStats_t *stats = calculateGradsSequential(
+        model, 2,
+        (lossConfig_t){.funcType = CROSS_ENTROPY, .backwardReduction = REDUCTION_MEAN,
+                       .classWeights = NULL},
+        REDUCTION_MEAN, x, label);
+
+    traceModelWeights(model, 2, "w_before", recordingSink, NULL);
+    traceModelGrads(model, 2, "grad_raw", recordingSink, NULL);
+
+    /* weight+bias for the one Linear, then wgrad+bgrad */
+    TEST_ASSERT_EQUAL_size_t(4, g_eventCount);
+    TEST_ASSERT_EQUAL_STRING("w_before.weight", g_events[0].phase);
+    TEST_ASSERT_EQUAL_STRING("w_before.bias", g_events[1].phase);
+    TEST_ASSERT_EQUAL_STRING("grad_raw.weight", g_events[2].phase);
+    TEST_ASSERT_EQUAL_STRING("grad_raw.bias", g_events[3].phase);
+
+    freeTrainingStats(stats);
+    freeTensor(x);
+    freeTensor(label);
+    freeLinearLayer(model[0]);
+    freeSoftmaxLayer(model[1]);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testCalculateGradsSequentialClosedForm);
     RUN_TEST(testTracedGradsFiresInOrder);
+    RUN_TEST(testTraceModelParamsFiresPerTrainableParam);
     return UNITY_END();
 }

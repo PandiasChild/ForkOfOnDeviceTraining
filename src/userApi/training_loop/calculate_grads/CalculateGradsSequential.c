@@ -113,6 +113,60 @@ trainingStats_t *tracedGrads(layer_t **model, size_t modelSize, lossConfig_t los
                               ctx);
 }
 
+/* Return the two parameter_t* of a trainable layer (bias may be NULL).
+ * Non-trainable layers return false. */
+static bool layerParameters(layer_t *layer, parameter_t **weightOut, parameter_t **biasOut) {
+    switch (layer->type) {
+    case LINEAR:
+        *weightOut = layer->config->linear->weights;
+        *biasOut = layer->config->linear->bias;
+        return true;
+    case CONV1D:
+        *weightOut = layer->config->conv1d->weights;
+        *biasOut = layer->config->conv1d->bias; /* may be NULL */
+        return true;
+    case CONV1D_TRANSPOSED:
+        *weightOut = layer->config->conv1dTransposed->weights;
+        *biasOut = layer->config->conv1dTransposed->bias;
+        return true;
+    case LAYERNORM:
+        *weightOut = layer->config->layerNorm->gamma;
+        *biasOut = layer->config->layerNorm->beta;
+        return true;
+    default:
+        return false;
+    }
+}
+
+static void traceModelParams(layer_t **model, size_t modelSize, const char *tag, bool wantGrad,
+                             traceSink_t sink, void *ctx) {
+    char phase[64];
+    for (size_t i = 0; i < modelSize; i++) {
+        parameter_t *w = NULL, *b = NULL;
+        if (!layerParameters(model[i], &w, &b)) {
+            continue;
+        }
+        tensor_t *wt = wantGrad ? getGradFromParameter(w) : getParamFromParameter(w);
+        snprintf(phase, sizeof(phase), "%s.weight", tag);
+        sink(ctx, i, model[i]->type, phase, wt);
+        if (b != NULL) {
+            tensor_t *bt = wantGrad ? getGradFromParameter(b) : getParamFromParameter(b);
+            snprintf(phase, sizeof(phase), "%s.bias", tag);
+            sink(ctx, i, model[i]->type, phase, bt);
+        }
+    }
+}
+
+void traceModelWeights(layer_t **model, size_t modelSize, const char *tag, traceSink_t sink,
+                       void *ctx) {
+    traceModelParams(model, modelSize, tag, /*wantGrad=*/false, sink, ctx);
+}
+
+void traceModelGrads(layer_t **model, size_t modelSize, const char *tag, traceSink_t sink,
+                     void *ctx) {
+    traceModelParams(model, modelSize, tag, /*wantGrad=*/true, sink, ctx);
+}
+
 static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t sizeNetwork) {
     for (size_t i = 0; i < sizeNetwork; i++) {
         layer_t *currentLayer = model[i];
