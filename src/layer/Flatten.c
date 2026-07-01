@@ -7,11 +7,8 @@
 #include "Flatten.h"
 
 void flattenForward(layer_t *flattenLayer, tensor_t *input, tensor_t *output) {
-
     (void)flattenLayer;
-
     size_t numberOfElements = calcNumberOfElementsByTensor(input);
-
     size_t numberOfBytes = calcNumberOfBytesForData(input->quantization, numberOfElements);
     memcpy(output->data, input->data, numberOfBytes);
 

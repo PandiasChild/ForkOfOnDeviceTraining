@@ -324,6 +324,9 @@ void setParameterValues(parameter_t *parameter, tensor_t *param, tensor_t *grad)
 }
 
 void setShape(shape_t *shape, size_t *dims, size_t numberOfDims, size_t *orderOfDims) {
+    printf("setShape: shape=%p ndims=%zu\n",
+           (void*)shape,
+           shape->numberOfDimensions);
     shape->dimensions = dims;
     shape->numberOfDimensions = numberOfDims;
     shape->orderOfDimensions = orderOfDims;
@@ -447,8 +450,13 @@ void initOrderOfDimensions(size_t *orderOfDims, size_t numberOfDims) {
 }
 
 void copyData(tensor_t *dest, tensor_t *src) {
-    size_t numberOfValues = calcNumberOfElementsByShape(dest->shape);
-    size_t sizeData = calcNumberOfBytesForData(src->quantization, numberOfValues);
+    size_t srcValues = calcNumberOfElementsByShape(src->shape);
+    size_t dstValues = calcNumberOfElementsByShape(dest->shape);
+
+    if(srcValues != dstValues){
+        PRINT_ERROR("src and destination have different shapes");
+    }
+    size_t sizeData = calcNumberOfBytesForData(src->quantization, srcValues);
 
     memcpy(dest->data, src->data, sizeData);
 
@@ -458,6 +466,15 @@ void copyData(tensor_t *dest, tensor_t *src) {
 }
 
 void copyShape(shape_t *dest, shape_t *src) {
+    printf("copyShape: src=%p dest=%p\n", (void*)src, (void*)dest);
+    printf("copyShape: src dims=%zu dest dims=%zu\n",
+           src->numberOfDimensions,
+           dest->numberOfDimensions);
+    if(dest->numberOfDimensions != src->numberOfDimensions){
+          PRINT_ERROR("src and destination have different shapes");
+          exit(1);
+    }
+    // TODO: warum src->numberOfDimensions?
     memcpy(dest->dimensions, src->dimensions, src->numberOfDimensions * sizeof(size_t));
     memcpy(dest->orderOfDimensions, src->orderOfDimensions,
            src->numberOfDimensions * sizeof(size_t));

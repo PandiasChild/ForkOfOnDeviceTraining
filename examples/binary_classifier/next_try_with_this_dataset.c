@@ -37,14 +37,22 @@
 #include "../../src/userApi/tensor/include/TensorApi.h"
 #include "npy_writer.h"
 
+/*  "Yes", "No", "Up", "Down", "Left",
+    "Right", "On", "Off", "Stop", "Go",
+    "Zero", "One", "Two", "Three", "Four",
+    "Five", "Six", "Seven", "Eight", and "Nine".
+*/
+
 #define SEED 42
 #define SHUFFLE_SEED 42
-#define NUM_CLASSES 6
+#define NUM_CLASSES 20 //number Of Words
 
-#define IN_CHANNELS 9
-#define LEN_INPUT 128
+// 16000 sample rate. The audio was then trimmed to a one second length
 
-#define L1_OUT 64
+#define IN_CHANNELS 1
+#define LEN_INPUT 16000
+
+#define L1_OUT 4000
 #define WEIGHT_NDIM_0 2
 #define WEIGHT_NDIM_1 2
 #define BIAS_NDIM_0 1
@@ -91,7 +99,7 @@ static void reshapeItemsAddBatchDim(tensorArray_t *items) {
         for (size_t d = 0; d < newRank; ++d) {
             newOrder[d] = d;
         }
-        //TODO: setShape(shape, newDims, newRank, newOrder); benutzen?
+
         freeReservedMemory(t->shape->dimensions);
         freeReservedMemory(t->shape->orderOfDimensions);
         t->shape->dimensions = newDims;
@@ -99,8 +107,8 @@ static void reshapeItemsAddBatchDim(tensorArray_t *items) {
         t->shape->numberOfDimensions = newRank;
     }
 }
-static tensorArray_t *buildOneHotLabels(tensorArray_t *intLabels) {
-    /* intLabels->array[i] is a rank-0 int32 tensor (single class index 0..5).
+static tensorArray_t *buildSymInt32OneHotLabels(tensorArray_t *intLabels) {
+    /* intLabels->array[i] is a rank-0 int32 tensor (single class index 0..19).
      * We allocate a brand-new tensorArray_t whose entries are rank-1 int32
      * one-hot tensors of shape [NUM_CLASSES]. The original int32 array is
      * left intact (caller still owns it). */
@@ -110,16 +118,14 @@ static tensorArray_t *buildOneHotLabels(tensorArray_t *intLabels) {
     out->size = intLabels->size;
 
     for (size_t i = 0; i < intLabels->size; ++i) {
-        size_t *dims = reserveMemory(2* sizeof(size_t));
-        size_t *order = reserveMemory(2 * sizeof(size_t));
-        dims[0] = 1;
-        dims[1] = NUM_CLASSES;
+        size_t *dims = reserveMemory(1 * sizeof(size_t));
+        size_t *order = reserveMemory(1 * sizeof(size_t));
+        dims[0] = NUM_CLASSES;
         order[0] = 0;
-        order[1] = 1;
         shape_t *shape = reserveMemory(sizeof(shape_t));
         shape->dimensions = dims;
         shape->orderOfDimensions = order;
-        shape->numberOfDimensions = 2;
+        shape->numberOfDimensions = 1;
 
         quantization_t *q = quantizationInitFloat();
         tensor_t *t = initTensor(shape, q, NULL);
@@ -200,21 +206,21 @@ static void initDataSets() {
     tensorArray_t *trainLabelsRaw = npyLoad("examples/har_classifier/data/train_y.npy");
     reshapeItemsAddBatchDim(trainItems);
     g_trainDataset.items = trainItems;
-    g_trainDataset.labels = buildOneHotLabels(trainLabelsRaw);
+    g_trainDataset.labels = buildSymInt32OneHotLabels(trainLabelsRaw);
     freeTensorArray(trainLabelsRaw);
 
     tensorArray_t *valItems = npyLoad("examples/har_classifier/data/val_x.npy");
     tensorArray_t *valLabelsRaw = npyLoad("examples/har_classifier/data/val_y.npy");
     reshapeItemsAddBatchDim(valItems);
     g_valDataset.items = valItems;
-    g_valDataset.labels = buildOneHotLabels(valLabelsRaw);
+    g_valDataset.labels = buildSymInt32OneHotLabels(valLabelsRaw);
     freeTensorArray(valLabelsRaw);
 
     tensorArray_t *testItems = npyLoad("examples/har_classifier/data/test_x.npy");
     tensorArray_t *testLabelsRaw = npyLoad("examples/har_classifier/data/test_y.npy");
     reshapeItemsAddBatchDim(testItems);
     g_testDataset.items = testItems;
-    g_testDataset.labels = buildOneHotLabels(testLabelsRaw);
+    g_testDataset.labels = buildSymInt32OneHotLabels(testLabelsRaw);
     freeTensorArray(testLabelsRaw);
 }
 
@@ -360,7 +366,8 @@ static void buildModel(layer_t **model, uint8_t delta_reduction, roundingMode_t 
     quantization_t *biasStorage = quantizationInitSymInt32(roundingMode);
     layerQuant_t layerQuant = {forwardMath, backwardMath, weightStorage, biasStorage};
     model[0] = quantLayerInit(&layerQuant);
-    // [9, 128] -> [1152]
+    //TODO: next hier weiter machen im kommentar
+    // 9 * 128 -> 1152 dh [1, 9, 128] -> [1, 1152]
     model[1] = flattenLayerInit();
 
 
@@ -369,13 +376,13 @@ static void buildModel(layer_t **model, uint8_t delta_reduction, roundingMode_t 
     parameter_t *bias0 = buildParam(q15, bias0Data, bias0Dims, BIAS_NDIM_0);
     printf("buildModel: done buildParam\n");
 
-    // Linear 1152->64
+    // Linear 128→32 ???????? oder 1152->32 L1_OUT ggf anpassen
     model[2] = linearLayerInitLegacy(weight0, bias0, q0, q1, q2, q3);
     printf("buildModel: done linearLayerInitLegacy\n");
 
     // ReLU
     model[3] = reluLayerInitLegacy(q4, q5);
-    // Linear 64→6
+    // Linear 32→6
     /* parameter_t *weight1 = buildParam(XAVIER_UNIFORM, dq3, weight1Data, weight1Dims,
     WEIGHT_NDIM_1); parameter_t *bias1 = buildParam(ZEROS, dq4, bias1Data, bias1Dims, BIAS_NDIM_1);
     */
@@ -471,7 +478,7 @@ int runExperiment(dataLoader_t *trainLoader, dataLoader_t *valLoader, dataLoader
             "\"momentum\": %.6f, \"seed\": %d, \"shuffle_seed\": %d, \"rounding_mode\": %d},\n"
             "  \"epochs\": [\n",
             trial_number, epochs, batch, (double)learning_rate, (double)momentum, SEED,
-            SHUFFLE_SEED, rounding_mode);
+            SHUFFLE_SEED);
     fflush(g_log_file);
 
     clock_gettime(CLOCK_MONOTONIC, &g_epoch_t0);
@@ -533,12 +540,12 @@ int runExperiment(dataLoader_t *trainLoader, dataLoader_t *valLoader, dataLoader
 
     int npy_len = snprintf(NULL, 0, "%s_%d.npy", prefix, trial_number);
 
-    char *npy_filename = malloc(npy_len + 1);
+    char *npy_filename = malloc(len + 1);
     if (npy_filename == NULL) {
         return 1;
     }
 
-    snprintf(npy_filename, npy_len + 1, "%s_%d.npy", prefix, trial_number);
+    snprintf(npy_filename, len + 1, "%s_%d.npy", prefix, trial_number);
 
     size_t outShape[] = {numTest};
     int status = 0;
@@ -576,8 +583,8 @@ int main(int argc, char *argv[]) {
     double learning_rate = 0.01f;
     double momentum = 0.9f;
     roundingMode_t rounding_mode = HALF_AWAY;
-    int epochs = 2;
-    int batch = 80;
+    int epochs = 5;
+    int batch = 64;
 
     if (argc > 2) {
         trial_number = atof(argv[1]);
@@ -607,12 +614,12 @@ int main(int argc, char *argv[]) {
     int status =
         runExperiment(trainLoader, valLoader, testLoader, trial_number, delta_reduction,
                       learning_rate, momentum, rounding_mode, epochs, batch, WITHOUT_DELTAS);
-    /*if (status != 0) {
+    if (status != 0) {
         return status;
     }
     printf("main: start runExperiment with DELTA------------------------------------\n");
     status = runExperiment(trainLoader, valLoader, testLoader, trial_number, delta_reduction,
-                          learning_rate, momentum, rounding_mode, epochs, batch, WITH_DELTAS);
-*/
+                           learning_rate, momentum, rounding_mode, epochs, batch, WITH_DELTAS);
+
     return status;
 }

@@ -125,18 +125,18 @@ static void initBufferOutput(tensor_t *buffer, layer_t *currentLayer, shape_t *i
 static void initBufferInput(tensor_t *input, tensor_t *buffer) {
     quantization_t *currentQ = input->quantization;
 
-    size_t sizeDims = input->shape->numberOfDimensions;
+    size_t numberOfDimensions = input->shape->numberOfDimensions;
 
     shape_t *outShape = reserveMemory(sizeof(shape_t));
-    size_t *outDims = reserveMemory(sizeDims * sizeof(size_t));
-    size_t *outOrder = reserveMemory(sizeDims * sizeof(size_t));
+    size_t *outDims = reserveMemory(numberOfDimensions * sizeof(size_t));
+    size_t *outOrder = reserveMemory(numberOfDimensions * sizeof(size_t));
     if( outShape == NULL || outDims == NULL || outOrder == NULL ){
         PRINT_ERROR("Memory Allocation Failed");
         exit(1);
     }
 
     outShape->dimensions = outDims;
-    outShape->numberOfDimensions = sizeDims;
+    outShape->numberOfDimensions = numberOfDimensions;
     outShape->orderOfDimensions = outOrder;
 
     size_t numValues = calcNumberOfElementsByTensor(input);

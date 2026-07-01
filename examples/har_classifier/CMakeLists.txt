@@ -70,6 +70,8 @@ target_link_libraries(train_c_binary_har_classifier PRIVATE
         LinearApi
         Linear
 
+        QuantLayerApi
+
         ReluApi
         Relu
 

@@ -77,7 +77,7 @@ tensor_t *tensorInit(float *data, size_t *dims, size_t numberOfDims, quantizatio
     case INT32:
         size_t size = 0;
         for (size_t i = 0; i < numberOfDims; i++) {
-            size += dims[i];
+            size *= dims[i];
         }
         int32_t *dataInt = reserveMemory(size * sizeof(int32_t));
 	if(dataInt == NULL){

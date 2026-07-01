@@ -97,6 +97,7 @@ void convertFloatTensorToInt32Tensor(tensor_t *inputTensor, tensor_t *outputTens
 }
 
 void convertFloatTensorToSymInt32Tensor(tensor_t *inputTensor, tensor_t *outputTensor) {
+    //printf("convertFloatTensorToSymInt32Tensor: start\n");
     size_t numberOfElements = calcNumberOfElementsByTensor(inputTensor);
 
     float absMax = findAbsMaxFloat(inputTensor->data, numberOfElements);
@@ -329,6 +330,7 @@ void convertSymInt32TensorToAsymTensor(tensor_t *inputTensor, tensor_t *outputTe
     quantizeFloatToAsym(inputAsFloat, numberOfValues, outputAsymQConfig, outputTensor->data);
 }
 /* endregion convertSymInt32Tensor */
+
 /* region convertAsymTensor */
 void convertAsymTensorToInt32Tensor(tensor_t *inputTensor, tensor_t *outputTensor) {
     asymQConfig_t *asymQConfig = inputTensor->quantization->qConfig;

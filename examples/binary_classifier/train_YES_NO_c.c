@@ -140,19 +140,19 @@ static void initDataSets(void) {
     tensorArray_t *trainLabelsRaw = npyLoad("examples/binary_classifier/data/train_y.npy");
 // reshapeItemsAddBatchDim(trainItems);
     g_trainDataset.items = trainItems;
-    g_trainDataset.labels = buildOneHotLabels(trainLabelsRaw);
+    g_trainDataset.labels = buildSymInt32OneHotLabels(trainLabelsRaw);
 
     tensorArray_t *valItems = npyLoad("examples/binary_classifier/data/val_x.npy");
     tensorArray_t *valLabelsRaw = npyLoad("examples/binary_classifier/data/val_y.npy");
     reshapeItemsAddBatchDim(valItems);
     g_valDataset.items = valItems;
-    g_valDataset.labels = buildOneHotLabels(valLabelsRaw);
+    g_valDataset.labels = buildSymInt32OneHotLabels(valLabelsRaw);
 
     tensorArray_t *testItems = npyLoad("examples/binary_classifier/data/test_x.npy");
     tensorArray_t *testLabelsRaw = npyLoad("examples/binary_classifier/data/test_y.npy");
     reshapeItemsAddBatchDim(testItems);
     g_testDataset.items = testItems;
-    g_testDataset.labels = buildOneHotLabels(testLabelsRaw);
+    g_testDataset.labels = buildSymInt32OneHotLabels(testLabelsRaw);
 }
 
 static sample_t *getTrainSample(size_t id) {

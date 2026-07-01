@@ -3,7 +3,7 @@
 
 #include "Rounding.h"
 
-typedef enum qtype { INT32, FLOAT32, SYM_INT32, SYM, ASYM, BOOL, DELTA } qtype_t;
+typedef enum qtype { INT32 = 0, FLOAT32 = 1, SYM_INT32 = 2, SYM = 3, ASYM = 4, BOOL = 5, DELTA = 6} qtype_t;
 
 typedef struct symInt32QConfig {
     float scale;

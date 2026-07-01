@@ -1,0 +1,110 @@
+==62932== Memcheck, a memory error detector
+==62932== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.
+==62932== Using Valgrind-3.26.0 and LibVEX; rerun with -h for copyright info
+==62932== Command: ./build/examples/examples/har_classifier/train_c_binary_har_classifier -1
+==62932== Parent PID: 32060
+==62932== 
+==62932== Use of uninitialised value of size 8
+==62932==    at 0x4A09AE2: _itoa_word (in /nix/store/l0l2ll1lmylczj1ihqn351af2kyp5x19-glibc-2.42-51/lib/libc.so.6)
+==62932==    by 0x4A15182: __printf_buffer (in /nix/store/l0l2ll1lmylczj1ihqn351af2kyp5x19-glibc-2.42-51/lib/libc.so.6)
+==62932==    by 0x4A17257: __vfprintf_internal (in /nix/store/l0l2ll1lmylczj1ihqn351af2kyp5x19-glibc-2.42-51/lib/libc.so.6)
+==62932==    by 0x4002DD5: fprintf(_IO_FILE*, char const* pass_object_size1, ...) (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x4002883: runExperiment (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x40032AF: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==  Uninitialised value was created by a stack allocation
+==62932==    at 0x40023FD: runExperiment (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932== 
+==62932== Conditional jump or move depends on uninitialised value(s)
+==62932==    at 0x4A09AE9: _itoa_word (in /nix/store/l0l2ll1lmylczj1ihqn351af2kyp5x19-glibc-2.42-51/lib/libc.so.6)
+==62932==    by 0x4A15182: __printf_buffer (in /nix/store/l0l2ll1lmylczj1ihqn351af2kyp5x19-glibc-2.42-51/lib/libc.so.6)
+==62932==    by 0x4A17257: __vfprintf_internal (in /nix/store/l0l2ll1lmylczj1ihqn351af2kyp5x19-glibc-2.42-51/lib/libc.so.6)
+==62932==    by 0x4002DD5: fprintf(_IO_FILE*, char const* pass_object_size1, ...) (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x4002883: runExperiment (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x40032AF: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==  Uninitialised value was created by a stack allocation
+==62932==    at 0x40023FD: runExperiment (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932== 
+==62932== Conditional jump or move depends on uninitialised value(s)
+==62932==    at 0x4A159DA: __printf_buffer (in /nix/store/l0l2ll1lmylczj1ihqn351af2kyp5x19-glibc-2.42-51/lib/libc.so.6)
+==62932==    by 0x4A17257: __vfprintf_internal (in /nix/store/l0l2ll1lmylczj1ihqn351af2kyp5x19-glibc-2.42-51/lib/libc.so.6)
+==62932==    by 0x4002DD5: fprintf(_IO_FILE*, char const* pass_object_size1, ...) (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x4002883: runExperiment (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x40032AF: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==  Uninitialised value was created by a stack allocation
+==62932==    at 0x40023FD: runExperiment (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932== 
+==62932== Conditional jump or move depends on uninitialised value(s)
+==62932==    at 0x4A15C18: __printf_buffer (in /nix/store/l0l2ll1lmylczj1ihqn351af2kyp5x19-glibc-2.42-51/lib/libc.so.6)
+==62932==    by 0x4A17257: __vfprintf_internal (in /nix/store/l0l2ll1lmylczj1ihqn351af2kyp5x19-glibc-2.42-51/lib/libc.so.6)
+==62932==    by 0x4002DD5: fprintf(_IO_FILE*, char const* pass_object_size1, ...) (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x4002883: runExperiment (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x40032AF: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==  Uninitialised value was created by a stack allocation
+==62932==    at 0x40023FD: runExperiment (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932== 
+==62932== Invalid write of size 4
+==62932==    at 0x4009CC2: copyTensor (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x400DB6B: inferenceWithLoss (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x400A309: evaluateEpochInternal (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x400AC0D: trainingRun (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x40028F6: runExperiment (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x40032AF: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==  Address 0x8 is not stack'd, malloc'd or (recently) free'd
+==62932== 
+==62932== 
+==62932== Process terminating with default action of signal 11 (SIGSEGV)
+==62932==  Access not within mapped region at address 0x8
+==62932==    at 0x4009CC2: copyTensor (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x400DB6B: inferenceWithLoss (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x400A309: evaluateEpochInternal (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x400AC0D: trainingRun (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x40028F6: runExperiment (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x40032AF: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==  If you believe this happened as a result of a stack
+==62932==  overflow in your program's main thread (unlikely but
+==62932==  possible), you can try to increase the size of the
+==62932==  main thread stack using the --main-stacksize= flag.
+==62932==  The main thread stack size used in this run was 8388608.
+==62932== 
+==62932== HEAP SUMMARY:
+==62932==     in use at exit: 50,548,064 bytes in 123,770 blocks
+==62932==   total heap usage: 727,227 allocs, 603,457 frees, 216,076,921 bytes allocated
+==62932== 
+==62932== 28 (16 direct, 12 indirect) bytes in 1 blocks are definitely lost in loss record 111 of 200
+==62932==    at 0x48A3549: calloc (in /nix/store/1ds784mmv5l6a91lc8iyrcis5lgqdy4d-valgrind-3.26.0/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==62932==    by 0x4005FA6: quantizationInitSymInt32 (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x40024AF: runExperiment (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x40032AF: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932== 
+==62932== 28 (16 direct, 12 indirect) bytes in 1 blocks are definitely lost in loss record 112 of 200
+==62932==    at 0x48A3549: calloc (in /nix/store/1ds784mmv5l6a91lc8iyrcis5lgqdy4d-valgrind-3.26.0/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==62932==    by 0x4005FA6: quantizationInitSymInt32 (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x4002501: runExperiment (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x40032AF: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932== 
+==62932== 28 (16 direct, 12 indirect) bytes in 1 blocks are definitely lost in loss record 113 of 200
+==62932==    at 0x48A3549: calloc (in /nix/store/1ds784mmv5l6a91lc8iyrcis5lgqdy4d-valgrind-3.26.0/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==62932==    by 0x4005FA6: quantizationInitSymInt32 (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x400260A: runExperiment (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x40032AF: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932== 
+==62932== 128 (16 direct, 112 indirect) bytes in 1 blocks are definitely lost in loss record 146 of 200
+==62932==    at 0x48A3549: calloc (in /nix/store/1ds784mmv5l6a91lc8iyrcis5lgqdy4d-valgrind-3.26.0/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==62932==    by 0x400D846: reserveInferenceStats (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x400DA82: inferenceWithLoss (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x400A309: evaluateEpochInternal (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x400AC0D: trainingRun (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x40028F6: runExperiment (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932==    by 0x40032AF: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==62932== 
+==62932== LEAK SUMMARY:
+==62932==    definitely lost: 64 bytes in 4 blocks
+==62932==    indirectly lost: 148 bytes in 9 blocks
+==62932==      possibly lost: 0 bytes in 0 blocks
+==62932==    still reachable: 50,547,852 bytes in 123,757 blocks
+==62932==         suppressed: 0 bytes in 0 blocks
+==62932== Reachable blocks (those to which a pointer was found) are not shown.
+==62932== To see them, rerun with: --leak-check=full --show-leak-kinds=all
+==62932== 
+==62932== For lists of detected and suppressed errors, rerun with: -s
+==62932== ERROR SUMMARY: 25 errors from 9 contexts (suppressed: 0 from 0)

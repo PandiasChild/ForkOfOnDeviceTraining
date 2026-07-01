@@ -26,10 +26,10 @@ float trainingEpochDefault(layer_t **model, size_t modelSize, lossConfig_t lossC
          * owned by the dataset and remains alive throughout the macro
          * batch, so labelRef stays valid for computeMeanScale below. */
         tensor_t *labelRef = batch->samples[0]->label;
-
+        //printf("trainingEpochDefault: start trainingBatchDefault\n");
         totalLoss += trainingBatchDefault(model, modelSize, lossConfig, batch, calculateGradsFn,
                                           forwardReduction);
-
+        //printf("trainingEpochDefault: done trainingBatchDefault\n");
         if (lossConfig.backwardReduction == REDUCTION_MEAN) {
             /* Each loss family derives F from labelRef's shape itself. */
             float meanScale =

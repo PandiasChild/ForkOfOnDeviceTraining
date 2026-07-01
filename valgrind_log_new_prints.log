@@ -1,0 +1,72 @@
+==116401== Memcheck, a memory error detector
+==116401== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.
+==116401== Using Valgrind-3.26.0 and LibVEX; rerun with -h for copyright info
+==116401== Command: ./build/examples/examples/har_classifier/train_c_binary_har_classifier -1
+==116401== Parent PID: 32060
+==116401== 
+==116401== Invalid write of size 4
+==116401==    at 0x4009BCC: copyTensor (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==116401==    by 0x400DAEB: inferenceWithLoss (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==116401==    by 0x400A22A: evaluateEpochInternal (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==116401==    by 0x400AB8D: trainingRun (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==116401==    by 0x40028FA: runExperiment (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==116401==    by 0x400329C: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==116401==  Address 0x8 is not stack'd, malloc'd or (recently) free'd
+==116401== 
+==116401== 
+==116401== Process terminating with default action of signal 11 (SIGSEGV)
+==116401==  Access not within mapped region at address 0x8
+==116401==    at 0x4009BCC: copyTensor (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==116401==    by 0x400DAEB: inferenceWithLoss (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==116401==    by 0x400A22A: evaluateEpochInternal (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==116401==    by 0x400AB8D: trainingRun (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==116401==    by 0x40028FA: runExperiment (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==116401==    by 0x400329C: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==116401==  If you believe this happened as a result of a stack
+==116401==  overflow in your program's main thread (unlikely but
+==116401==  possible), you can try to increase the size of the
+==116401==  main thread stack using the --main-stacksize= flag.
+==116401==  The main thread stack size used in this run was 8388608.
+==116401== 
+==116401== HEAP SUMMARY:
+==116401==     in use at exit: 50,712,864 bytes in 123,770 blocks
+==116401==   total heap usage: 724,657 allocs, 600,887 frees, 215,444,585 bytes allocated
+==116401== 
+==116401== 28 (16 direct, 12 indirect) bytes in 1 blocks are definitely lost in loss record 111 of 200
+==116401==    at 0x48A3549: calloc (in /nix/store/1ds784mmv5l6a91lc8iyrcis5lgqdy4d-valgrind-3.26.0/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==116401==    by 0x4005F56: quantizationInitSymInt32 (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==116401==    by 0x40024AE: runExperiment (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==116401==    by 0x400329C: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==116401== 
+==116401== 28 (16 direct, 12 indirect) bytes in 1 blocks are definitely lost in loss record 112 of 200
+==116401==    at 0x48A3549: calloc (in /nix/store/1ds784mmv5l6a91lc8iyrcis5lgqdy4d-valgrind-3.26.0/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==116401==    by 0x4005F56: quantizationInitSymInt32 (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==116401==    by 0x4002500: runExperiment (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==116401==    by 0x400329C: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==116401== 
+==116401== 28 (16 direct, 12 indirect) bytes in 1 blocks are definitely lost in loss record 113 of 200
+==116401==    at 0x48A3549: calloc (in /nix/store/1ds784mmv5l6a91lc8iyrcis5lgqdy4d-valgrind-3.26.0/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==116401==    by 0x4005F56: quantizationInitSymInt32 (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==116401==    by 0x4002600: runExperiment (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==116401==    by 0x400329C: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==116401== 
+==116401== 144 (16 direct, 128 indirect) bytes in 1 blocks are definitely lost in loss record 146 of 200
+==116401==    at 0x48A3549: calloc (in /nix/store/1ds784mmv5l6a91lc8iyrcis5lgqdy4d-valgrind-3.26.0/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==116401==    by 0x400D7C6: reserveInferenceStats (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==116401==    by 0x400DA02: inferenceWithLoss (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==116401==    by 0x400A22A: evaluateEpochInternal (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==116401==    by 0x400AB8D: trainingRun (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==116401==    by 0x40028FA: runExperiment (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==116401==    by 0x400329C: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==116401== 
+==116401== LEAK SUMMARY:
+==116401==    definitely lost: 64 bytes in 4 blocks
+==116401==    indirectly lost: 164 bytes in 9 blocks
+==116401==      possibly lost: 0 bytes in 0 blocks
+==116401==    still reachable: 50,712,636 bytes in 123,757 blocks
+==116401==         suppressed: 0 bytes in 0 blocks
+==116401== Reachable blocks (those to which a pointer was found) are not shown.
+==116401== To see them, rerun with: --leak-check=full --show-leak-kinds=all
+==116401== 
+==116401== For lists of detected and suppressed errors, rerun with: -s
+==116401== ERROR SUMMARY: 5 errors from 5 contexts (suppressed: 0 from 0)

@@ -15,7 +15,24 @@
 #include "TensorApi.h"
 #include "TensorConversion.h"
 
-
+char *AAAquantTypeToString(qtype_t t) {
+    switch (t) {
+    case INT32:
+        return "INT32";
+    case FLOAT32:
+        return "FLOAT32";
+    case SYM_INT32:
+        return "SYMINT32";
+    case SYM:
+        return "SYM";
+    case ASYM:
+        return "ASYM";
+    case DELTA:
+        return "DELTA";
+    default:
+        return "UNKNOWN";
+    }
+}
 // IMPORTANT: Currently, the quantization for states are the same as the corresponding parameter
 optimizer_t *sgdMCreateOptim(float learningRate, float momentumFactor, float weightDecay,
                              layer_t **model, size_t sizeModel, qtype_t qType) {
@@ -61,10 +78,18 @@ optimizer_t *sgdMCreateOptim(float learningRate, float momentumFactor, float wei
 
             tensor_t *weightStateBuffer = getTensorLike(weights->param);
             tensor_t *biasStateBuffer = getTensorLike(bias->param);
+            /*printf("weightStateBuffer: ");
+            printf(AAAquantTypeToString(weightStateBuffer->quantization->type));
+            printf("\nbiasStateBuffer: ");
+            printf(AAAquantTypeToString(biasStateBuffer->quantization->type));
+            printf("\nsgdMCreateOptim: start linearForwardSymInt32\n");*/
+
             if (weights->param->quantization->type == DELTA){
+                PRINT_DEBUG("this should never occur");
                 convertTensor(weights->param, weightStateBuffer);
             }
             if (bias->param->quantization->type == DELTA){
+                PRINT_DEBUG("this should never occur");
                 convertTensor(bias->param, biasStateBuffer);
             }
             states_t *weightStates = reserveMemory(sizeof(states_t));

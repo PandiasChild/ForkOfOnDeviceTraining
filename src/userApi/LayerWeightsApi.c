@@ -11,6 +11,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+
+//TODO: hier ggf noch ergänzen DELTA
 void layerLoadWeights(layer_t *layer, float *weightData, float *biasData) {
     if (layer == NULL) {
         PRINT_ERROR("layerLoadWeights: layer is NULL");

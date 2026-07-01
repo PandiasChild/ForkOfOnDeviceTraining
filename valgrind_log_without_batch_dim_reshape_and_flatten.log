@@ -1,0 +1,67 @@
+==70093== Memcheck, a memory error detector
+==70093== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.
+==70093== Using Valgrind-3.26.0 and LibVEX; rerun with -h for copyright info
+==70093== Command: ./build/examples/examples/har_classifier/train_c_binary_har_classifier -1
+==70093== Parent PID: 32060
+==70093== 
+==70093== Use of uninitialised value of size 8
+==70093==    at 0x400B4E4: calcTotalNumberOfStates (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==70093==    by 0x400CB33: sgdMCreateOptim (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==70093==    by 0x400278B: runExperiment (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==70093==    by 0x400329F: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==70093==  Uninitialised value was created by a stack allocation
+==70093==    at 0x40023F0: runExperiment (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==70093== 
+==70093== Invalid read of size 4
+==70093==    at 0x400B4E4: calcTotalNumberOfStates (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==70093==    by 0x400CB33: sgdMCreateOptim (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==70093==    by 0x400278B: runExperiment (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==70093==    by 0x400329F: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==70093==  Address 0x0 is not stack'd, malloc'd or (recently) free'd
+==70093== 
+==70093== 
+==70093== Process terminating with default action of signal 11 (SIGSEGV)
+==70093==  Access not within mapped region at address 0x0
+==70093==    at 0x400B4E4: calcTotalNumberOfStates (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==70093==    by 0x400CB33: sgdMCreateOptim (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==70093==    by 0x400278B: runExperiment (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==70093==    by 0x400329F: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==70093==  If you believe this happened as a result of a stack
+==70093==  overflow in your program's main thread (unlikely but
+==70093==  possible), you can try to increase the size of the
+==70093==  main thread stack using the --main-stacksize= flag.
+==70093==  The main thread stack size used in this run was 8388608.
+==70093== 
+==70093== HEAP SUMMARY:
+==70093==     in use at exit: 50,229,308 bytes in 123,710 blocks
+==70093==   total heap usage: 185,562 allocs, 61,852 frees, 51,271,514 bytes allocated
+==70093== 
+==70093== 28 (16 direct, 12 indirect) bytes in 1 blocks are definitely lost in loss record 91 of 158
+==70093==    at 0x48A3549: calloc (in /nix/store/1ds784mmv5l6a91lc8iyrcis5lgqdy4d-valgrind-3.26.0/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==70093==    by 0x4005C16: quantizationInitSymInt32 (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==70093==    by 0x40024AF: runExperiment (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==70093==    by 0x400329F: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==70093== 
+==70093== 28 (16 direct, 12 indirect) bytes in 1 blocks are definitely lost in loss record 92 of 158
+==70093==    at 0x48A3549: calloc (in /nix/store/1ds784mmv5l6a91lc8iyrcis5lgqdy4d-valgrind-3.26.0/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==70093==    by 0x4005C16: quantizationInitSymInt32 (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==70093==    by 0x4002501: runExperiment (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==70093==    by 0x400329F: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==70093== 
+==70093== 60 (40 direct, 20 indirect) bytes in 1 blocks are definitely lost in loss record 103 of 158
+==70093==    at 0x48A3549: calloc (in /nix/store/1ds784mmv5l6a91lc8iyrcis5lgqdy4d-valgrind-3.26.0/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==70093==    by 0x400CAC3: sgdMCreateOptim (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==70093==    by 0x400278B: runExperiment (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==70093==    by 0x400329F: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_binary_har_classifier)
+==70093== 
+==70093== LEAK SUMMARY:
+==70093==    definitely lost: 72 bytes in 3 blocks
+==70093==    indirectly lost: 44 bytes in 4 blocks
+==70093==      possibly lost: 0 bytes in 0 blocks
+==70093==    still reachable: 50,229,192 bytes in 123,703 blocks
+==70093==         suppressed: 0 bytes in 0 blocks
+==70093== Reachable blocks (those to which a pointer was found) are not shown.
+==70093== To see them, rerun with: --leak-check=full --show-leak-kinds=all
+==70093== 
+==70093== For lists of detected and suppressed errors, rerun with: -s
+==70093== ERROR SUMMARY: 5 errors from 5 contexts (suppressed: 0 from 0)

@@ -20,15 +20,17 @@ void reluForwardFloat(tensor_t *input, tensor_t *output) {
 }
 
 void reluForwardSymInt32(tensor_t *input, tensor_t *output) {
+    //printf("reluForwardSymInt32: start\n");
     symInt32QConfig_t *inputSymInt32QC = input->quantization->qConfig;
     symInt32QConfig_t *outputSymInt32QC = output->quantization->qConfig;
+    //printf("reluForwardSymInt32: start gteSymInt32Zero\n");
     gteSymInt32Zero(input, 0, output);
     outputSymInt32QC->scale = inputSymInt32QC->scale;
 }
 
 void reluForward(layer_t *reluLayer, tensor_t *input, tensor_t *output) {
     reluConfig_t *reluConfig = reluLayer->config->relu;
-
+    //printf("reluForward: start\n");
     switch (reluConfig->forwardQ->type) {
     case FLOAT32:
         reluForwardFloat(input, output);
@@ -86,7 +88,9 @@ void reluBackward(layer_t *reluLayer, tensor_t *forwardInput, tensor_t *loss, te
         reluBackwardFloat(forwardInput, loss, propLoss);
         break;
     case SYM_INT32:
+        //printf("reluBackward: start reluBackwardSymInt32\n");
         reluBackwardSymInt32(forwardInput, loss, propLoss);
+        //printf("reluBackward: done reluBackwardSymInt32\n");
         break;
     default:
         PRINT_ERROR("Unknown QType!");

@@ -39,26 +39,30 @@ trainingStats_t *calculateGradsSequential(layer_t **model, size_t modelSize,
     tensor_t *layerOutputs[modelSize + 1];
     layerOutputs[0] = input;
     setDropoutLayersTraining(model, modelSize, true);
-
+    //printf("calculateGradsSequential: start initLayerOutputs\n");
     initLayerOutputs(layerOutputs, model, modelSize);
 
     // Forward pass
     for (size_t i = 0; i < modelSize; i++) {
         layer_t *currentLayer = model[i];
         layerType_t currentLayerType = currentLayer->type;
+        //printf("calculateGradsSequential: start forward\n");
         forwardFn_t forward = layerFunctions[currentLayerType].forward;
 
         forward(currentLayer, layerOutputs[i], layerOutputs[i + 1]);
 
     }
 
+    //printf("calculateGradsSequential: start initTrainingStats\n");
     trainingStats_t *trainingStats = initTrainingStats(layerOutputs[modelSize]);
     copyTensor(trainingStats->output, layerOutputs[modelSize]);
 
     // LOSS
 
     lossFunctions_t lossFns = lossFunctions[lossConfig.funcType];
+    //printf("calculateGradsSequential: start lossFns\n");
     float loss = lossFns.forward(layerOutputs[modelSize], label, forwardReduction);
+    //printf("calculateGradsSequential: done lossFns\n");
     trainingStats->loss = loss;
 
     // Backward pass
@@ -68,7 +72,9 @@ trainingStats_t *calculateGradsSequential(layer_t **model, size_t modelSize,
     }
 
     tensor_t gradNext;
+    //printf("calculateGradsSequential: start initGradTensor\n");
     initGradTensor(&gradNext, layerOutputs[modelSize]);
+    //printf("calculateGradsSequential: start backward\n");
     lossFns.backward(layerOutputs[modelSize], label, &gradNext);
 
     for (int i = (int)backwardIndex; i >= 0; i--) {

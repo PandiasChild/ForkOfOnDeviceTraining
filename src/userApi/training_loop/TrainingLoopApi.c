@@ -75,8 +75,10 @@ static float evaluateBatchInternal(layer_t **model, size_t modelSize, lossFuncTy
     float totalLoss = 0.0f;
 
     for (size_t i = 0; i < batch->size; i++) {
+        printf("evaluateBatchInternal: should enter InferenceWithLoss\n");
         inferenceStats_t *stats = inferenceFn(model, modelSize, batch->samples[i]->item,
                                               batch->samples[i]->label, funcType, forwardReduction);
+        printf("evaluateBatchInternal: should exit InferenceWithLoss\n");
         totalLoss += stats->loss;
 
         float *outputData = (float *)stats->output->data;
@@ -249,10 +251,10 @@ trainingRunResult_t trainingRun(layer_t **model, size_t modelSize, lossConfig_t 
     const reduction_t forwardReduction = REDUCTION_MEAN;
 
     for (size_t epoch = 0; epoch < numberOfEpochs; epoch++) {
-        printf("trainingRun: start trainingEpochDefault\n");
+        //printf("trainingRun: start trainingEpochDefault\n");
         float trainLoss = trainingEpochDefault(model, modelSize, lossConfig, trainDataLoader,
                                                optimizer, calculateGradsFn, forwardReduction);
-        printf("trainingRun: start evaluateEpochInternal\n");
+        //printf("trainingRun: start evaluateEpochInternal\n");
         epochStats_t evalStats =
             evaluateEpochInternal(model, modelSize, lossConfig.funcType, evalDataLoader,
                                   inferenceFn, NULL, numClasses, forwardReduction);

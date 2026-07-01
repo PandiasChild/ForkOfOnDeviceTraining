@@ -82,7 +82,6 @@ void gteSymInt32Zero(tensor_t *a, int32_t altNumber, tensor_t *result) {
 
     int32_t *inputValues = (int32_t *)a->data;
     int32_t *outputValues = (int32_t *)result->data;
-
     for (size_t i = 0; i < numberOfValues; i++) {
         int32_t currentValue = inputValues[i];
         if (currentValue < 0) {

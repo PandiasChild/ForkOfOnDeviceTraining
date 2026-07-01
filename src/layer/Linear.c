@@ -57,7 +57,6 @@ void linearForwardSymInt32(tensor_t *w, tensor_t *b, tensor_t *input, tensor_t *
 }
 
 void linearForward(layer_t *linearLayer, tensor_t *input, tensor_t *output) {
-
     linearConfig_t *linearConfig = linearLayer->config->linear;
     tensor_t *weights = getParamFromParameter(linearConfig->weights);
     tensor_t *bias = getParamFromParameter(linearConfig->bias);
@@ -67,12 +66,12 @@ void linearForward(layer_t *linearLayer, tensor_t *input, tensor_t *output) {
         linearForwardFloat(weights, bias, input, output);
         break;
     case SYM_INT32:
-
+        //printf("linearForward: start case SYM_INT32\n");
         tensor_t symInt32Weights;
         quantization_t symInt32QuantizationWeights;
         symInt32QConfig_t symInt32QConfigWeights;
         if (weights->quantization->type == DELTA){
-
+            printf("linearForward: start weights DELTA\n");
             symInt32Weights.shape = weights->shape;
             symInt32Weights.sparsity = weights->sparsity;
             symInt32Weights.quantization = &symInt32QuantizationWeights;
@@ -95,13 +94,16 @@ void linearForward(layer_t *linearLayer, tensor_t *input, tensor_t *output) {
             convertTensor(bias, &symInt32Bias);
             bias = &symInt32Bias;
         }
-        if(weights == NULL){
-
-        }
-        if(bias == NULL){
-
-        }
-
+        /*printf("linearForward: start linearForwardSymInt32\n");
+        printf(AAquantTypeToString(weights->quantization->type));
+        printf("\n");
+        printf(AAquantTypeToString(bias->quantization->type));
+        printf("\n");
+        printf("InputQuantization: ");
+        printf(AAquantTypeToString(input->quantization->type));
+        printf("\nOutputQuantization: ");
+        printf(AAquantTypeToString(output->quantization->type));
+        printf("\n");*/
         linearForwardSymInt32(weights, bias, input, output);
         break;
     default:
