@@ -455,8 +455,9 @@ void copyData(tensor_t *dest, tensor_t *src) {
 
     if(srcValues != dstValues){
         PRINT_ERROR("src and destination have different shapes");
+        exit(1);
     }
-    size_t sizeData = calcNumberOfBytesForData(src->quantization, srcValues);
+    size_t sizeData = calcNumberOfBytesForData(src->quantization, dstValues);
 
     memcpy(dest->data, src->data, sizeData);
 

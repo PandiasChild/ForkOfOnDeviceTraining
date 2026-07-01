@@ -34,6 +34,13 @@
 
 #include "../../src/data_loader/include/Dataset.h"
 #include "../../src/layer/include/Dropout.h"
+#include "../../src/layer/include/Relu.h"
+#include "../../src/tensor/include/Tensor.h"
+#include "../../src/userApi/include/LayerCommon.h"
+#include "../../src/userApi/include/LayerQuant.h"
+#include "../../src/userApi/include/StorageApi.h"
+#include "../../src/userApi/layer/include/LinearApi.h"
+#include "../../src/userApi/layer/include/ReluApi.h"
 #include "../../src/userApi/tensor/include/TensorApi.h"
 #include "npy_writer.h"
 
@@ -101,7 +108,7 @@ static void reshapeItemsAddBatchDim(tensorArray_t *items) {
 }
 static tensorArray_t *buildOneHotLabels(tensorArray_t *intLabels) {
     /* intLabels->array[i] is a rank-0 int32 tensor (single class index 0..5).
-     * We allocate a brand-new tensorArray_t whose entries are rank-1 int32
+     * We allocate a brand-new tensorArray_t whose entries are rank-2 int32
      * one-hot tensors of shape [NUM_CLASSES]. The original int32 array is
      * left intact (caller still owns it). */
     tensorArray_t *out = reserveMemory(sizeof(tensorArray_t));
@@ -238,154 +245,45 @@ static size_t getTestSize(void) {
     return g_testDataset.items->size;
 }
 
-/* ------------------------------------------------------------------------- */
-/* Model parameters (file-static — must outlive buildModel).                 */
-/* ------------------------------------------------------------------------- */
-
-static float weight0Data[L1_OUT * FLATTEN_SIZE] = {0};
-static size_t weight0Dims[WEIGHT_NDIM_0] = {L1_OUT, FLATTEN_SIZE};
-
-static float bias0Data[L1_OUT] = {0};
-static size_t bias0Dims[BIAS_NDIM_0] = {L1_OUT};
-
-static float weight1Data[NUM_CLASSES * L1_OUT] = {0};
-static size_t weight1Dims[WEIGHT_NDIM_1] = {NUM_CLASSES, L1_OUT};
-
-static float bias1Data[NUM_CLASSES] = {0};
-static size_t bias1Dims[BIAS_NDIM_1] = {NUM_CLASSES};
-
-static parameter_t *buildParam(quantization_t *q, float *data, size_t *dims, size_t ndim) {
-    size_t *order = reserveMemory(ndim * sizeof(size_t));
-    size_t *dimensions = reserveMemory(ndim * sizeof(size_t));
-    size_t *orderFloat = reserveMemory(ndim * sizeof(size_t));
-    size_t *dimensionsFloat = reserveMemory(ndim * sizeof(size_t));
-
-    if (order == NULL || dimensions == NULL || orderFloat == NULL || dimensionsFloat == NULL) {
-        PRINT_ERROR("Memory Allocation Failed");
-        exit(1);
-    }
-
-    for (size_t i = 0; i < ndim; i++) {
-        order[i] = i;
-        orderFloat[i] = i;
-        dimensions[i] = dims[i];
-        dimensionsFloat[i] = dims[i];
-    }
-
-    shape_t *shape = reserveMemory(sizeof(shape_t));
-    shape_t *shapeFloat = reserveMemory(sizeof(shape_t));
-
-    if (shape == NULL || shapeFloat == NULL) {
-        PRINT_ERROR("Memory Allocation Failed");
-        exit(1);
-    }
-
-    shape->dimensions = dimensions;
-    shape->orderOfDimensions = order;
-    shape->numberOfDimensions = ndim;
-
-    shapeFloat->dimensions = dimensionsFloat;
-    shapeFloat->orderOfDimensions = orderFloat;
-    shapeFloat->numberOfDimensions = ndim;
-
-    quantization_t *floatq = quantizationInitFloat();
-    tensor_t *floatTensor = initTensor(shapeFloat, floatq, NULL);
-    size_t numberOfElements = calcNumberOfElementsByTensor(floatTensor);
-    memcpy(floatTensor->data, data, numberOfElements * sizeof(float));
-
-    tensor_t *p = initTensor(shape, q, NULL);
-    convertTensor(floatTensor, p);
-
-    freeTensor(floatTensor);
-    tensor_t *g = gradInitFloat(p, NULL);
-    return parameterInit(p, g);
-}
-
 static void buildModel(layer_t **model, uint8_t delta_reduction, roundingMode_t roundingMode,
                        deltaStatus_t deltaStatus) {
     uint8_t qBits = 16;
     uint8_t deltabits = qBits - delta_reduction;
+    quantization_t *symInt32Q = quantizationInitSymInt32(roundingMode);
 
-    quantization_t *q1 = quantizationInitSymInt32(roundingMode);
-    quantization_t *q2 = quantizationInitSymInt32(roundingMode);
-    quantization_t *q3 = quantizationInitSymInt32(roundingMode);
-    quantization_t *q5 = quantizationInitSymInt32(roundingMode);
-    quantization_t *q7 = quantizationInitSymInt32(roundingMode);
-    quantization_t *q8 = quantizationInitSymInt32(roundingMode);
-    quantization_t *q9 = quantizationInitSymInt32(roundingMode);
-    quantization_t *q11 = quantizationInitSymInt32(roundingMode);
+    layerQuant_t *quantizationQ = reserveMemory(sizeof(layerQuant_t));
+    layerQuantInitUniform(quantizationQ, symInt32Q);
 
-    quantization_t *q0;
-    quantization_t *q4;
-    quantization_t *q6;
-    quantization_t *q10;
-    quantization_t *q12;
-    quantization_t *q13;
-    quantization_t *q14;
-    quantization_t *q15;
-
-    if (deltaStatus == WITHOUT_DELTAS) {
-        q0 = quantizationInitSymInt32(roundingMode);
-        q4 = quantizationInitSymInt32(roundingMode);
-        q6 = quantizationInitSymInt32(roundingMode);
-        q10 = quantizationInitSymInt32(roundingMode);
-        q12 = quantizationInitSymInt32(roundingMode);
-        q13 = quantizationInitSymInt32(roundingMode);
-        q14 = quantizationInitSymInt32(roundingMode);
-        q15 = quantizationInitSymInt32(roundingMode);
-    } else if (deltaStatus == WITH_DELTAS) {
-        q0 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
-        q4 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
-        q6 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
-        q10 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
-        q12 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
-        q13 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
-        q14 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
-        q15 = quantizationInitSymQDelta(qBits, roundingMode, deltabits);
-    }
-    /*
-    typedef struct layerQuant {
-        quantization_t *forwardMath;   /* REQUIRED for every layer except Flatten
-        quantization_t *backwardMath;  /* REQUIRED for every layer except Flatten
-        quantization_t *weightStorage; /* REQUIRED for Conv1d / Conv1dTransposed / Linear
-        quantization_t
-            *biasStorage; /* REQUIRED for Conv1d / Conv1dTransposed / Linear when bias is enabled
-    } layerQuant_t;
-    */
-
-    //is bias enabled for linear???
-    quantization_t *forwardMath = quantizationInitSymInt32(roundingMode);
-    quantization_t *backwardMath = quantizationInitSymInt32(roundingMode);
-    quantization_t *weightStorage = quantizationInitSymInt32(roundingMode);
-    quantization_t *biasStorage = quantizationInitSymInt32(roundingMode);
-    layerQuant_t layerQuant = {forwardMath, backwardMath, weightStorage, biasStorage};
-    model[0] = quantLayerInit(&layerQuant);
-    // [9, 128] -> [1152]
+    model[0] = quantLayerInit(quantizationQ);
+    // [1,9, 128] -> [1, 1152]
     model[1] = flattenLayerInit();
 
-
-    parameter_t *weight0 = buildParam(q14, weight0Data, weight0Dims, WEIGHT_NDIM_0);
-    printf("buildModel: done buildParam\n");
-    parameter_t *bias0 = buildParam(q15, bias0Data, bias0Dims, BIAS_NDIM_0);
-    printf("buildModel: done buildParam\n");
-
     // Linear 1152->64
-    model[2] = linearLayerInitLegacy(weight0, bias0, q0, q1, q2, q3);
-    printf("buildModel: done linearLayerInitLegacy\n");
+    layerQuant_t *quantizationL1 = reserveMemory(sizeof(layerQuant_t));
+    layerQuantInitUniform(quantizationL1, symInt32Q);
+
+    linearInit_t *initL1 = reserveMemory(sizeof(linearInit_t));
+
+    initL1->bias = BIAS_TRUE;
+    initL1->inFeatures = FLATTEN_SIZE;
+    initL1->outFeatures = L1_OUT;
+
+    model[2] = linearLayerInit(initL1, quantizationL1);
 
     // ReLU
-    model[3] = reluLayerInitLegacy(q4, q5);
-    // Linear 64→6
-    /* parameter_t *weight1 = buildParam(XAVIER_UNIFORM, dq3, weight1Data, weight1Dims,
-    WEIGHT_NDIM_1); parameter_t *bias1 = buildParam(ZEROS, dq4, bias1Data, bias1Dims, BIAS_NDIM_1);
-    */
-    parameter_t *weight1 = buildParam(q12, weight1Data, weight1Dims, WEIGHT_NDIM_1);
-    parameter_t *bias1 = buildParam(q13, bias1Data, bias1Dims, BIAS_NDIM_1);
+    layerQuant_t *quantizationR1 = reserveMemory(sizeof(layerQuant_t));
+    layerQuantInitUniform(quantizationR1, symInt32Q);
+    model[3] = reluLayerInit(quantizationR1);
 
-    model[4] = linearLayerInitLegacy(weight1, bias1, q6, q7, q8, q9);
+    layerQuant_t *quantizationL2= reserveMemory(sizeof(layerQuant_t));
+    layerQuantInitUniform(quantizationL2, symInt32Q);
+    // Linear 64>6
+    linearInit_t *initL2 = reserveMemory(sizeof(linearInit_t));
+    initL2->bias = BIAS_TRUE;
+    initL2->inFeatures = FLATTEN_SIZE;
+    initL2->outFeatures = L1_OUT;
 
-    // Softmax
-    //model[4] = softmaxLayerInitLegacy(q10, q11);
+    model[4] = linearLayerInit(initL2, quantizationL2);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -568,6 +466,7 @@ int main(int argc, char *argv[]) {
     }
     if (argc < 2) {
         printf("Keine (negative) trial_number angegeben\n");
+        printf("Keine (negative) er angegeben\n");
         return 1;
     }
 
