@@ -24,16 +24,9 @@ quantization_t *quantizationInitInt32();
  */
 quantization_t *quantizationInitSymInt32(roundingMode_t roundingMode);
 
-/*! SymInt32 with explicit qMaxBits.  The existing quantizationInitSymInt32(rm)
- *  hardcodes qMaxBits=16; this variant lets callers specify the active bit
- *  width for fixed-point arithmetic (e.g. 12 bits for tighter dynamic range,
- *  32 bits for full int32 range).
- *
- * \param roundingMode: Rounding mode to be used
- * \param qMaxBits: Active bit width for fixed-point arithmetic
- *
- * \returns Pointer to initialized quantization
- */
+/*! SymInt32 with explicit qMaxBits. Plain quantizationInitSymInt32(rm) uses the
+ *  int12 operand default (ODT_SYM_OPERAND_QMAXBITS). Widths >16 need scale=1
+ *  (raw-int, unvalidated); 32 is not cast-safe in the converters (#202). */
 quantization_t *quantizationInitSymInt32WithBits(roundingMode_t roundingMode, uint8_t qMaxBits);
 
 /*! Sub-byte symmetric quantization with explicit bit width and rounding. */

@@ -14,8 +14,7 @@ typedef struct symInt32QConfig {
 /* SYM_INT32 operand bit-width contract (#227). Operands feeding product
  * accumulators are int12 so int12*int12 products stay within an int32
  * accumulator (no int64). Sound for reductions N <= 511 (512*2^22 > INT32_MAX);
- * narrow the knob for wider layers. Grad accumulators are value-sums and stay
- * wide (int16) per the #45 contract. Override with -DODT_SYM_OPERAND_QMAXBITS=N. */
+ * narrow the knob for wider layers. Override with -DODT_SYM_OPERAND_QMAXBITS=N. */
 #ifndef ODT_SYM_OPERAND_QMAXBITS
 #define ODT_SYM_OPERAND_QMAXBITS 12
 #endif
