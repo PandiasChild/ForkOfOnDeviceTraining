@@ -1,6 +1,7 @@
 #define SOURCE_FILE "SGD-UTEST"
 #include <stdlib.h>
 
+#include "DeathTest.h"
 #include "Layer.h"
 #include "LayerNorm.h"
 #include "LayerQuant.h"
@@ -514,6 +515,46 @@ void testSgdStepSymInt32DoesNotRoundTripGrad(void) {
     TEST_ASSERT_FLOAT_WITHIN(1e-9f, 0.05f, gScale);
 }
 
+void testSgdMCreateOptimRejectsSubByteGradStorage(void) {
+    /* FLOAT32 weight param whose grad is allocated sub-byte SYM (int8) — the
+     * not-yet-supported storage PR3 adds. Optimizer construction must abort. */
+    size_t *wDims = reserveMemory(2 * sizeof(size_t));
+    wDims[0] = 2;
+    wDims[1] = 3;
+    size_t *wOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, wOrder);
+    shape_t *wShape = reserveMemory(sizeof(shape_t));
+    setShape(wShape, wDims, 2, wOrder);
+    tensor_t *wParam = initTensor(wShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(wParam, (float[]){0.f, 0.f, 0.f, 0.f, 0.f, 0.f}, 6);
+    tensor_t *wGrad =
+        initTensor(getShapeLike(wParam->shape), quantizationInitSym(8, HALF_AWAY), NULL);
+    parameter_t *weights = parameterInit(wParam, wGrad);
+
+    size_t *bDims = reserveMemory(1 * sizeof(size_t));
+    bDims[0] = 2;
+    size_t *bOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, bOrder);
+    shape_t *bShape = reserveMemory(sizeof(shape_t));
+    setShape(bShape, bDims, 1, bOrder);
+    tensor_t *bParam = initTensor(bShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(bParam, (float[]){0.f, 0.f}, 2);
+    tensor_t *bGrad = gradInitFloat(bParam, NULL);
+    parameter_t *bias = parameterInit(bParam, bGrad);
+
+    quantization_t *fQ = quantizationInitFloat();
+    layer_t *layer = linearLayerInitLegacy(weights, bias, fQ, fQ, fQ, fQ);
+    layer_t *model[1] = {layer};
+
+    ASSERT_EXITS_WITH_FAILURE(sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 1, FLOAT32));
+
+    /* Teardown (parent continues after the fork-based assert; file convention). */
+    freeLinearLayerLegacy(layer);
+    freeParameter(weights);
+    freeParameter(bias);
+    freeQuantization(fQ);
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(testSgdMCreateOptim);
@@ -523,5 +564,6 @@ int main() {
     RUN_TEST(testLayerNormContributesTwoOptimizerStates);
     RUN_TEST(testSgdMCreateOptimRegistersLayerNormGammaAndBeta);
     RUN_TEST(testSgdStepSymInt32DoesNotRoundTripGrad);
+    RUN_TEST(testSgdMCreateOptimRejectsSubByteGradStorage);
     return UNITY_END();
 }

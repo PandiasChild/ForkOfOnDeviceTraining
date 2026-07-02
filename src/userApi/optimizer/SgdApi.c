@@ -163,6 +163,23 @@ optimizer_t *sgdMCreateOptim(float learningRate, float momentumFactor, float wei
             exit(1);
         }
     }
+    /* #261: grads may be stored FLOAT32 (default) or SYM_INT32 (legitimate
+     * low-level path until PR3). Sub-byte SYM/ASYM grad storage is not
+     * implemented yet - fail fast rather than silently misread packed bytes.
+     * Non-trainable params carry no grad: skip. */
+    for (size_t s = 0; s < optim->sizeStates; s++) {
+        tensor_t *grad = optim->parameter[s]->grad;
+        if (grad == NULL) {
+            continue;
+        }
+        qtype_t gradType = grad->quantization->type;
+        if (gradType != FLOAT32 && gradType != SYM_INT32) {
+            PRINT_ERROR("sgdMCreateOptim: gradient storage dtype %d not supported "
+                        "(only FLOAT32 / SYM_INT32; sub-byte grad storage lands in PR3, #261)",
+                        (int)gradType);
+            exit(1);
+        }
+    }
     return optim;
 }
 
