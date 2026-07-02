@@ -10,6 +10,7 @@
 #include "Add.h"
 #include "Arithmetic.h"
 #include "Common.h"
+#include "ExecuteOp.h"
 #include "Layer.h"
 #include "Quantization.h"
 #include "Rounding.h"
@@ -131,22 +132,6 @@ static void layerNormValidateSymTensor(tensor_t *t, const char *what) {
     if (qc->qMaxBits > ODT_SYM_OPERAND_QMAXBITS) {
         PRINT_ERROR("LayerNorm SYM_INT32: %s qMaxBits (%u) exceeds operand contract (%u)", what,
                     (unsigned)qc->qMaxBits, (unsigned)ODT_SYM_OPERAND_QMAXBITS);
-        exit(1);
-    }
-}
-
-/* Grad tensors accumulate via addSymInt32TensorsInplace (no multiply) so they
- * may be as wide as ODT_SYM_GRAD_QMAXBITS (16). Only the SYM_INT32 type is
- * required; the width guard is intentionally looser than the operand contract. */
-static void layerNormValidateSymGrad(tensor_t *t, const char *what) {
-    if (t->quantization->type != SYM_INT32) {
-        PRINT_ERROR("LayerNorm SYM_INT32: %s must be SYM_INT32", what);
-        exit(1);
-    }
-    symInt32QConfig_t *qc = t->quantization->qConfig;
-    if (qc->qMaxBits > ODT_SYM_GRAD_QMAXBITS) {
-        PRINT_ERROR("LayerNorm SYM_INT32: %s qMaxBits (%u) exceeds grad contract (%u)", what,
-                    (unsigned)qc->qMaxBits, (unsigned)ODT_SYM_GRAD_QMAXBITS);
         exit(1);
     }
 }
@@ -426,42 +411,6 @@ static void layerNormBackwardFloat(layerNormConfig_t *cfg, tensor_t *forwardInpu
     }
 }
 
-/* Quantize an N-element float grad increment into a stack SYM_INT32 scratch
- * shaped like the grad tensor, then accumulate via addSymInt32TensorsInplace —
- * Linear's SYM weight-grad idiom (linearCalcWeightGradsSymInt32): the
- * addSymInt32TensorsInplace stage is the EXACT same strategy-A dynamic-rescale
- * path (docs/CONVENTIONS.md "Quantized gradient accumulation") — dequantize
- * both operands with their own scales, float-add, requantize the running sum
- * to a fresh absmax-derived scale written into the grad's qConfig. The
- * increment-quantization stage is LayerNorm-specific: Linear's increments are
- * natively SYM (matmul product scale); ours are float and get a fresh absmax
- * scale here. Deliberately NOT Linear's bias-grad idiom — that one is an
- * intentional fixed-scale integer-accumulation research design (Deutel-style
- * float-free accumulation; see CONVENTIONS.md "Two accumulation schemes
- * in-tree"), while the LayerNorm spec mandates strategy A for BOTH gamma and
- * beta grads. The increment
- * quantization (convertTensor -> convertFloatTensorToSymInt32Tensor: absmax ->
- * scale, absmax==0 -> 1.0, round-clamp) adds <= 0.5 increment-LSB of noise per
- * call — same documented strategy-A open problem, no new scheme. */
-static void layerNormAccumulateGradSymInt32(tensor_t *grad, float *inc, size_t N) {
-    quantization_t floatQ;
-    initFloat32Quantization(&floatQ);
-    tensor_t incFloat;
-    setTensorValues(&incFloat, (uint8_t *)inc, grad->shape, &floatQ, grad->sparsity);
-
-    symInt32QConfig_t *gradQC = grad->quantization->qConfig;
-    int32_t incSymData[N];
-    symInt32QConfig_t incSymQC;
-    initSymInt32QConfig(gradQC->roundingMode, &incSymQC);
-    quantization_t incSymQ;
-    initSymInt32Quantization(&incSymQC, &incSymQ);
-    tensor_t incSym;
-    setTensorValues(&incSym, (uint8_t *)incSymData, grad->shape, &incSymQ, grad->sparsity);
-
-    convertTensor(&incFloat, &incSym);
-    addSymInt32TensorsInplace(grad, &incSym);
-}
-
 /* SYM_INT32 backward (spec 2026-06-05, verified scheme). mu/sigma/n are
  * RECOMPUTED from forwardInput through layerNormGroupStatsSymInt32 — the SAME
  * helper the forward uses, so backward can never desync from the forward
@@ -480,8 +429,6 @@ static void layerNormBackwardSymInt32(layerNormConfig_t *cfg, tensor_t *forwardI
     layerNormValidateSymTensor(loss, "loss");
     layerNormValidateSymTensor(propLoss, "propLoss");
     layerNormValidateSymTensor(cfg->gamma->param, "gamma");
-    layerNormValidateSymGrad(cfg->gamma->grad, "gamma grad");
-    layerNormValidateSymGrad(cfg->beta->grad, "beta grad");
     /* beta->param is never read here (beta does not enter dx; dbeta needs only
      * dy) — deliberately not validated. */
 
@@ -544,8 +491,18 @@ static void layerNormBackwardSymInt32(layerNormConfig_t *cfg, tensor_t *forwardI
         }
     }
 
-    layerNormAccumulateGradSymInt32(cfg->gamma->grad, dgammaInc, N);
-    layerNormAccumulateGradSymInt32(cfg->beta->grad, dbetaInc, N);
+    quantization_t incQ;
+    initFloat32Quantization(&incQ);
+    tensor_t dgammaT;
+    setTensorValues(&dgammaT, (uint8_t *)dgammaInc, cfg->gamma->grad->shape, &incQ,
+                    cfg->gamma->grad->sparsity);
+    tensor_t dbetaT;
+    setTensorValues(&dbetaT, (uint8_t *)dbetaInc, cfg->beta->grad->shape, &incQ,
+                    cfg->beta->grad->sparsity);
+    executeOp(executeOpIdentityKernel, (tensor_t *[]){&dgammaT}, 1, &incQ, cfg->gamma->grad,
+              OUT_ACC_DYNAMIC_RESCALE);
+    executeOp(executeOpIdentityKernel, (tensor_t *[]){&dbetaT}, 1, &incQ, cfg->beta->grad,
+              OUT_ACC_DYNAMIC_RESCALE);
 
     /* dx requant: convertFloatTensorToSymInt32Tensor idiom (whole-tensor
      * absmax -> scale -> round-clamp). NO integer dy==0 pre-check is needed

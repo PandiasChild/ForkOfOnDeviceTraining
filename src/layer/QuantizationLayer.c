@@ -4,34 +4,27 @@
 #include <string.h>
 
 #include "Common.h"
+#include "ExecuteOp.h"
 #include "QuantizationLayer.h"
-#include "TensorConversion.h"
 
-/* Dispatch over (input dtype, output dtype) like convertTensor, with ONE
- * deliberate difference: convertTensor's same-type branch is a memmove +
- * scale copy (convertTensorsWithSameType, TensorConversion.c), which would
- * pass accumulator-range mantissas through UNCHANGED. A SYM_INT32->SYM_INT32
- * Quantization layer must REQUANTIZE instead, so the same-dtype SYM_INT32
- * case goes through the conversionMatrix diagonal (requantSymInt32Tensor,
- * wired in PR C). Any other same-dtype pair is a configuration error: a
- * Quantization layer that neither changes dtype nor requantizes is a
- * misconfigured no-op. Cross-dtype pairs route through convertTensor, which
- * carries the NULL-entry guard for unsupported pairs (PR B). */
+/* One conversion mechanism repo-wide (design spec 2026-07-02 D3): the layer is
+ * a funnel instance with an identity kernel — arithmetic = the input's own
+ * dtype (prologue no-op), epilogue OUT_WRITE converts into the output's dtype;
+ * SYM->SYM routes through the conversionMatrix diagonal (requant) inside the
+ * funnel. A same-dtype non-SYM pair stays a config error: a Quantization layer
+ * that neither changes dtype nor requantizes is a misconfigured no-op. */
 static void dispatchQuantization(tensor_t *input, tensor_t *output) {
     qtype_t inputDType = input->quantization->type;
     qtype_t outputDType = output->quantization->type;
 
-    if (inputDType == outputDType) {
-        if (inputDType != SYM_INT32) {
-            PRINT_ERROR("Quantization layer: same input/output dtype %d is only supported "
-                        "for SYM_INT32 (requant); other same-dtype pairs are a config error",
-                        (int)inputDType);
-            exit(1);
-        }
-        conversionMatrix[SYM_INT32][SYM_INT32](input, output);
-        return;
+    if (inputDType == outputDType && inputDType != SYM_INT32) {
+        PRINT_ERROR("Quantization layer: same input/output dtype %d is only supported "
+                    "for SYM_INT32 (requant); other same-dtype pairs are a config error",
+                    (int)inputDType);
+        exit(1);
     }
-    convertTensor(input, output);
+    executeOp(executeOpIdentityKernel, (tensor_t *[]){input}, 1, input->quantization, output,
+              OUT_WRITE);
 }
 
 void quantizationForward(layer_t *layer, tensor_t *inputTensor, tensor_t *outputTensor) {

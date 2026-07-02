@@ -85,6 +85,7 @@ target_link_libraries(LayerNorm PRIVATE
         Quantization
         Add
         Arithmetic
+        ExecuteOp
         Rounding
         Layer
         Common
@@ -130,7 +131,7 @@ target_link_libraries(QuantizationLayer PRIVATE
         Quantization
         Rounding
         Tensor
-        TensorConversion
+        ExecuteOp
 )
 
 add_library(Relu Relu.c)
