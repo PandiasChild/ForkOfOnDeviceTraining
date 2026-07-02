@@ -85,6 +85,7 @@ add_elastic_ai_unit_test(
         SgdApi
         Sgd
         Optimizer
+        odt_test_death
 )
 
 add_elastic_ai_unit_test(

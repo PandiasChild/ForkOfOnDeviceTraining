@@ -116,6 +116,7 @@ target_link_libraries(Linear PRIVATE
         DTypes
         Tensor
         Arithmetic
+        ExecuteOp
         Quantization
         TensorConversion
         Layer

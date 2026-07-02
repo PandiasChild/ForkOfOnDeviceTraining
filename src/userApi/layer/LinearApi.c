@@ -25,11 +25,15 @@ layer_t *linearLayerInitLegacy(parameter_t *weights, parameter_t *bias, quantiza
     linearConfig_t *linearConfig = reserveMemory(sizeof(linearConfig_t));
     layerConfig->linear = linearConfig;
 
+    if (biasGradsQ != weightGradsQ) {
+        PRINT_ERROR("linearLayerInitLegacy: weightGradsQ and biasGradsQ collapsed into one "
+                    "backwardMath (spec 2026-07-02) - pass the same pointer");
+        exit(1);
+    }
     linearConfig->weights = weights;
     linearConfig->bias = bias;
     linearConfig->forwardQ = forwardQ;
-    linearConfig->weightGradQ = weightGradsQ;
-    linearConfig->biasGradQ = biasGradsQ;
+    linearConfig->backwardMath = weightGradsQ;
     linearConfig->propLossQ = propLossQ;
     linearConfig->ownsQuantizations = false;
 
@@ -183,13 +187,10 @@ layer_t *linearLayerInit(linearInit_t *init, layerQuant_t *lq) {
                                              lq->backwardMath)
                         : NULL;
 
-    /* Borrowing: store the four quant pointers verbatim, no copy.
-     * Per design spec section 4: collapse to a single math Q for forward and
-     * a single math Q for backward (the 4-slot split was empirically never
-     * used). */
+    /* Borrowing: store quant pointers verbatim, no copy.
+     * Three slots: forwardQ, backwardMath (weight+bias grad arithmetic), propLossQ (dx-wire). */
     cfg->forwardQ = lq->forwardMath;
-    cfg->weightGradQ = lq->backwardMath;
-    cfg->biasGradQ = lq->backwardMath;
+    cfg->backwardMath = lq->backwardMath;
     cfg->propLossQ = lq->backwardMath;
     cfg->ownsQuantizations = false;
 
@@ -220,13 +221,9 @@ layer_t *linearLayerInitOwning(linearInit_t *init, layerQuant_t *lq) {
                                              lq->backwardMath)
                         : NULL;
 
-    /* Owning: deep-copy each of the four math quantizations.  Always allocate
-     * four separate copies, even if multiple lq slots pointed to the same
-     * physical instance — this keeps free* simple (no dedup logic needed
-     * for the math slots).  */
+    /* Owning: deep-copy each math quantization into a fresh allocation. */
     cfg->forwardQ = deepCopyQuantization(lq->forwardMath);
-    cfg->weightGradQ = deepCopyQuantization(lq->backwardMath);
-    cfg->biasGradQ = deepCopyQuantization(lq->backwardMath);
+    cfg->backwardMath = deepCopyQuantization(lq->backwardMath);
     cfg->propLossQ = deepCopyQuantization(lq->backwardMath);
     cfg->ownsQuantizations = true;
 
@@ -248,28 +245,17 @@ void freeLinearLayer(layer_t *linearLayer) {
         freeParameter(cfg->bias);
     }
 
-    /* Owning-variant only — tear down the four quantization_t and their qConfigs.
-     * Defensive dedup: the Owning factory (Task 14) will always allocate four
-     * separate copies, but if a caller of the Borrowing variant happened to use
-     * the same pointer in multiple lq slots, we'd double-free without these
-     * checks. Borrowing has ownsQuantizations=false, so this branch is skipped
-     * for it; the dedup is purely a defensive guard for future maintenance. */
     if (cfg->ownsQuantizations) {
         if (cfg->forwardQ != NULL) {
             freeReservedMemory(cfg->forwardQ->qConfig);
             freeReservedMemory(cfg->forwardQ);
         }
-        if (cfg->weightGradQ != NULL && cfg->weightGradQ != cfg->forwardQ) {
-            freeReservedMemory(cfg->weightGradQ->qConfig);
-            freeReservedMemory(cfg->weightGradQ);
-        }
-        if (cfg->biasGradQ != NULL && cfg->biasGradQ != cfg->forwardQ &&
-            cfg->biasGradQ != cfg->weightGradQ) {
-            freeReservedMemory(cfg->biasGradQ->qConfig);
-            freeReservedMemory(cfg->biasGradQ);
+        if (cfg->backwardMath != NULL && cfg->backwardMath != cfg->forwardQ) {
+            freeReservedMemory(cfg->backwardMath->qConfig);
+            freeReservedMemory(cfg->backwardMath);
         }
         if (cfg->propLossQ != NULL && cfg->propLossQ != cfg->forwardQ &&
-            cfg->propLossQ != cfg->weightGradQ && cfg->propLossQ != cfg->biasGradQ) {
+            cfg->propLossQ != cfg->backwardMath) {
             freeReservedMemory(cfg->propLossQ->qConfig);
             freeReservedMemory(cfg->propLossQ);
         }

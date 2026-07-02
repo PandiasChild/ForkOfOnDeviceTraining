@@ -93,8 +93,10 @@ static void deserializeLayer(layer_t *layer, FILE *f) {
         deserializeParameter(linearConfig->weights, f);
         deserializeParameter(linearConfig->bias, f);
         deserializeQuantization(linearConfig->forwardQ, f);
-        deserializeQuantization(linearConfig->weightGradQ, f);
-        deserializeQuantization(linearConfig->biasGradQ, f);
+        /* backwardMath read twice: byte-compat with the pre-collapse weightGradQ/biasGradQ
+         * record (spec 2026-07-02 §4) */
+        deserializeQuantization(linearConfig->backwardMath, f);
+        deserializeQuantization(linearConfig->backwardMath, f);
         deserializeQuantization(linearConfig->propLossQ, f);
         break;
     case RELU:

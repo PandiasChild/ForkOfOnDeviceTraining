@@ -217,10 +217,8 @@ void testSerializeAndDeserializeModel() {
 
     qtype_t capturedSerialL0FwdQ = serialModel[0]->config->linear->forwardQ->type;
     qtype_t capturedDeserialL0FwdQ = deserialModel[0]->config->linear->forwardQ->type;
-    qtype_t capturedSerialL0WGQ = serialModel[0]->config->linear->weightGradQ->type;
-    qtype_t capturedDeserialL0WGQ = deserialModel[0]->config->linear->weightGradQ->type;
-    qtype_t capturedSerialL0BGQ = serialModel[0]->config->linear->biasGradQ->type;
-    qtype_t capturedDeserialL0BGQ = deserialModel[0]->config->linear->biasGradQ->type;
+    qtype_t capturedSerialL0BwdQ = serialModel[0]->config->linear->backwardMath->type;
+    qtype_t capturedDeserialL0BwdQ = deserialModel[0]->config->linear->backwardMath->type;
     qtype_t capturedSerialL0PLQ = serialModel[0]->config->linear->propLossQ->type;
     qtype_t capturedDeserialL0PLQ = deserialModel[0]->config->linear->propLossQ->type;
 
@@ -231,10 +229,8 @@ void testSerializeAndDeserializeModel() {
 
     qtype_t capturedSerialL1FwdQ = serialModel[2]->config->linear->forwardQ->type;
     qtype_t capturedDeserialL1FwdQ = deserialModel[2]->config->linear->forwardQ->type;
-    qtype_t capturedSerialL1WGQ = serialModel[2]->config->linear->weightGradQ->type;
-    qtype_t capturedDeserialL1WGQ = deserialModel[2]->config->linear->weightGradQ->type;
-    qtype_t capturedSerialL1BGQ = serialModel[2]->config->linear->biasGradQ->type;
-    qtype_t capturedDeserialL1BGQ = deserialModel[2]->config->linear->biasGradQ->type;
+    qtype_t capturedSerialL1BwdQ = serialModel[2]->config->linear->backwardMath->type;
+    qtype_t capturedDeserialL1BwdQ = deserialModel[2]->config->linear->backwardMath->type;
     qtype_t capturedSerialL1PLQ = serialModel[2]->config->linear->propLossQ->type;
     qtype_t capturedDeserialL1PLQ = deserialModel[2]->config->linear->propLossQ->type;
 
@@ -273,16 +269,14 @@ void testSerializeAndDeserializeModel() {
     TEST_ASSERT_EQUAL_FLOAT_ARRAY(capturedSerialB1, capturedDeserialB1, numberOfBiases1);
 
     TEST_ASSERT_EQUAL(capturedSerialL0FwdQ, capturedDeserialL0FwdQ);
-    TEST_ASSERT_EQUAL(capturedSerialL0WGQ, capturedDeserialL0WGQ);
-    TEST_ASSERT_EQUAL(capturedSerialL0BGQ, capturedDeserialL0BGQ);
+    TEST_ASSERT_EQUAL(capturedSerialL0BwdQ, capturedDeserialL0BwdQ);
     TEST_ASSERT_EQUAL(capturedSerialL0PLQ, capturedDeserialL0PLQ);
 
     TEST_ASSERT_EQUAL(capturedSerialReluFwdQ, capturedDeserialReluFwdQ);
     TEST_ASSERT_EQUAL(capturedSerialReluBwdQ, capturedDeserialReluBwdQ);
 
     TEST_ASSERT_EQUAL(capturedSerialL1FwdQ, capturedDeserialL1FwdQ);
-    TEST_ASSERT_EQUAL(capturedSerialL1WGQ, capturedDeserialL1WGQ);
-    TEST_ASSERT_EQUAL(capturedSerialL1BGQ, capturedDeserialL1BGQ);
+    TEST_ASSERT_EQUAL(capturedSerialL1BwdQ, capturedDeserialL1BwdQ);
     TEST_ASSERT_EQUAL(capturedSerialL1PLQ, capturedDeserialL1PLQ);
 
     TEST_ASSERT_EQUAL(capturedSerialSoftFwdQ, capturedDeserialSoftFwdQ);

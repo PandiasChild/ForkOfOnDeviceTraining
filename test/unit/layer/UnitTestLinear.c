@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include "DTypes.h"
+#include "DeathTest.h"
 #include "Layer.h"
 #include "LayerCommon.h"
 #include "LayerQuant.h"
@@ -1045,8 +1046,7 @@ void testLinearLayerInitBorrowingBuildsLayerWithCorrectShapeAndStoresQuantPointe
 
     /* Borrowing variant stores pointers verbatim */
     TEST_ASSERT_EQUAL_PTR(q, cfg->forwardQ);
-    TEST_ASSERT_EQUAL_PTR(q, cfg->weightGradQ);
-    TEST_ASSERT_EQUAL_PTR(q, cfg->biasGradQ);
+    TEST_ASSERT_EQUAL_PTR(q, cfg->backwardMath);
     TEST_ASSERT_EQUAL_PTR(q, cfg->propLossQ);
 
     /* Weights allocated with shape [outFeatures, inFeatures] */
@@ -1163,8 +1163,7 @@ void testLinearLayerInitOwningDeepCopiesQuantizations(void) {
 
     /* Owning variant: cfg->forwardQ is a fresh allocation, NOT the original q */
     TEST_ASSERT_NOT_EQUAL(q, cfg->forwardQ);
-    TEST_ASSERT_NOT_EQUAL(q, cfg->weightGradQ);
-    TEST_ASSERT_NOT_EQUAL(q, cfg->biasGradQ);
+    TEST_ASSERT_NOT_EQUAL(q, cfg->backwardMath);
     TEST_ASSERT_NOT_EQUAL(q, cfg->propLossQ);
 
     /* But the copy has equal type to the original */
@@ -1199,6 +1198,20 @@ void testLinearLayerInitOwningFreesAllAllocationsWithoutLeak(void) {
          * never freed). */
     }
     TEST_PASS();
+}
+
+/* Helper: build a 2-D FLOAT32 tensor on the heap with the given values. */
+static tensor_t *buildFloatTensor2d(size_t rows, size_t cols, const float *data) {
+    size_t *d = reserveMemory(2 * sizeof(size_t));
+    d[0] = rows;
+    d[1] = cols;
+    size_t *o = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, o);
+    shape_t *s = reserveMemory(sizeof(shape_t));
+    setShape(s, d, 2, o);
+    tensor_t *t = initTensor(s, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(t, data, rows * cols);
+    return t;
 }
 
 /* Helper: build a 1x3 FLOAT32 input tensor with the given values (NULL => zeros). */
@@ -1455,6 +1468,42 @@ void testLinearLayerInitXavierUniformOverrideUsesGlorotBound(void) {
                              "Bias must stay PyTorch default uniform regardless of weight scheme");
 }
 
+void testLinearLegacyRejectsDivergentBackwardQs(void) {
+    /* weightGradsQ and biasGradsQ collapse into one backwardMath (spec 2026-07-02
+     * §4); passing two different pointers is now a config error. */
+    quantization_t *fQ = quantizationInitFloat();
+    quantization_t *otherQ = quantizationInitFloat();
+
+    ASSERT_EXITS_WITH_FAILURE(linearLayerInitLegacy(NULL, NULL, fQ, fQ, otherQ, fQ));
+
+    freeQuantization(otherQ);
+    freeQuantization(fQ);
+}
+
+void testLinearBackwardWithoutBiasDoesNotCrash(void) {
+    quantization_t *q = quantizationInitFloat();
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, q);
+    layer_t *layer = linearLayerInit(
+        &(linearInit_t){.inFeatures = 3, .outFeatures = 2, .bias = BIAS_FALSE}, &lq);
+
+    tensor_t *fwdIn = buildFloatTensor2d(1, 3, (float[]){1.f, 2.f, 3.f});
+    tensor_t *loss = buildFloatTensor2d(1, 2, (float[]){0.5f, -0.5f});
+    tensor_t *propLoss = buildFloatTensor2d(1, 3, (float[]){0.f, 0.f, 0.f});
+
+    layerFunctions[LINEAR].backward(layer, fwdIn, loss, propLoss);
+
+    float wg00 = ((float *)layer->config->linear->weights->grad->data)[0];
+    bool biasIsNull = (layer->config->linear->bias == NULL);
+    freeTensor(propLoss);
+    freeTensor(loss);
+    freeTensor(fwdIn);
+    freeLinearLayer(layer);
+    freeQuantization(q);
+    TEST_ASSERT_TRUE(biasIsNull);
+    TEST_ASSERT_EQUAL_FLOAT(0.5f, wg00); /* loss[0,0]*fwdIn[0,0] = 0.5*1 */
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testLinearForwardFloat);
@@ -1482,5 +1531,7 @@ int main(void) {
     RUN_TEST(testLinearLayerInitOwningFreesAllAllocationsWithoutLeak);
     RUN_TEST(testLinearLayerInitDefaultWeightsWithinPyTorchBound);
     RUN_TEST(testLinearLayerInitXavierUniformOverrideUsesGlorotBound);
+    RUN_TEST(testLinearLegacyRejectsDivergentBackwardQs);
+    RUN_TEST(testLinearBackwardWithoutBiasDoesNotCrash);
     return UNITY_END();
 }

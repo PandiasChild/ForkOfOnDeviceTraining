@@ -93,8 +93,10 @@ static void serializeLayer(layer_t *layer, FILE *f) {
         serializeParameter(linearConfig->weights, f);
         serializeParameter(linearConfig->bias, f);
         serializeQuantization(linearConfig->forwardQ, f);
-        serializeQuantization(linearConfig->weightGradQ, f);
-        serializeQuantization(linearConfig->biasGradQ, f);
+        /* backwardMath written twice: byte-compat with the pre-collapse weightGradQ/biasGradQ
+         * record (spec 2026-07-02 §4) */
+        serializeQuantization(linearConfig->backwardMath, f);
+        serializeQuantization(linearConfig->backwardMath, f);
         serializeQuantization(linearConfig->propLossQ, f);
         break;
     case RELU:
