@@ -64,7 +64,6 @@ static void sgdStepSymInt32(optimizer_t *optim) {
         }
 
         convertTensor(&paramFloat, param->param);
-        convertTensor(&gradFloat, param->grad);
     }
 }
 

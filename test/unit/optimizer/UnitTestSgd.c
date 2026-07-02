@@ -467,6 +467,53 @@ void testLayerNormContributesTwoOptimizerStates(void) {
     TEST_ASSERT_EQUAL_size_t(2, nStates);
 }
 
+void testSgdStepSymInt32DoesNotRoundTripGrad(void) {
+    /* Manual SYM param+grad (low-level path — heap shape per file convention). */
+    size_t *pDims = reserveMemory(1 * sizeof(size_t));
+    pDims[0] = 3;
+    size_t *pOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, pOrder);
+    shape_t *pShape = reserveMemory(sizeof(shape_t));
+    setShape(pShape, pDims, 1, pOrder);
+    tensor_t *p = initTensor(pShape, quantizationInitSymInt32(HALF_AWAY), NULL);
+    tensorFillFromFloatBuffer(p, (float[]){0.1f, -0.2f, 0.3f}, 3);
+    tensor_t *g = gradInitSymInt32(p, HALF_AWAY, NULL);
+    parameter_t *param = parameterInit(p, g);
+
+    /* Pre-load known grad mantissas + a non-1.0 scale. */
+    ((int32_t *)g->data)[0] = 10;
+    ((int32_t *)g->data)[1] = -20;
+    ((int32_t *)g->data)[2] = 30;
+    ((symInt32QConfig_t *)g->quantization->qConfig)->scale = 0.05f;
+
+    /* Minimal stack optimizer around one parameter; plain SGD, SYM_INT32 qtype.
+     * sgdStep dispatches on qtype; the plain-SGD SYM step reads only
+     * impl/sizeStates/parameter (+ sgd learningRate/weightDecay). */
+    sgd_t sgd;
+    sgdInit(&sgd, 0.1f, 0.0f, 0.0f);
+    parameter_t *params[1] = {param};
+    optimizer_t optim;
+    optim.parameter = params;
+    optim.sizeStates = 1;
+    optim.qtype = SYM_INT32;
+    optim.impl = (optimImpl_t *)&sgd;
+
+    sgdStep(&optim);
+
+    /* CAPTURE -> free -> assert: grad mantissas + scale must be untouched. */
+    int32_t m0 = ((int32_t *)g->data)[0];
+    int32_t m1 = ((int32_t *)g->data)[1];
+    int32_t m2 = ((int32_t *)g->data)[2];
+    float gScale = ((symInt32QConfig_t *)g->quantization->qConfig)->scale;
+
+    freeParameter(param);
+
+    TEST_ASSERT_EQUAL_INT(10, m0);
+    TEST_ASSERT_EQUAL_INT(-20, m1);
+    TEST_ASSERT_EQUAL_INT(30, m2);
+    TEST_ASSERT_FLOAT_WITHIN(1e-9f, 0.05f, gScale);
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(testSgdMCreateOptim);
@@ -475,5 +522,6 @@ int main() {
     RUN_TEST(testSgdZeroGradOnSymInt32GradZeroesMantissasAndResetsScale);
     RUN_TEST(testLayerNormContributesTwoOptimizerStates);
     RUN_TEST(testSgdMCreateOptimRegistersLayerNormGammaAndBeta);
+    RUN_TEST(testSgdStepSymInt32DoesNotRoundTripGrad);
     return UNITY_END();
 }
