@@ -162,3 +162,13 @@ target_link_libraries(ConvTranspose1dKernel PRIVATE
         Rounding
         Common
 )
+
+add_library(ExecuteOp ExecuteOp.c)
+target_include_directories(ExecuteOp PUBLIC include)
+target_link_libraries(ExecuteOp PRIVATE
+        Tensor
+        Quantization
+        TensorConversion
+        Add
+        Common
+)

@@ -155,3 +155,19 @@ add_elastic_ai_unit_test(
 )
 add_dependencies(UnitTestConvTranspose1dKernel generate_expected_conv_transpose_1d_kernel)
 target_include_directories(UnitTestConvTranspose1dKernel PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
+        ExecuteOp
+        MORE_LIBS
+        Tensor
+        TensorApi
+        TensorConversion
+        Quantization
+        QuantizationApi
+        Add
+        Arithmetic
+        StorageApi
+        Common
+        odt_test_death
+)
