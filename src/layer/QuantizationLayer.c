@@ -7,12 +7,11 @@
 #include "ExecuteOp.h"
 #include "QuantizationLayer.h"
 
-/* One conversion mechanism repo-wide (design spec 2026-07-02 D3): the layer is
- * a funnel instance with an identity kernel — arithmetic = the input's own
- * dtype (prologue no-op), epilogue OUT_WRITE converts into the output's dtype;
- * SYM->SYM routes through the conversionMatrix diagonal (requant) inside the
- * funnel. A same-dtype non-SYM pair stays a config error: a Quantization layer
- * that neither changes dtype nor requantizes is a misconfigured no-op. */
+/* The Quantization layer is a pure conversion node (#266): no arithmetic, no
+ * kernel — executeConvert dispatches straight through the conversionMatrix
+ * (SYM_INT32->SYM_INT32 routes through the diagonal / requant). A same-dtype
+ * non-SYM pair stays a config error: a Quantization layer that neither
+ * changes dtype nor requantizes is a misconfigured no-op. */
 static void dispatchQuantization(tensor_t *input, tensor_t *output) {
     qtype_t inputDType = input->quantization->type;
     qtype_t outputDType = output->quantization->type;
@@ -23,8 +22,7 @@ static void dispatchQuantization(tensor_t *input, tensor_t *output) {
                     (int)inputDType);
         exit(1);
     }
-    executeOp(executeOpIdentityKernel, (tensor_t *[]){input}, 1, input->quantization, output,
-              OUT_WRITE);
+    executeConvert(input, output);
 }
 
 void quantizationForward(layer_t *layer, tensor_t *inputTensor, tensor_t *outputTensor) {

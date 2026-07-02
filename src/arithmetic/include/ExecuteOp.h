@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 
+#include "ArithmeticType.h"
 #include "Tensor.h"
 
 /* The one conversion funnel (design spec 2026-07-02, §3-§4). Every op runs:
@@ -30,12 +31,18 @@ typedef enum {
                               * (SYM targets); exact add (FLOAT32) */
 } outputMode_t;
 
-void executeOp(opKernelFn_t kernel, tensor_t **inputs, size_t nInputs, quantization_t *arithmeticQ,
+void executeOp(opKernelFn_t kernel, tensor_t **inputs, size_t nInputs, arithmetic_t arithmetic,
                tensor_t *target, outputMode_t mode);
 
 /* Copies operand 0 into rawOut (data + SYM scale if applicable). For ops whose
  * increment is produced inline (LayerNorm dgamma/dbeta) and for the
  * Quantization layer (pure convert). */
 void executeOpIdentityKernel(tensor_t **operands, size_t nOperands, tensor_t *rawOut);
+
+/* Kernel-less funnel form: storage-to-storage conversion (1 input,
+ * OUT_WRITE semantics). SYM->SYM routes through the conversionMatrix
+ * diagonal (requant), never the same-type memmove. Supports every
+ * populated conversionMatrix cell. */
+void executeConvert(tensor_t *input, tensor_t *target);
 
 #endif // ENV5_RUNTIME_EXECUTE_OP_H

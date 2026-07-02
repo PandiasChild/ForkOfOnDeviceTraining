@@ -22,6 +22,13 @@ target_link_libraries(Arithmetic PRIVATE
         Common
 )
 
+add_library(ArithmeticType ArithmeticType.c)
+target_include_directories(ArithmeticType PUBLIC include)
+target_link_libraries(ArithmeticType PRIVATE
+        Quantization
+        Rounding
+)
+
 add_library(Comparison Comparison.c)
 target_include_directories(Comparison PUBLIC include)
 target_link_libraries(Comparison PRIVATE
@@ -168,6 +175,7 @@ target_include_directories(ExecuteOp PUBLIC include)
 target_link_libraries(ExecuteOp PRIVATE
         Tensor
         Quantization
+        ArithmeticType
         TensorConversion
         Add
         Common

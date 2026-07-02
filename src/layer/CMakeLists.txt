@@ -85,6 +85,7 @@ target_link_libraries(LayerNorm PRIVATE
         Quantization
         Add
         Arithmetic
+        ArithmeticType
         ExecuteOp
         Rounding
         Layer
@@ -117,6 +118,7 @@ target_link_libraries(Linear PRIVATE
         DTypes
         Tensor
         Arithmetic
+        ArithmeticType
         ExecuteOp
         Quantization
         TensorConversion
@@ -129,6 +131,7 @@ target_include_directories(QuantizationLayer PUBLIC include)
 target_link_libraries(QuantizationLayer PRIVATE
         Common
         Quantization
+        ArithmeticType
         Rounding
         Tensor
         ExecuteOp

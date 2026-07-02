@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "Add.h"
+#include "ArithmeticType.h"
 #include "Common.h"
 #include "DeathTest.h"
 #include "ExecuteOp.h"
@@ -58,7 +59,8 @@ void testProloguePassesMatchingOperandThroughUntouched(void) {
     initSymInt32QConfig(HALF_AWAY, &arithQC);
     initSymInt32Quantization(&arithQC, &arith);
 
-    executeOp(executeOpIdentityKernel, (tensor_t *[]){in}, 1, &arith, out, OUT_WRITE);
+    executeOp(executeOpIdentityKernel, (tensor_t *[]){in}, 1, arithmeticFromQuantization(&arith),
+              out, OUT_WRITE);
 
     int32_t srcM0 = ((int32_t *)in->data)[0];
     float srcScale = ((symInt32QConfig_t *)in->quantization->qConfig)->scale;
@@ -79,7 +81,8 @@ void testPrologueConvertsFloatOperandIntoSymArithmetic(void) {
     initSymInt32QConfig(HALF_AWAY, &arithQC);
     initSymInt32Quantization(&arithQC, &arith);
 
-    executeOp(executeOpIdentityKernel, (tensor_t *[]){in}, 1, &arith, out, OUT_WRITE);
+    executeOp(executeOpIdentityKernel, (tensor_t *[]){in}, 1, arithmeticFromQuantization(&arith),
+              out, OUT_WRITE);
 
     /* Reference: quantize the float input to int12 SYM directly, then requant
      * to the target exactly as the epilogue's OUT_WRITE diagonal does. */
@@ -117,7 +120,8 @@ void testOutWriteSymToSymBitEqualsDiagonalRequant(void) {
     initSymInt32QConfig(HALF_AWAY, &arithQC);
     initSymInt32Quantization(&arithQC, &arith);
 
-    executeOp(executeOpIdentityKernel, (tensor_t *[]){in}, 1, &arith, out, OUT_WRITE);
+    executeOp(executeOpIdentityKernel, (tensor_t *[]){in}, 1, arithmeticFromQuantization(&arith),
+              out, OUT_WRITE);
 
     tensor_t *ref = buildSym(3, (int32_t[]){0, 0, 0}, 1.0f);
     conversionMatrix[SYM_INT32][SYM_INT32](in, ref);
@@ -146,7 +150,8 @@ void testOutWriteSymToFloatEqualsConvertTensor(void) {
     initSymInt32QConfig(HALF_AWAY, &arithQC);
     initSymInt32Quantization(&arithQC, &arith);
 
-    executeOp(executeOpIdentityKernel, (tensor_t *[]){in}, 1, &arith, out, OUT_WRITE);
+    executeOp(executeOpIdentityKernel, (tensor_t *[]){in}, 1, arithmeticFromQuantization(&arith),
+              out, OUT_WRITE);
 
     float got0 = ((float *)out->data)[0];
     float got1 = ((float *)out->data)[1];
@@ -164,10 +169,10 @@ void testAccDynamicIntoFloatIsExactAndAccumulates(void) {
     quantization_t floatArith;
     initFloat32Quantization(&floatArith);
 
-    executeOp(executeOpIdentityKernel, (tensor_t *[]){inc}, 1, &floatArith, grad,
-              OUT_ACC_DYNAMIC_RESCALE);
-    executeOp(executeOpIdentityKernel, (tensor_t *[]){inc}, 1, &floatArith, grad,
-              OUT_ACC_DYNAMIC_RESCALE);
+    executeOp(executeOpIdentityKernel, (tensor_t *[]){inc}, 1,
+              arithmeticFromQuantization(&floatArith), grad, OUT_ACC_DYNAMIC_RESCALE);
+    executeOp(executeOpIdentityKernel, (tensor_t *[]){inc}, 1,
+              arithmeticFromQuantization(&floatArith), grad, OUT_ACC_DYNAMIC_RESCALE);
 
     float g0 = ((float *)grad->data)[0];
     float g1 = ((float *)grad->data)[1];
@@ -186,8 +191,8 @@ void testAccFixedIntoFloatCollapsesToExactAdd(void) {
     quantization_t floatArith;
     initFloat32Quantization(&floatArith);
 
-    executeOp(executeOpIdentityKernel, (tensor_t *[]){inc}, 1, &floatArith, grad,
-              OUT_ACC_FIXED_SCALE);
+    executeOp(executeOpIdentityKernel, (tensor_t *[]){inc}, 1,
+              arithmeticFromQuantization(&floatArith), grad, OUT_ACC_FIXED_SCALE);
 
     float g0 = ((float *)grad->data)[0];
     float g1 = ((float *)grad->data)[1];
@@ -208,8 +213,8 @@ void testAccDynamicSymIntoSymBitEqualsAddSymInplace(void) {
     initSymInt32QConfig(HALF_AWAY, &arithQC);
     initSymInt32Quantization(&arithQC, &arith);
 
-    executeOp(executeOpIdentityKernel, (tensor_t *[]){inc}, 1, &arith, grad,
-              OUT_ACC_DYNAMIC_RESCALE);
+    executeOp(executeOpIdentityKernel, (tensor_t *[]){inc}, 1, arithmeticFromQuantization(&arith),
+              grad, OUT_ACC_DYNAMIC_RESCALE);
     addSymInt32TensorsInplace(refGrad, refInc);
 
     int32_t got[3];
@@ -238,8 +243,8 @@ void testAccDynamicFloatIncIntoSymTargetMatchesLayerNormReference(void) {
     quantization_t floatArith;
     initFloat32Quantization(&floatArith);
 
-    executeOp(executeOpIdentityKernel, (tensor_t *[]){inc}, 1, &floatArith, grad,
-              OUT_ACC_DYNAMIC_RESCALE);
+    executeOp(executeOpIdentityKernel, (tensor_t *[]){inc}, 1,
+              arithmeticFromQuantization(&floatArith), grad, OUT_ACC_DYNAMIC_RESCALE);
 
     /* Reference: exact LayerNorm.c:446-463 sequence on a twin. */
     tensor_t *refGrad = buildSym(3, (int32_t[]){40, -80, 120}, 0.02f);
@@ -278,7 +283,8 @@ void testAccFixedSymIntoSymRescalesIntoExistingScale(void) {
     initSymInt32QConfig(HALF_AWAY, &arithQC);
     initSymInt32Quantization(&arithQC, &arith);
 
-    executeOp(executeOpIdentityKernel, (tensor_t *[]){inc}, 1, &arith, grad, OUT_ACC_FIXED_SCALE);
+    executeOp(executeOpIdentityKernel, (tensor_t *[]){inc}, 1, arithmeticFromQuantization(&arith),
+              grad, OUT_ACC_FIXED_SCALE);
 
     int32_t g0 = ((int32_t *)grad->data)[0];
     int32_t g1 = ((int32_t *)grad->data)[1];
@@ -304,7 +310,8 @@ void testAccIntoSubByteTargetAborts(void) {
     initFloat32Quantization(&floatArith);
 
     ASSERT_EXITS_WITH_FAILURE(executeOp(executeOpIdentityKernel, (tensor_t *[]){inc}, 1,
-                                        &floatArith, grad, OUT_ACC_DYNAMIC_RESCALE));
+                                        arithmeticFromQuantization(&floatArith), grad,
+                                        OUT_ACC_DYNAMIC_RESCALE));
 
     freeTensor(grad);
     freeTensor(inc);
@@ -320,10 +327,63 @@ void testAccIntoTooWideSymTargetAborts(void) {
     initFloat32Quantization(&floatArith);
 
     ASSERT_EXITS_WITH_FAILURE(executeOp(executeOpIdentityKernel, (tensor_t *[]){inc}, 1,
-                                        &floatArith, grad, OUT_ACC_DYNAMIC_RESCALE));
+                                        arithmeticFromQuantization(&floatArith), grad,
+                                        OUT_ACC_DYNAMIC_RESCALE));
 
     freeTensor(grad);
     freeTensor(inc);
+}
+
+/* executeConvert SYM->SYM must requant through the conversionMatrix diagonal
+ * (matches writeOut's OUT_WRITE trap) — raw accumulator-range mantissas come
+ * out width-restored, bit-identical to conversionMatrix[SYM_INT32][SYM_INT32],
+ * and the source is left untouched. */
+void testExecuteConvertSymToSymRequantsThroughDiagonal(void) {
+    tensor_t *in = buildSym(4, (int32_t[]){100000, -250000, 4095, 0}, 0.5f);
+    tensor_t *out = buildSym(4, (int32_t[]){0, 0, 0, 0}, 1.0f);
+    tensor_t *gold = buildSym(4, (int32_t[]){0, 0, 0, 0}, 1.0f);
+
+    conversionMatrix[SYM_INT32][SYM_INT32](in, gold);
+    executeConvert(in, out);
+
+    int32_t got[4];
+    int32_t want[4];
+    for (size_t i = 0; i < 4; i++) {
+        got[i] = ((int32_t *)out->data)[i];
+        want[i] = ((int32_t *)gold->data)[i];
+    }
+    float gotScale = ((symInt32QConfig_t *)out->quantization->qConfig)->scale;
+    float wantScale = ((symInt32QConfig_t *)gold->quantization->qConfig)->scale;
+    int32_t srcM0 = ((int32_t *)in->data)[0];
+    freeTensor(gold);
+    freeTensor(out);
+    freeTensor(in);
+    TEST_ASSERT_EQUAL_INT32_ARRAY(want, got, 4);
+    TEST_ASSERT_EQUAL_FLOAT(wantScale, gotScale);
+    TEST_ASSERT_EQUAL_INT32(100000, srcM0); /* source untouched */
+}
+
+/* executeConvert FLOAT32->SYM must match convertTensor exactly (the funnel's
+ * storage-to-storage conversion is not a different code path from the
+ * existing quantizer). */
+void testExecuteConvertFloatToSymMatchesConvertTensor(void) {
+    tensor_t *in = buildFloat(3, (float[]){1.5f, -3.25f, 0.75f});
+    tensor_t *out = buildSym(3, (int32_t[]){0, 0, 0}, 1.0f);
+    tensor_t *gold = buildSym(3, (int32_t[]){0, 0, 0}, 1.0f);
+
+    convertTensor(in, gold);
+    executeConvert(in, out);
+
+    int32_t got[3];
+    int32_t want[3];
+    for (size_t i = 0; i < 3; i++) {
+        got[i] = ((int32_t *)out->data)[i];
+        want[i] = ((int32_t *)gold->data)[i];
+    }
+    freeTensor(gold);
+    freeTensor(out);
+    freeTensor(in);
+    TEST_ASSERT_EQUAL_INT32_ARRAY(want, got, 3);
 }
 
 int main(void) {
@@ -339,5 +399,7 @@ int main(void) {
     RUN_TEST(testAccFixedSymIntoSymRescalesIntoExistingScale);
     RUN_TEST(testAccIntoSubByteTargetAborts);
     RUN_TEST(testAccIntoTooWideSymTargetAborts);
+    RUN_TEST(testExecuteConvertSymToSymRequantsThroughDiagonal);
+    RUN_TEST(testExecuteConvertFloatToSymMatchesConvertTensor);
     return UNITY_END();
 }

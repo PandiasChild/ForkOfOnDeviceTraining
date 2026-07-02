@@ -6,6 +6,7 @@
 #include <stdlib.h>
 
 #include "Add.h"
+#include "ArithmeticType.h"
 #include "Common.h"
 #include "ExecuteOp.h"
 #include "Layer.h"
@@ -159,17 +160,18 @@ void linearBackward(layer_t *linearLayer, tensor_t *forwardInput, tensor_t *loss
     }
 
     executeOp(symArith ? weightGradKernelSym : weightGradKernelFloat,
-              (tensor_t *[]){loss, forwardInput}, 2, cfg->backwardMath,
+              (tensor_t *[]){loss, forwardInput}, 2, arithmeticFromQuantization(cfg->backwardMath),
               getGradFromParameter(cfg->weights), OUT_ACC_DYNAMIC_RESCALE);
 
     if (cfg->bias != NULL) {
         executeOp(symArith ? biasGradKernelSym : biasGradKernelFloat, (tensor_t *[]){loss}, 1,
-                  cfg->backwardMath, getGradFromParameter(cfg->bias), OUT_ACC_FIXED_SCALE);
+                  arithmeticFromQuantization(cfg->backwardMath), getGradFromParameter(cfg->bias),
+                  OUT_ACC_FIXED_SCALE);
     }
 
     executeOp(symArith ? propLossKernelSym : propLossKernelFloat,
-              (tensor_t *[]){loss, getParamFromParameter(cfg->weights)}, 2, cfg->backwardMath,
-              propLoss, OUT_WRITE);
+              (tensor_t *[]){loss, getParamFromParameter(cfg->weights)}, 2,
+              arithmeticFromQuantization(cfg->backwardMath), propLoss, OUT_WRITE);
 }
 
 void linearCalcOutputShape(layer_t *linearLayer, shape_t *inputShape, shape_t *outputShape) {

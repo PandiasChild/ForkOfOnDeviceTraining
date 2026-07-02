@@ -39,6 +39,10 @@ static void writeOut(tensor_t *intermediate, tensor_t *target) {
     convertTensor(intermediate, target);
 }
 
+void executeConvert(tensor_t *input, tensor_t *target) {
+    writeOut(input, target);
+}
+
 /* Phase 4, ACC modes. The SYM->SYM add is Strategy A via
  * addSymInt32TensorsInplace (bit-identical to Linear.c's weight-grad
  * accumulate); the FLOAT32-intermediate -> SYM arm first quantizes the
@@ -115,7 +119,7 @@ static void accumulateOut(tensor_t *intermediate, tensor_t *target, outputMode_t
     }
 }
 
-void executeOp(opKernelFn_t kernel, tensor_t **inputs, size_t nInputs, quantization_t *arithmeticQ,
+void executeOp(opKernelFn_t kernel, tensor_t **inputs, size_t nInputs, arithmetic_t arithmetic,
                tensor_t *target, outputMode_t mode) {
     if (nInputs > EXECUTE_OP_MAX_INPUTS) {
         PRINT_ERROR("executeOp: %u inputs exceeds EXECUTE_OP_MAX_INPUTS (%u)", (unsigned)nInputs,
@@ -141,23 +145,25 @@ void executeOp(opKernelFn_t kernel, tensor_t **inputs, size_t nInputs, quantizat
     tensor_t *ops[EXECUTE_OP_MAX_INPUTS];
 
     for (size_t i = 0; i < nInputs; i++) {
-        if (inputs[i]->quantization->type == arithmeticQ->type) {
-            ops[i] = inputs[i];
-            continue;
-        }
-        switch (arithmeticQ->type) {
-        case FLOAT32:
+        switch (arithmetic.type) {
+        case ARITH_FLOAT32:
+            if (inputs[i]->quantization->type == FLOAT32) {
+                ops[i] = inputs[i];
+                continue;
+            }
             initFloat32Quantization(&scratchQ[i]);
             break;
-        case SYM_INT32: {
-            symInt32QConfig_t *aqc = arithmeticQ->qConfig;
-            initSymInt32QConfig(aqc->roundingMode, &scratchQC[i]);
+        case ARITH_SYM_INT32:
+            if (inputs[i]->quantization->type == SYM_INT32) {
+                ops[i] = inputs[i];
+                continue;
+            }
+            initSymInt32QConfig(arithmetic.roundingMode, &scratchQC[i]);
             initSymInt32Quantization(&scratchQC[i], &scratchQ[i]);
             break;
-        }
         default:
             PRINT_ERROR("executeOp: arithmetic dtype %d not supported (FLOAT32/SYM_INT32)",
-                        (int)arithmeticQ->type);
+                        (int)arithmetic.type);
             exit(1);
         }
         setTensorValuesForConversion(scratch[i], &scratchQ[i], inputs[i], &scratchTensors[i]);
@@ -171,17 +177,17 @@ void executeOp(opKernelFn_t kernel, tensor_t **inputs, size_t nInputs, quantizat
     tensor_t raw;
     quantization_t rawQ;
     symInt32QConfig_t rawQC;
-    switch (arithmeticQ->type) {
-    case FLOAT32:
+    switch (arithmetic.type) {
+    case ARITH_FLOAT32:
         initFloat32Quantization(&rawQ);
         break;
-    case SYM_INT32:
-        initSymInt32QConfig(((symInt32QConfig_t *)arithmeticQ->qConfig)->roundingMode, &rawQC);
+    case ARITH_SYM_INT32:
+        initSymInt32QConfig(arithmetic.roundingMode, &rawQC);
         initSymInt32Quantization(&rawQC, &rawQ);
         break;
     default:
         PRINT_ERROR("executeOp: arithmetic dtype %d not supported (FLOAT32/SYM_INT32)",
-                    (int)arithmeticQ->type);
+                    (int)arithmetic.type);
         exit(1);
     }
     setTensorValues(&raw, rawData, target->shape, &rawQ, target->sparsity);

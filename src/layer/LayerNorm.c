@@ -9,6 +9,7 @@
 
 #include "Add.h"
 #include "Arithmetic.h"
+#include "ArithmeticType.h"
 #include "Common.h"
 #include "ExecuteOp.h"
 #include "Layer.h"
@@ -499,9 +500,11 @@ static void layerNormBackwardSymInt32(layerNormConfig_t *cfg, tensor_t *forwardI
     tensor_t dbetaT;
     setTensorValues(&dbetaT, (uint8_t *)dbetaInc, cfg->beta->grad->shape, &incQ,
                     cfg->beta->grad->sparsity);
-    executeOp(executeOpIdentityKernel, (tensor_t *[]){&dgammaT}, 1, &incQ, cfg->gamma->grad,
+    executeOp(executeOpIdentityKernel, (tensor_t *[]){&dgammaT}, 1,
+              (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY}, cfg->gamma->grad,
               OUT_ACC_DYNAMIC_RESCALE);
-    executeOp(executeOpIdentityKernel, (tensor_t *[]){&dbetaT}, 1, &incQ, cfg->beta->grad,
+    executeOp(executeOpIdentityKernel, (tensor_t *[]){&dbetaT}, 1,
+              (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY}, cfg->beta->grad,
               OUT_ACC_DYNAMIC_RESCALE);
 
     /* dx requant: convertFloatTensorToSymInt32Tensor idiom (whole-tensor

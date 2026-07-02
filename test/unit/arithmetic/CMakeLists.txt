@@ -45,6 +45,15 @@ add_elastic_ai_unit_test(
 
 add_elastic_ai_unit_test(
         LIB_UNDER_TEST
+        ArithmeticType
+        MORE_LIBS
+        Quantization
+        Rounding
+        Common
+)
+
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
         Comparison
         MORE_LIBS
         Arithmetic
@@ -167,6 +176,8 @@ add_elastic_ai_unit_test(
         QuantizationApi
         Add
         Arithmetic
+        ArithmeticType
+        Rounding
         StorageApi
         Common
         odt_test_death
