@@ -114,8 +114,6 @@ consumed by `initTensor` — that is a double-free. The cascade table:
 |-------------------------------------------|----------------------|-------------------------------------|
 | `initTensor(s, q, sp)`                    | `freeTensor(t)`      | data, shape (+dims, +order), q, sp  |
 | `parameterInit(p, g)`                     | `freeParameter(par)` | param tensor + grad (if non-NULL)   |
-| `linearLayerInitLegacy(...)`              | `freeLinearLayerLegacy(l)` | layer config wrapper only     |
-| `reluLayerInitLegacy(...)`                | `freeReluLayerLegacy(l)` | layer config wrapper only       |
 | `softmaxLayerInit(...)`                   | `freeSoftmaxLayer(l)`| layer config wrapper only           |
 | `sgdMCreateOptim(...)`                    | `freeOptimSgdM(o)`   | all registered parameters + states  |
 | `inference(...)` (returns `tensor_t *`)   | `freeTensor(out)`    | as above                            |

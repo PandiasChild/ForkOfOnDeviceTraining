@@ -10,6 +10,7 @@
 #include "DataLoaderApi.h"
 #include "Dataset.h"
 #include "InferenceApi.h"
+#include "LayerQuant.h"
 #include "LinearApi.h"
 #include "LossFunction.h"
 #include "QuantizationApi.h"
@@ -23,6 +24,15 @@
 
 void setUp() {}
 void tearDown() {}
+
+/*! Frees only the layer_t + layerConfig_t + linearConfig_t shells — NOT the
+ *  weight/bias parameters. Needed after freeOptimSgdM, which already frees
+ *  every parameter it registered (freeLinearLayer would double-free them). */
+static void freeLinearLayerShellOnly(layer_t *layer) {
+    freeReservedMemory(layer->config->linear);
+    freeReservedMemory(layer->config);
+    freeReservedMemory(layer);
+}
 
 #define INPUT_DIM 4
 #define HIDDEN_DIM 8
@@ -96,73 +106,28 @@ static size_t getDatasetSize() {
 static void buildModel(layer_t **model, quantization_t **q_out) {
     quantization_t *q = quantizationInitFloat();
     *q_out = q;
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, q);
 
-    distribution_t xavier0 = {
-        .type = XAVIER_UNIFORM,
-        .params.xavier = {.gain = 1.0f, .fanIn = INPUT_DIM, .fanOut = HIDDEN_DIM}};
-    distribution_t zeros = {.type = ZEROS};
+    /* XAVIER_UNIFORM weights (gain 1); bias defaults to the factory's PyTorch
+     * uniform(+/- 1/sqrt(fan_in)) rather than the pre-migration ZEROS — this
+     * test only asserts that training reduces the loss, not specific
+     * parameter values, so the divergence is harmless. */
+    model[0] = linearLayerInit(
+        &(linearInit_t){.inFeatures = INPUT_DIM,
+                        .outFeatures = HIDDEN_DIM,
+                        .bias = BIAS_TRUE,
+                        .weightInit = {.scheme = INIT_XAVIER_UNIFORM, .gain = 1.0f}},
+        &lq);
+    model[1] = reluLayerInit(&lq);
 
-    /* w0 (HIDDEN_DIM x INPUT_DIM, XAVIER_UNIFORM). */
-    size_t *w0Dims = reserveMemory(2 * sizeof(size_t));
-    w0Dims[0] = HIDDEN_DIM;
-    w0Dims[1] = INPUT_DIM;
-    size_t *w0Order = reserveMemory(2 * sizeof(size_t));
-    setOrderOfDimsForNewTensor(2, w0Order);
-    shape_t *w0Shape = reserveMemory(sizeof(shape_t));
-    setShape(w0Shape, w0Dims, 2, w0Order);
-    tensor_t *w0Param = initTensor(w0Shape, quantizationInitFloat(), NULL);
-    initDistribution(w0Param, &xavier0);
-    tensor_t *w0Grad = gradInitFloat(w0Param, NULL);
-    parameter_t *w0 = parameterInit(w0Param, w0Grad);
-
-    /* b0 (1 x HIDDEN_DIM, ZEROS). */
-    size_t *b0Dims = reserveMemory(2 * sizeof(size_t));
-    b0Dims[0] = 1;
-    b0Dims[1] = HIDDEN_DIM;
-    size_t *b0Order = reserveMemory(2 * sizeof(size_t));
-    setOrderOfDimsForNewTensor(2, b0Order);
-    shape_t *b0Shape = reserveMemory(sizeof(shape_t));
-    setShape(b0Shape, b0Dims, 2, b0Order);
-    tensor_t *b0Param = initTensor(b0Shape, quantizationInitFloat(), NULL);
-    initDistribution(b0Param, &zeros);
-    tensor_t *b0Grad = gradInitFloat(b0Param, NULL);
-    parameter_t *b0 = parameterInit(b0Param, b0Grad);
-
-    model[0] = linearLayerInitLegacy(w0, b0, q, q, q, q);
-    model[1] = reluLayerInitLegacy(q, q);
-
-    distribution_t xavier1 = {
-        .type = XAVIER_UNIFORM,
-        .params.xavier = {.gain = 1.0f, .fanIn = HIDDEN_DIM, .fanOut = NUM_CLASSES}};
-
-    /* w1 (NUM_CLASSES x HIDDEN_DIM, XAVIER_UNIFORM). */
-    size_t *w1Dims = reserveMemory(2 * sizeof(size_t));
-    w1Dims[0] = NUM_CLASSES;
-    w1Dims[1] = HIDDEN_DIM;
-    size_t *w1Order = reserveMemory(2 * sizeof(size_t));
-    setOrderOfDimsForNewTensor(2, w1Order);
-    shape_t *w1Shape = reserveMemory(sizeof(shape_t));
-    setShape(w1Shape, w1Dims, 2, w1Order);
-    tensor_t *w1Param = initTensor(w1Shape, quantizationInitFloat(), NULL);
-    initDistribution(w1Param, &xavier1);
-    tensor_t *w1Grad = gradInitFloat(w1Param, NULL);
-    parameter_t *w1 = parameterInit(w1Param, w1Grad);
-
-    /* b1 (1 x NUM_CLASSES, ZEROS). */
-    size_t *b1Dims = reserveMemory(2 * sizeof(size_t));
-    b1Dims[0] = 1;
-    b1Dims[1] = NUM_CLASSES;
-    size_t *b1Order = reserveMemory(2 * sizeof(size_t));
-    setOrderOfDimsForNewTensor(2, b1Order);
-    shape_t *b1Shape = reserveMemory(sizeof(shape_t));
-    setShape(b1Shape, b1Dims, 2, b1Order);
-    tensor_t *b1Param = initTensor(b1Shape, quantizationInitFloat(), NULL);
-    initDistribution(b1Param, &zeros);
-    tensor_t *b1Grad = gradInitFloat(b1Param, NULL);
-    parameter_t *b1 = parameterInit(b1Param, b1Grad);
-
-    model[2] = linearLayerInitLegacy(w1, b1, q, q, q, q);
-    model[3] = softmaxLayerInitLegacy(q, q);
+    model[2] = linearLayerInit(
+        &(linearInit_t){.inFeatures = HIDDEN_DIM,
+                        .outFeatures = NUM_CLASSES,
+                        .bias = BIAS_TRUE,
+                        .weightInit = {.scheme = INIT_XAVIER_UNIFORM, .gain = 1.0f}},
+        &lq);
+    model[3] = softmaxLayerInit(&lq);
 }
 
 static size_t cbInvocations;
@@ -215,10 +180,10 @@ void testMnistSmoke_FullTrainingPipelineReducesLoss() {
      * NOTE: freeOptimSgdM cascades to all model parameters via freeParameter.
      * Do NOT also call freeParameter on w0/b0/w1/b1 — would be a double-free. */
     freeOptimSgdM(sgd);
-    freeSoftmaxLayerLegacy(model[3]);
-    freeLinearLayerLegacy(model[2]);
-    freeReluLayerLegacy(model[1]);
-    freeLinearLayerLegacy(model[0]);
+    freeSoftmaxLayer(model[3]);
+    freeLinearLayerShellOnly(model[2]);
+    freeReluLayer(model[1]);
+    freeLinearLayerShellOnly(model[0]);
     freeDataLoader(evalDl);
     freeDataLoader(trainDl);
     freeQuantization(q);
@@ -275,10 +240,10 @@ void testMnistSmoke_SnprintfGmtimeRBetweenSetupAndTrainingRun_NoSilentExit() {
     char capturedFirstChar = buf[0];
 
     freeOptimSgdM(sgd);
-    freeSoftmaxLayerLegacy(model[3]);
-    freeLinearLayerLegacy(model[2]);
-    freeReluLayerLegacy(model[1]);
-    freeLinearLayerLegacy(model[0]);
+    freeSoftmaxLayer(model[3]);
+    freeLinearLayerShellOnly(model[2]);
+    freeReluLayer(model[1]);
+    freeLinearLayerShellOnly(model[0]);
     freeDataLoader(evalDl);
     freeDataLoader(trainDl);
     freeQuantization(q);

@@ -72,12 +72,12 @@ static void validateLayerQuantForMaxPool1d(layerQuant_t *lq) {
         PRINT_ERROR("maxPool1dLayerInit: lq pointer is NULL");
         exit(1);
     }
-    if (lq->forwardMath == NULL) {
-        PRINT_ERROR("maxPool1dLayerInit: layerQuant.forwardMath must be set");
+    if (lq->outputQ == NULL) {
+        PRINT_ERROR("maxPool1dLayerInit: layerQuant.outputQ must be set");
         exit(1);
     }
-    if (lq->backwardMath == NULL) {
-        PRINT_ERROR("maxPool1dLayerInit: layerQuant.backwardMath must be set");
+    if (lq->propLossQ == NULL) {
+        PRINT_ERROR("maxPool1dLayerInit: layerQuant.propLossQ must be set");
         exit(1);
     }
 }
@@ -131,10 +131,10 @@ layer_t *maxPool1dLayerInit(maxPool1dInit_t *init, layerQuant_t *lq) {
 
     layer_t *layer = buildMaxPool1dLayerSkeleton(init);
     maxPool1dConfig_t *cfg = layer->config->maxPool1d;
-    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
-    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
-    cfg->outputQ = lq->forwardMath;
-    cfg->propLossQ = lq->backwardMath;
+    cfg->forwardMath = lq->forwardMath;
+    cfg->propLossMath = lq->propLossMath;
+    cfg->outputQ = lq->outputQ;
+    cfg->propLossQ = lq->propLossQ;
     cfg->ownsQuantizations = false;
     return layer;
 }
@@ -145,10 +145,10 @@ layer_t *maxPool1dLayerInitOwning(maxPool1dInit_t *init, layerQuant_t *lq) {
 
     layer_t *layer = buildMaxPool1dLayerSkeleton(init);
     maxPool1dConfig_t *cfg = layer->config->maxPool1d;
-    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
-    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
-    cfg->outputQ = deepCopyQuantization(lq->forwardMath);
-    cfg->propLossQ = deepCopyQuantization(lq->backwardMath);
+    cfg->forwardMath = lq->forwardMath;
+    cfg->propLossMath = lq->propLossMath;
+    cfg->outputQ = deepCopyQuantization(lq->outputQ);
+    cfg->propLossQ = deepCopyQuantization(lq->propLossQ);
     cfg->ownsQuantizations = true;
     return layer;
 }
@@ -200,12 +200,12 @@ static void validateLayerQuantForAvgPool1d(layerQuant_t *lq) {
         PRINT_ERROR("avgPool1dLayerInit: lq pointer is NULL");
         exit(1);
     }
-    if (lq->forwardMath == NULL) {
-        PRINT_ERROR("avgPool1dLayerInit: layerQuant.forwardMath must be set");
+    if (lq->outputQ == NULL) {
+        PRINT_ERROR("avgPool1dLayerInit: layerQuant.outputQ must be set");
         exit(1);
     }
-    if (lq->backwardMath == NULL) {
-        PRINT_ERROR("avgPool1dLayerInit: layerQuant.backwardMath must be set");
+    if (lq->propLossQ == NULL) {
+        PRINT_ERROR("avgPool1dLayerInit: layerQuant.propLossQ must be set");
         exit(1);
     }
 }
@@ -234,10 +234,10 @@ layer_t *avgPool1dLayerInit(avgPool1dInit_t *init, layerQuant_t *lq) {
 
     layer_t *layer = buildAvgPool1dLayerSkeleton(init);
     avgPool1dConfig_t *cfg = layer->config->avgPool1d;
-    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
-    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
-    cfg->outputQ = lq->forwardMath;
-    cfg->propLossQ = lq->backwardMath;
+    cfg->forwardMath = lq->forwardMath;
+    cfg->propLossMath = lq->propLossMath;
+    cfg->outputQ = lq->outputQ;
+    cfg->propLossQ = lq->propLossQ;
     cfg->ownsQuantizations = false;
     return layer;
 }
@@ -248,10 +248,10 @@ layer_t *avgPool1dLayerInitOwning(avgPool1dInit_t *init, layerQuant_t *lq) {
 
     layer_t *layer = buildAvgPool1dLayerSkeleton(init);
     avgPool1dConfig_t *cfg = layer->config->avgPool1d;
-    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
-    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
-    cfg->outputQ = deepCopyQuantization(lq->forwardMath);
-    cfg->propLossQ = deepCopyQuantization(lq->backwardMath);
+    cfg->forwardMath = lq->forwardMath;
+    cfg->propLossMath = lq->propLossMath;
+    cfg->outputQ = deepCopyQuantization(lq->outputQ);
+    cfg->propLossQ = deepCopyQuantization(lq->propLossQ);
     cfg->ownsQuantizations = true;
     return layer;
 }

@@ -10,32 +10,6 @@
 #include "ReluApi.h"
 #include "StorageApi.h"
 
-layer_t *reluLayerInitLegacy(quantization_t *forwardQ, quantization_t *backwardQ) {
-    layer_t *reluLayer = reserveMemory(sizeof(layer_t));
-
-    reluLayer->type = RELU;
-
-    layerConfig_t *reluConfig = reserveMemory(sizeof(layerConfig_t));
-
-    reluConfig_t *reluCfg = reserveMemory(sizeof(reluConfig_t));
-    reluConfig->relu = reluCfg;
-    reluCfg->forwardMath = arithmeticFromQuantizationOrDefault(forwardQ);
-    reluCfg->propLossMath = arithmeticFromQuantizationOrDefault(backwardQ);
-    reluCfg->outputQ = forwardQ;
-    reluCfg->propLossQ = backwardQ;
-    reluCfg->ownsQuantizations = false;
-
-    reluLayer->config = reluConfig;
-
-    return reluLayer;
-}
-
-void freeReluLayerLegacy(layer_t *reluLayer) {
-    freeReservedMemory(reluLayer->config->relu);
-    freeReservedMemory(reluLayer->config);
-    freeReservedMemory(reluLayer);
-}
-
 /* ============================================================================
  * New factory API — layerQuant_t profile (PR 1).
  * ========================================================================== */
@@ -45,12 +19,12 @@ static void validateLayerQuantForRelu(layerQuant_t *lq) {
         PRINT_ERROR("reluLayerInit: lq pointer is NULL");
         exit(1);
     }
-    if (lq->forwardMath == NULL) {
-        PRINT_ERROR("reluLayerInit: layerQuant.forwardMath must be set");
+    if (lq->outputQ == NULL) {
+        PRINT_ERROR("reluLayerInit: layerQuant.outputQ must be set");
         exit(1);
     }
-    if (lq->backwardMath == NULL) {
-        PRINT_ERROR("reluLayerInit: layerQuant.backwardMath must be set");
+    if (lq->propLossQ == NULL) {
+        PRINT_ERROR("reluLayerInit: layerQuant.propLossQ must be set");
         exit(1);
     }
 }
@@ -66,10 +40,10 @@ layer_t *reluLayerInit(layerQuant_t *lq) {
     layerCfg->relu = cfg;
     layer->config = layerCfg;
 
-    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
-    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
-    cfg->outputQ = lq->forwardMath;
-    cfg->propLossQ = lq->backwardMath;
+    cfg->forwardMath = lq->forwardMath;
+    cfg->propLossMath = lq->propLossMath;
+    cfg->outputQ = lq->outputQ;
+    cfg->propLossQ = lq->propLossQ;
     cfg->ownsQuantizations = false;
 
     return layer;
@@ -86,10 +60,10 @@ layer_t *reluLayerInitOwning(layerQuant_t *lq) {
     layerCfg->relu = cfg;
     layer->config = layerCfg;
 
-    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
-    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
-    cfg->outputQ = deepCopyQuantization(lq->forwardMath);
-    cfg->propLossQ = deepCopyQuantization(lq->backwardMath);
+    cfg->forwardMath = lq->forwardMath;
+    cfg->propLossMath = lq->propLossMath;
+    cfg->outputQ = deepCopyQuantization(lq->outputQ);
+    cfg->propLossQ = deepCopyQuantization(lq->propLossQ);
     cfg->ownsQuantizations = true;
 
     return layer;

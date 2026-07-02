@@ -17,28 +17,6 @@
 #include "TensorApi.h"
 
 /* ============================================================================
- * Legacy factory (renamed in Task 4; dies Task 9).
- * ========================================================================== */
-
-layer_t *conv1dLayerInitLegacy(parameter_t *weights, parameter_t *bias, kernel_t *kernel,
-                               quantization_t *forwardQ, quantization_t *weightGradQ,
-                               quantization_t *biasGradQ, quantization_t *propLossQ) {
-    layer_t *conv1dLayer = reserveMemory(sizeof(layer_t));
-    layerConfig_t *layerConfig = reserveMemory(sizeof(layerConfig_t));
-    conv1dConfig_t *conv1dConfig = reserveMemory(sizeof(conv1dConfig_t));
-
-    initConv1dConfigWithWeightsAndBias(conv1dConfig, kernel, weights, bias, 1u, forwardQ,
-                                       weightGradQ, biasGradQ, propLossQ);
-    conv1dConfig->ownsQuantizations = false;
-
-    conv1dLayer->type = CONV1D;
-    layerConfig->conv1d = conv1dConfig;
-    conv1dLayer->config = layerConfig;
-
-    return conv1dLayer;
-}
-
-/* ============================================================================
  * New factory API — conv1dInit_t struct + layerQuant_t profile (PR 2).
  * ========================================================================== */
 
@@ -136,12 +114,12 @@ static void validateLayerQuantForConv1d(layerQuant_t *lq, bool hasBias) {
         PRINT_ERROR("conv1dLayerInit: lq pointer is NULL");
         exit(1);
     }
-    if (lq->forwardMath == NULL) {
-        PRINT_ERROR("conv1dLayerInit: layerQuant.forwardMath must be set");
+    if (lq->outputQ == NULL) {
+        PRINT_ERROR("conv1dLayerInit: layerQuant.outputQ must be set");
         exit(1);
     }
-    if (lq->backwardMath == NULL) {
-        PRINT_ERROR("conv1dLayerInit: layerQuant.backwardMath must be set");
+    if (lq->propLossQ == NULL) {
+        PRINT_ERROR("conv1dLayerInit: layerQuant.propLossQ must be set");
         exit(1);
     }
     if (lq->weightStorage == NULL) {
@@ -198,13 +176,13 @@ layer_t *conv1dLayerInit(conv1dInit_t *init, layerQuant_t *lq) {
     cfg->groups = groups;
 
     /* Borrowing: store the forward-wire/dx-wire storage configs verbatim, no copy.
-     * All three grad/backward arithmetics derive from the single lq->backwardMath source. */
-    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
-    cfg->weightGradMath = arithmeticFromQuantization(lq->backwardMath);
-    cfg->biasGradMath = arithmeticFromQuantization(lq->backwardMath);
-    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
-    cfg->outputQ = lq->forwardMath;
-    cfg->propLossQ = lq->backwardMath;
+     * Arithmetic slots are plain by-value copies of the profile's declared math. */
+    cfg->forwardMath = lq->forwardMath;
+    cfg->weightGradMath = lq->weightGradMath;
+    cfg->biasGradMath = lq->biasGradMath;
+    cfg->propLossMath = lq->propLossMath;
+    cfg->outputQ = lq->outputQ;
+    cfg->propLossQ = lq->propLossQ;
     cfg->ownsQuantizations = false;
 
     return layer;
@@ -241,12 +219,12 @@ layer_t *conv1dLayerInitOwning(conv1dInit_t *init, layerQuant_t *lq) {
 
     /* Owning: same arithmetic as Borrowing; deep-copy the two storage configs
      * (outputQ, propLossQ) into fresh allocations — 2 allocs, not 4. */
-    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
-    cfg->weightGradMath = arithmeticFromQuantization(lq->backwardMath);
-    cfg->biasGradMath = arithmeticFromQuantization(lq->backwardMath);
-    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
-    cfg->outputQ = deepCopyQuantization(lq->forwardMath);
-    cfg->propLossQ = deepCopyQuantization(lq->backwardMath);
+    cfg->forwardMath = lq->forwardMath;
+    cfg->weightGradMath = lq->weightGradMath;
+    cfg->biasGradMath = lq->biasGradMath;
+    cfg->propLossMath = lq->propLossMath;
+    cfg->outputQ = deepCopyQuantization(lq->outputQ);
+    cfg->propLossQ = deepCopyQuantization(lq->propLossQ);
     cfg->ownsQuantizations = true;
 
     return layer;

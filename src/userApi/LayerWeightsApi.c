@@ -9,7 +9,6 @@
 #include "Tensor.h"
 #include "TensorApi.h"
 #include <stdlib.h>
-#include <string.h>
 
 void layerLoadWeights(layer_t *layer, float *weightData, float *biasData) {
     if (layer == NULL) {
@@ -30,7 +29,7 @@ void layerLoadWeights(layer_t *layer, float *weightData, float *biasData) {
         }
         tensor_t *weightTensor = cfg->weights->param;
         size_t numWeightElements = calcNumberOfElementsByTensor(weightTensor);
-        memcpy(weightTensor->data, weightData, numWeightElements * sizeof(float));
+        tensorFillFromFloatBuffer(weightTensor, weightData, numWeightElements);
 
         if (cfg->bias != NULL) {
             if (biasData == NULL) {
@@ -39,7 +38,7 @@ void layerLoadWeights(layer_t *layer, float *weightData, float *biasData) {
             }
             tensor_t *biasTensor = cfg->bias->param;
             size_t numBiasElements = calcNumberOfElementsByTensor(biasTensor);
-            memcpy(biasTensor->data, biasData, numBiasElements * sizeof(float));
+            tensorFillFromFloatBuffer(biasTensor, biasData, numBiasElements);
         } else if (biasData != NULL) {
             PRINT_ERROR("layerLoadWeights LINEAR: layer has no bias but biasData is non-NULL");
             exit(1);
@@ -54,7 +53,7 @@ void layerLoadWeights(layer_t *layer, float *weightData, float *biasData) {
         }
         tensor_t *weightTensor = cfg->weights->param;
         size_t numWeightElements = calcNumberOfElementsByTensor(weightTensor);
-        memcpy(weightTensor->data, weightData, numWeightElements * sizeof(float));
+        tensorFillFromFloatBuffer(weightTensor, weightData, numWeightElements);
 
         if (cfg->bias != NULL) {
             if (biasData == NULL) {
@@ -63,7 +62,7 @@ void layerLoadWeights(layer_t *layer, float *weightData, float *biasData) {
             }
             tensor_t *biasTensor = cfg->bias->param;
             size_t numBiasElements = calcNumberOfElementsByTensor(biasTensor);
-            memcpy(biasTensor->data, biasData, numBiasElements * sizeof(float));
+            tensorFillFromFloatBuffer(biasTensor, biasData, numBiasElements);
         } else if (biasData != NULL) {
             PRINT_ERROR("layerLoadWeights CONV1D: layer has no bias but biasData is non-NULL");
             exit(1);
@@ -111,7 +110,7 @@ void layerLoadWeights(layer_t *layer, float *weightData, float *biasData) {
         }
         tensor_t *weightTensor = cfg->weights->param;
         size_t numWeightElements = calcNumberOfElementsByTensor(weightTensor);
-        memcpy(weightTensor->data, weightData, numWeightElements * sizeof(float));
+        tensorFillFromFloatBuffer(weightTensor, weightData, numWeightElements);
 
         if (cfg->bias != NULL) {
             if (biasData == NULL) {
@@ -121,7 +120,7 @@ void layerLoadWeights(layer_t *layer, float *weightData, float *biasData) {
             }
             tensor_t *biasTensor = cfg->bias->param;
             size_t numBiasElements = calcNumberOfElementsByTensor(biasTensor);
-            memcpy(biasTensor->data, biasData, numBiasElements * sizeof(float));
+            tensorFillFromFloatBuffer(biasTensor, biasData, numBiasElements);
         } else if (biasData != NULL) {
             PRINT_ERROR("layerLoadWeights CONV1D_TRANSPOSED: layer has no bias but biasData "
                         "is non-NULL");

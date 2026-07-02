@@ -11,6 +11,7 @@
 #include "DropoutApi.h"
 #include "InferenceApi.h"
 #include "Layer.h"
+#include "LayerQuant.h"
 #include "LinearApi.h"
 #include "LossFunction.h"
 #include "Optimizer.h"
@@ -168,35 +169,22 @@ void testStateDictLoad_DropoutNoParams(void) {
     TEST_PASS();
 }
 
-static parameter_t *buildFloatParam(size_t rows, size_t cols) {
-    size_t *dims = reserveMemory(2 * sizeof(size_t));
-    dims[0] = rows;
-    dims[1] = cols;
-    size_t *order = reserveMemory(2 * sizeof(size_t));
-    setOrderOfDimsForNewTensor(2, order);
-    shape_t *shape = reserveMemory(sizeof(shape_t));
-    setShape(shape, dims, 2, order);
-    tensor_t *param = initTensor(shape, quantizationInitFloat(), NULL);
-    tensor_t *grad = gradInitFloat(param, NULL);
-    return parameterInit(param, grad);
-}
-
 // Exercises a Linear(4→4) → Dropout(0.5) → Linear(4→4) model through one MSE
 // training step, verifying that dropout's propLoss is correctly consumed by
 // the upstream Linear backward pass.
 void testMultiLayer_LinearDropoutLinear_BackwardCompletes(void) {
     quantization_t *q = quantizationInitFloat();
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, q);
 
-    parameter_t *w0 = buildFloatParam(4, 4);
-    parameter_t *b0 = buildFloatParam(1, 4);
-    layer_t *linear0 = linearLayerInitLegacy(w0, b0, q, q, q, q);
+    layer_t *linear0 =
+        linearLayerInit(&(linearInit_t){.inFeatures = 4, .outFeatures = 4, .bias = BIAS_TRUE}, &lq);
 
     tensor_t *mask = buildBoolMask(4);
     layer_t *drop = dropoutLayerInit(0.5f, mask, q, q);
 
-    parameter_t *w1 = buildFloatParam(4, 4);
-    parameter_t *b1 = buildFloatParam(1, 4);
-    layer_t *linear1 = linearLayerInitLegacy(w1, b1, q, q, q, q);
+    layer_t *linear1 =
+        linearLayerInit(&(linearInit_t){.inFeatures = 4, .outFeatures = 4, .bias = BIAS_TRUE}, &lq);
 
     layer_t *model[3] = {linear0, drop, linear1};
 
@@ -218,14 +206,10 @@ void testMultiLayer_LinearDropoutLinear_BackwardCompletes(void) {
     freeTrainingStats(stats);
     freeTensor(label);
     freeTensor(input);
-    freeLinearLayerLegacy(linear1);
-    freeParameter(w1);
-    freeParameter(b1);
+    freeLinearLayer(linear1);
     freeDropoutLayer(drop);
     freeTensor(mask);
-    freeLinearLayerLegacy(linear0);
-    freeParameter(w0);
-    freeParameter(b0);
+    freeLinearLayer(linear0);
     freeQuantization(q);
 
     TEST_ASSERT_TRUE(statsNotNull);

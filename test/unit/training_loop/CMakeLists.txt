@@ -6,6 +6,7 @@ add_elastic_ai_unit_test(
         LinearApi
         SoftmaxApi
         LayerQuant
+        ArithmeticType
         LayerCommon
         LayerWeightsApi
         StateDictApi

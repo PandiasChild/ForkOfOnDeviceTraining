@@ -13,6 +13,7 @@
 #include "Conv1dTransposed.h"
 #include "Dropout.h"
 #include "Layer.h"
+#include "LayerConfigAccess.h"
 #include "LayerNorm.h"
 #include "Linear.h"
 #include "LossFunction.h"
@@ -169,52 +170,10 @@ void traceModelGrads(layer_t **model, size_t modelSize, const char *tag, traceSi
 static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t sizeNetwork) {
     for (size_t i = 0; i < sizeNetwork; i++) {
         layer_t *currentLayer = model[i];
-        quantization_t *currentQ = NULL;
-
-        switch (currentLayer->type) {
-        case LINEAR:
-            linearConfig_t *linearConfig = currentLayer->config->linear;
-            currentQ = linearConfig->outputQ;
-            break;
-        case RELU:
-            reluConfig_t *reluConfig = currentLayer->config->relu;
-            currentQ = reluConfig->outputQ;
-            break;
-        case SOFTMAX:
-            softmaxConfig_t *softmaxConfig = currentLayer->config->softmax;
-            currentQ = softmaxConfig->outputQ;
-            break;
-        case FLATTEN:
+        quantization_t *currentQ = layerOutputQ(currentLayer);
+        if (currentQ == NULL) {
             // Flatten has no per-layer quantization; output dtype equals input dtype.
             currentQ = layerOutputs[i]->quantization;
-            break;
-        case CONV1D:
-            currentQ = currentLayer->config->conv1d->outputQ;
-            break;
-        case CONV1D_TRANSPOSED:
-            currentQ = currentLayer->config->conv1dTransposed->outputQ;
-            break;
-        case MAXPOOL1D:
-            currentQ = currentLayer->config->maxPool1d->outputQ;
-            break;
-        case AVGPOOL1D:
-            currentQ = currentLayer->config->avgPool1d->outputQ;
-            break;
-        case ADAPTIVE_AVGPOOL1D:
-            currentQ = currentLayer->config->adaptiveAvgPool1d->outputQ;
-            break;
-        case DROPOUT:
-            currentQ = currentLayer->config->dropout->outputQ;
-            break;
-        case LAYERNORM:
-            currentQ = currentLayer->config->layerNorm->outputQ;
-            break;
-        case QUANTIZATION:
-            currentQ = currentLayer->config->quantization->forwardQ;
-            break;
-        default:
-            PRINT_ERROR("Unknown Layer Type!");
-            exit(1);
         }
 
         calcOutputShapeFn_t calcOutputShape = layerFunctions[currentLayer->type].calcOutputShape;
@@ -246,7 +205,7 @@ static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t si
             q->type = SYM_INT32;
             symInt32QConfig_t *currentQC = currentQ->qConfig;
             symInt32QConfig_t *qC = reserveMemory(sizeof(symInt32QConfig_t));
-            initSymInt32QConfig(currentQC->roundingMode, qC);
+            initSymInt32QConfigWithQMaxBits(currentQC->roundingMode, qC, currentQC->qMaxBits);
             initSymInt32Quantization(qC, q);
             break;
         default:
@@ -272,42 +231,6 @@ static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t si
 static void deInitLayerOutputs(tensor_t **layerOutputs, size_t modelSize) {
     for (size_t i = 1; i <= modelSize; i++) {
         freeTensor(layerOutputs[i]);
-    }
-}
-
-/* Producer's declared backward config for the dx wire it emits (design spec
- * 2026-07-02 §5, #221). NULL = no declared config (Flatten) -> passthrough of
- * the upstream dtype. The loss-grad seed also passes NULL (lossConfig_t has
- * no quantization field -> model-output dtype, as before). */
-static quantization_t *backwardWireQ(layer_t *layer) {
-    switch (layer->type) {
-    case LINEAR:
-        return layer->config->linear->propLossQ;
-    case CONV1D:
-        return layer->config->conv1d->propLossQ;
-    case CONV1D_TRANSPOSED:
-        return layer->config->conv1dTransposed->propLossQ;
-    case MAXPOOL1D:
-        return layer->config->maxPool1d->propLossQ;
-    case AVGPOOL1D:
-        return layer->config->avgPool1d->propLossQ;
-    case ADAPTIVE_AVGPOOL1D:
-        return layer->config->adaptiveAvgPool1d->propLossQ;
-    case RELU:
-        return layer->config->relu->propLossQ;
-    case SOFTMAX:
-        return layer->config->softmax->propLossQ;
-    case DROPOUT:
-        return layer->config->dropout->propLossQ;
-    case LAYERNORM:
-        return layer->config->layerNorm->propLossQ;
-    case QUANTIZATION:
-        return layer->config->quantization->backwardQ;
-    case FLATTEN:
-        return NULL;
-    default:
-        PRINT_ERROR("Unknown Layer Type!");
-        exit(1);
     }
 }
 
@@ -342,7 +265,7 @@ static void initGradTensor(tensor_t *grad, tensor_t *layerOutput, quantization_t
     case SYM_INT32:
         symInt32QConfig_t *currentQC = currentQ->qConfig;
         symInt32QConfig_t *qC = reserveMemory(sizeof(symInt32QConfig_t));
-        initSymInt32QConfig(currentQC->roundingMode, qC);
+        initSymInt32QConfigWithQMaxBits(currentQC->roundingMode, qC, currentQC->qMaxBits);
         initSymInt32Quantization(qC, q);
         break;
     default:

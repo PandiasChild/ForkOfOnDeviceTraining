@@ -1,6 +1,7 @@
 #define SOURCE_FILE "SGD-UTEST"
 #include <stdlib.h>
 
+#include "ArithmeticType.h"
 #include "DeathTest.h"
 #include "Layer.h"
 #include "LayerNorm.h"
@@ -21,6 +22,43 @@
 
 void setUp() {}
 void tearDown() {}
+
+/*! Borrows already-built weight/bias parameter_t and a single quantization
+ *  for forward + all backward math — replicates the deleted
+ *  linearLayerInitLegacy(weights, bias, q, q, q, q) uniform-Q shape.
+ *
+ *  This file's tests register parameters directly with sgdMCreateOptim and
+ *  need weight/bias shapes the factory can't express (arbitrary, decoupled
+ *  from any real inFeatures/outFeatures pairing) or grad quantizations the
+ *  factory's grad-storage knob rejects (e.g. sub-byte SYM) — so the layer
+ *  is wired by hand instead of going through linearLayerInit. */
+static layer_t *buildBorrowedLinearLayer(parameter_t *weights, parameter_t *bias,
+                                         quantization_t *q) {
+    linearConfig_t *cfg = reserveMemory(sizeof(linearConfig_t));
+    cfg->weights = weights;
+    cfg->bias = bias;
+    cfg->forwardMath = arithmeticFromQuantization(q);
+    cfg->weightGradMath = arithmeticFromQuantization(q);
+    cfg->biasGradMath = arithmeticFromQuantization(q);
+    cfg->propLossMath = arithmeticFromQuantization(q);
+    cfg->outputQ = q;
+    cfg->propLossQ = q;
+    cfg->ownsQuantizations = false;
+    layerConfig_t *layerCfg = reserveMemory(sizeof(layerConfig_t));
+    layerCfg->linear = cfg;
+    layer_t *layer = reserveMemory(sizeof(layer_t));
+    initLayer(layer, LINEAR, layerCfg);
+    return layer;
+}
+
+/*! Frees only the layer_t + layerConfig_t + linearConfig_t shells — NOT the
+ *  weight/bias parameters. Needed after freeOptimSgdM, which already frees
+ *  every parameter it registered (freeLinearLayer would double-free them). */
+static void freeLinearLayerShellOnly(layer_t *layer) {
+    freeReservedMemory(layer->config->linear);
+    freeReservedMemory(layer->config);
+    freeReservedMemory(layer);
+}
 
 void testSgdMCreateOptim() {
     /* Shared layer-config quantization (caller-owned). */
@@ -84,9 +122,11 @@ void testSgdMCreateOptim() {
     tensorFillFromFloatBuffer(b1Grad, (float[]){0.f}, 1);
     parameter_t *bias1 = parameterInit(b1Param, b1Grad);
 
-    layer_t *linear0 = linearLayerInitLegacy(weights0, bias0, layerQ, layerQ, layerQ, layerQ);
-    layer_t *relu0 = reluLayerInitLegacy(layerQ, layerQ);
-    layer_t *linear1 = linearLayerInitLegacy(weights1, bias1, layerQ, layerQ, layerQ, layerQ);
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, layerQ);
+    layer_t *linear0 = buildBorrowedLinearLayer(weights0, bias0, layerQ);
+    layer_t *relu0 = reluLayerInit(&lq);
+    layer_t *linear1 = buildBorrowedLinearLayer(weights1, bias1, layerQ);
 
     layer_t *model[] = {linear0, relu0, linear1};
     size_t sizeModel = sizeof(model) / sizeof(model[0]);
@@ -154,9 +194,9 @@ void testSgdMCreateOptim() {
      * (and their grads) registered with the optimizer (per SgdApi.c:85-93,
      * mirroring the post-#110 ownership contract). */
     freeOptimSgdM(optim);
-    freeLinearLayerLegacy(linear1);
-    freeReluLayerLegacy(relu0);
-    freeLinearLayerLegacy(linear0);
+    freeLinearLayerShellOnly(linear1);
+    freeReluLayer(relu0);
+    freeLinearLayerShellOnly(linear0);
     freeQuantization(layerQ);
 
     /* ASSERT. */
@@ -208,7 +248,7 @@ void testSGDStep() {
     tensorFillFromFloatBuffer(biasGrad, (float[]){1.f, 3.f}, 2);
     parameter_t *bias = parameterInit(biasParam, biasGrad);
 
-    layer_t *linear = linearLayerInitLegacy(weights, bias, layerQ, layerQ, layerQ, layerQ);
+    layer_t *linear = buildBorrowedLinearLayer(weights, bias, layerQ);
 
     layer_t *model[] = {linear};
     size_t modelSize = 1;
@@ -243,9 +283,10 @@ void testSGDStep() {
         capturedBAfterStep2[i] = ((float *)linear->config->linear->bias->param->data)[i];
     }
 
-    /* FREE in reverse-init order. */
+    /* FREE in reverse-init order. freeOptimSgdM already frees the registered
+     * weights/bias — freeLinearLayer would double-free them. */
     freeOptimSgdM(sgd);
-    freeLinearLayerLegacy(linear);
+    freeLinearLayerShellOnly(linear);
     freeQuantization(layerQ);
 
     /* ASSERT. */
@@ -294,7 +335,7 @@ void testSGDZeroGrad() {
     tensorFillFromFloatBuffer(biasGrad, (float[]){1.f, 3.f}, 2);
     parameter_t *bias = parameterInit(biasParam, biasGrad);
 
-    layer_t *linear = linearLayerInitLegacy(weights, bias, layerQ, layerQ, layerQ, layerQ);
+    layer_t *linear = buildBorrowedLinearLayer(weights, bias, layerQ);
 
     layer_t *model[] = {linear};
     size_t modelSize = 1;
@@ -316,9 +357,10 @@ void testSGDZeroGrad() {
         capturedBGrad[i] = ((float *)bias->grad->data)[i];
     }
 
-    /* FREE in reverse-init order. */
+    /* FREE in reverse-init order. freeOptimSgdM already frees the registered
+     * weights/bias — freeLinearLayer would double-free them. */
     freeOptimSgdM(sgd);
-    freeLinearLayerLegacy(linear);
+    freeLinearLayerShellOnly(linear);
     freeQuantization(layerQ);
 
     /* ASSERT. */
@@ -331,8 +373,14 @@ void testSGDZeroGrad() {
 void testSgdZeroGradOnSymInt32GradZeroesMantissasAndResetsScale(void) {
     quantization_t *fwd = quantizationInitFloat();
     quantization_t *bwd = quantizationInitSymInt32(HALF_AWAY);
-    layerQuant_t lq = {
-        .forwardMath = fwd, .backwardMath = bwd, .weightStorage = fwd, .biasStorage = fwd};
+    layerQuant_t lq = {.forwardMath = arithmeticFromQuantization(fwd),
+                       .weightGradMath = arithmeticFromQuantization(bwd),
+                       .biasGradMath = arithmeticFromQuantization(bwd),
+                       .propLossMath = arithmeticFromQuantization(bwd),
+                       .outputQ = fwd,
+                       .propLossQ = bwd,
+                       .weightStorage = fwd,
+                       .biasStorage = fwd};
     layer_t *layer =
         linearLayerInit(&(linearInit_t){.inFeatures = 3, .outFeatures = 2, .bias = BIAS_TRUE}, &lq);
 
@@ -543,13 +591,13 @@ void testSgdMCreateOptimRejectsSubByteGradStorage(void) {
     parameter_t *bias = parameterInit(bParam, bGrad);
 
     quantization_t *fQ = quantizationInitFloat();
-    layer_t *layer = linearLayerInitLegacy(weights, bias, fQ, fQ, fQ, fQ);
+    layer_t *layer = buildBorrowedLinearLayer(weights, bias, fQ);
     layer_t *model[1] = {layer};
 
     ASSERT_EXITS_WITH_FAILURE(sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 1, FLOAT32));
 
     /* Teardown (parent continues after the fork-based assert; file convention). */
-    freeLinearLayerLegacy(layer);
+    freeLinearLayerShellOnly(layer);
     freeParameter(weights);
     freeParameter(bias);
     freeQuantization(fQ);

@@ -224,8 +224,12 @@ void testConv1dLayerInitKeepsFloat32GradEvenWithSymInt32BackwardMath(void) {
     quantization_t *fwd = quantizationInitFloat();
     quantization_t *bwd = quantizationInitSymInt32(HALF_AWAY);
     layerQuant_t lq = {
-        .forwardMath = fwd,
-        .backwardMath = bwd,
+        .forwardMath = arithmeticFromQuantization(fwd),
+        .weightGradMath = arithmeticFromQuantization(bwd),
+        .biasGradMath = arithmeticFromQuantization(bwd),
+        .propLossMath = arithmeticFromQuantization(bwd),
+        .outputQ = fwd,
+        .propLossQ = bwd,
         .weightStorage = fwd,
         .biasStorage = fwd,
     };

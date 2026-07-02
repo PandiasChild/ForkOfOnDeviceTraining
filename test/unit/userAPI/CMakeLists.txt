@@ -8,6 +8,7 @@ add_elastic_ai_unit_test(
         LIB_UNDER_TEST
         LayerQuant
         MORE_LIBS
+        ArithmeticType
         QuantizationApi
         Quantization
         Rounding
@@ -65,10 +66,12 @@ add_elastic_ai_unit_test(
         CommonLayerLibs
         TensorApi
         LinearApi
+        LayerWeightsApi
         ReluApi
         LayerNormApi
         LayerNorm
         LayerQuant
+        ArithmeticType
         Quantization
         QuantizationApi
         LossFunction
@@ -86,6 +89,7 @@ add_elastic_ai_unit_test(
         CommonLayerLibs
         TensorApi
         LinearApi
+        ArithmeticType
         ReluApi
         SgdApi
         QuantizationApi
@@ -241,6 +245,8 @@ target_link_libraries(UnitTestMultiLayerTraining PRIVATE
         CommonLayerLibs
         TensorApi
         LinearApi
+        LayerQuant
+        ArithmeticType
         ReluApi
         SoftmaxApi
         SgdApi
@@ -263,6 +269,7 @@ target_link_libraries(UnitTestMnistSmoke PRIVATE
         CommonLayerLibs
         TensorApi
         LinearApi
+        LayerQuant
         ReluApi
         SoftmaxApi
         SgdApi
@@ -284,6 +291,7 @@ target_link_libraries(UnitTestFlattenIntegration PRIVATE
         FlattenApi
         LinearApi
         SoftmaxApi
+        LayerQuant
         SgdApi
         TensorApi
         QuantizationApi
@@ -302,6 +310,7 @@ target_link_libraries(UnitTestOptimizerScaling PRIVATE
         Sgd
         Optimizer
         LinearApi
+        ArithmeticType
         CommonLayerLibs
         TensorApi
         QuantizationApi
@@ -330,6 +339,7 @@ target_link_libraries(UnitTestQuantLayerIntegration PRIVATE
         Sgd
         Optimizer
         LayerQuant
+        ArithmeticType
         LayerCommon
         LinearApi
         QuantLayerApi
@@ -360,6 +370,33 @@ add_elastic_ai_unit_test(
         QuantizationApi
         Quantization
         Rounding
+        TensorApi
+        StorageApi
+)
+
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
+        LayerConfigAccess
+        MORE_LIBS
+        ArithmeticType
+        CommonLayerLibs
+        LinearApi
+        ReluApi
+        SoftmaxApi
+        Conv1dApi
+        Conv1dTransposedApi
+        Pool1dApi
+        AdaptivePool1dApi
+        DropoutApi
+        LayerNormApi
+        QuantLayerApi
+        FlattenApi
+        LayerCommon
+        LayerQuant
+        QuantizationApi
+        Quantization
+        Rounding
+        Tensor
         TensorApi
         StorageApi
 )

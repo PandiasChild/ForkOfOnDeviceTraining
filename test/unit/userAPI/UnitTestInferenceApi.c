@@ -1,10 +1,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "ArithmeticType.h"
 #include "InferenceApi.h"
 #include "Layer.h"
 #include "LayerNormApi.h"
 #include "LayerQuant.h"
+#include "LayerWeightsApi.h"
+#include "Linear.h"
 #include "LinearApi.h"
 #include "LossFunction.h"
 #include "Quantization.h"
@@ -15,35 +18,36 @@
 #include "TensorConversion.h"
 #include "unity.h"
 
+/*! Borrows already-built weight/bias parameter_t and a single quantization
+ *  for forward + all backward math — replicates the deleted
+ *  linearLayerInitLegacy(weights, bias, q, q, q, q) uniform-Q shape. Needed
+ *  for weight/bias tensors whose STORAGE itself is SYM_INT32: the factory's
+ *  KAIMING init (initWeightTensor, LayerCommon.c requireFloat32) only
+ *  supports FLOAT32-native weight storage. */
+static layer_t *buildBorrowedLinearLayer(parameter_t *weights, parameter_t *bias,
+                                         quantization_t *q) {
+    linearConfig_t *cfg = reserveMemory(sizeof(linearConfig_t));
+    cfg->weights = weights;
+    cfg->bias = bias;
+    cfg->forwardMath = arithmeticFromQuantization(q);
+    cfg->weightGradMath = arithmeticFromQuantization(q);
+    cfg->biasGradMath = arithmeticFromQuantization(q);
+    cfg->propLossMath = arithmeticFromQuantization(q);
+    cfg->outputQ = q;
+    cfg->propLossQ = q;
+    cfg->ownsQuantizations = false;
+    layerConfig_t *layerCfg = reserveMemory(sizeof(layerConfig_t));
+    layerCfg->linear = cfg;
+    layer_t *layer = reserveMemory(sizeof(layer_t));
+    initLayer(layer, LINEAR, layerCfg);
+    return layer;
+}
+
 void testInferenceLinearReluFloat() {
     /* 1. Build heap-allocated quantization (shared across both layers). */
     quantization_t *q = quantizationInitFloat();
-
-    /* 2. Build weights tensor (shape 2x3) and its grad. */
-    size_t *weightDims = reserveMemory(2 * sizeof(size_t));
-    weightDims[0] = 2;
-    weightDims[1] = 3;
-    size_t *weightOrder = reserveMemory(2 * sizeof(size_t));
-    setOrderOfDimsForNewTensor(2, weightOrder);
-    shape_t *weightShape = reserveMemory(sizeof(shape_t));
-    setShape(weightShape, weightDims, 2, weightOrder);
-    tensor_t *weightParam = initTensor(weightShape, quantizationInitFloat(), NULL);
-    tensorFillFromFloatBuffer(weightParam, (float[]){-1.f, 2.f, -3.f, 4.f, 5.f, 6.f}, 6);
-    tensor_t *weightGrad = gradInitFloat(weightParam, NULL);
-    parameter_t *weights = parameterInit(weightParam, weightGrad);
-
-    /* 3. Build bias tensor (shape 1x2) and its grad. */
-    size_t *biasDims = reserveMemory(2 * sizeof(size_t));
-    biasDims[0] = 1;
-    biasDims[1] = 2;
-    size_t *biasOrder = reserveMemory(2 * sizeof(size_t));
-    setOrderOfDimsForNewTensor(2, biasOrder);
-    shape_t *biasShape = reserveMemory(sizeof(shape_t));
-    setShape(biasShape, biasDims, 2, biasOrder);
-    tensor_t *biasParam = initTensor(biasShape, quantizationInitFloat(), NULL);
-    tensorFillFromFloatBuffer(biasParam, (float[]){-1.f, 3.f}, 2);
-    tensor_t *biasGrad = gradInitFloat(biasParam, NULL);
-    parameter_t *bias = parameterInit(biasParam, biasGrad);
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, q);
 
     /* 4. Build input tensor (shape 1x3). */
     size_t *inputDims = reserveMemory(2 * sizeof(size_t));
@@ -57,8 +61,10 @@ void testInferenceLinearReluFloat() {
     tensorFillFromFloatBuffer(input, (float[]){0.f, 1.f, 2.f}, 3);
 
     /* 5. Build layers; both layers share the same q (no ownership transfer). */
-    layer_t *linear = linearLayerInitLegacy(weights, bias, q, q, q, q);
-    layer_t *relu = reluLayerInitLegacy(q, q);
+    layer_t *linear =
+        linearLayerInit(&(linearInit_t){.inFeatures = 3, .outFeatures = 2, .bias = BIAS_TRUE}, &lq);
+    layerLoadWeights(linear, (float[]){-1.f, 2.f, -3.f, 4.f, 5.f, 6.f}, (float[]){-1.f, 3.f});
+    layer_t *relu = reluLayerInit(&lq);
     layer_t *model[] = {linear, relu};
 
     /* 6. Exercise the system. */
@@ -71,16 +77,13 @@ void testInferenceLinearReluFloat() {
 
     /* 8. FREE in reverse-init order.
      *    - inference() returns a heap tensor (via getTensorLike) — caller owns it.
-     *    - freeReluLayer / freeLinearLayer release config wrappers but NOT shared q
-     *      and NOT the parameters.
-     *    - freeParameter cascades to param + grad via freeTensor (TensorApi.c:389).
+     *    - freeReluLayer / freeLinearLayer cascade into their factory-owned
+     *      parameters (weights/bias) but NOT the shared, caller-owned q.
      *    - The shared q is freed exactly once at the end. */
     freeTensor(output);
-    freeReluLayerLegacy(relu);
-    freeLinearLayerLegacy(linear);
+    freeReluLayer(relu);
+    freeLinearLayer(linear);
     freeTensor(input);
-    freeParameter(bias);
-    freeParameter(weights);
     freeQuantization(q);
 
     /* 9. ASSERT on captured locals. */
@@ -132,8 +135,10 @@ void testInferenceLinearReluSymInt32() {
     tensorFillFromFloatBuffer(input, (float[]){0.f, 1.f, 2.f}, 3);
 
     /* Layers. */
-    layer_t *linear = linearLayerInitLegacy(weights, bias, q, q, q, q);
-    layer_t *relu = reluLayerInitLegacy(q, q);
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, q);
+    layer_t *linear = buildBorrowedLinearLayer(weights, bias, q);
+    layer_t *relu = reluLayerInit(&lq);
     layer_t *model[] = {linear, relu};
 
     /* Run inference (returns a heap tensor in SymInt32 form). */
@@ -159,11 +164,9 @@ void testInferenceLinearReluSymInt32() {
     /* FREE in reverse-init order. */
     freeTensor(outputFloat);
     freeTensor(outputSymInt32);
-    freeReluLayerLegacy(relu);
-    freeLinearLayerLegacy(linear);
+    freeReluLayer(relu);
+    freeLinearLayer(linear);
     freeTensor(input);
-    freeParameter(bias);
-    freeParameter(weights);
     freeQuantization(q);
 
     /* ASSERT on captured. */
@@ -175,32 +178,8 @@ void testInferenceLinearReluSymInt32() {
 
 void testInferenceWithLossLinearReluFloat() {
     quantization_t *q = quantizationInitFloat();
-
-    /* Weights (2x3). */
-    size_t *weightDims = reserveMemory(2 * sizeof(size_t));
-    weightDims[0] = 2;
-    weightDims[1] = 3;
-    size_t *weightOrder = reserveMemory(2 * sizeof(size_t));
-    setOrderOfDimsForNewTensor(2, weightOrder);
-    shape_t *weightShape = reserveMemory(sizeof(shape_t));
-    setShape(weightShape, weightDims, 2, weightOrder);
-    tensor_t *weightParam = initTensor(weightShape, quantizationInitFloat(), NULL);
-    tensorFillFromFloatBuffer(weightParam, (float[]){-1.f, 2.f, -3.f, 4.f, 5.f, 6.f}, 6);
-    tensor_t *weightGrad = gradInitFloat(weightParam, NULL);
-    parameter_t *weights = parameterInit(weightParam, weightGrad);
-
-    /* Bias (1x2). */
-    size_t *biasDims = reserveMemory(2 * sizeof(size_t));
-    biasDims[0] = 1;
-    biasDims[1] = 2;
-    size_t *biasOrder = reserveMemory(2 * sizeof(size_t));
-    setOrderOfDimsForNewTensor(2, biasOrder);
-    shape_t *biasShape = reserveMemory(sizeof(shape_t));
-    setShape(biasShape, biasDims, 2, biasOrder);
-    tensor_t *biasParam = initTensor(biasShape, quantizationInitFloat(), NULL);
-    tensorFillFromFloatBuffer(biasParam, (float[]){-1.f, 3.f}, 2);
-    tensor_t *biasGrad = gradInitFloat(biasParam, NULL);
-    parameter_t *bias = parameterInit(biasParam, biasGrad);
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, q);
 
     /* Input (1x3). */
     size_t *inputDims = reserveMemory(2 * sizeof(size_t));
@@ -225,8 +204,10 @@ void testInferenceWithLossLinearReluFloat() {
     tensorFillFromFloatBuffer(label0, (float[]){59.f, -23.f}, 2);
 
     /* Layers. */
-    layer_t *linear = linearLayerInitLegacy(weights, bias, q, q, q, q);
-    layer_t *relu = reluLayerInitLegacy(q, q);
+    layer_t *linear =
+        linearLayerInit(&(linearInit_t){.inFeatures = 3, .outFeatures = 2, .bias = BIAS_TRUE}, &lq);
+    layerLoadWeights(linear, (float[]){-1.f, 2.f, -3.f, 4.f, 5.f, 6.f}, (float[]){-1.f, 3.f});
+    layer_t *relu = reluLayerInit(&lq);
     layer_t *model[] = {linear, relu};
 
     /* Run inferenceWithLoss. inferenceStats owns its `output` tensor; its
@@ -242,12 +223,10 @@ void testInferenceWithLossLinearReluFloat() {
 
     /* FREE in reverse-init order. */
     freeInferenceStats(inferenceStats);
-    freeReluLayerLegacy(relu);
-    freeLinearLayerLegacy(linear);
+    freeReluLayer(relu);
+    freeLinearLayer(linear);
     freeTensor(label0);
     freeTensor(input);
-    freeParameter(bias);
-    freeParameter(weights);
     freeQuantization(q);
 
     /* ASSERT on captured. */
@@ -263,8 +242,12 @@ void testInferenceLayerNormSymInt32(void) {
 
     quantization_t *symQ = quantizationInitSymInt32(HALF_AWAY);
     quantization_t *bwd = quantizationInitFloat();
-    layerQuant_t lq = {
-        .forwardMath = symQ, .backwardMath = bwd, .weightStorage = symQ, .biasStorage = symQ};
+    layerQuant_t lq = {.forwardMath = arithmeticFromQuantization(symQ),
+                       .propLossMath = arithmeticFromQuantization(bwd),
+                       .outputQ = symQ,
+                       .propLossQ = bwd,
+                       .weightStorage = symQ,
+                       .biasStorage = symQ};
     layer_t *ln = layerNormLayerInitOwning(&init, &lq);
     freeQuantization(bwd);
     freeQuantization(symQ);
@@ -303,6 +286,72 @@ void testInferenceLayerNormSymInt32(void) {
     TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0.f, deqMean);
 }
 
+/* Task 10 regression: initBufferOutput's SYM arm must honor the layer's declared
+ * outputQ qMaxBits, not re-default to the int12 operand width (ODT_SYM_OPERAND_QMAXBITS).
+ * Pre-fix: the returned tensor always carries qMaxBits=12 regardless of the
+ * declared width. Post-fix: it carries the declared 8. */
+void testInferenceOutputWireHonorsDeclaredQMaxBits(void) {
+    quantization_t *q = quantizationInitSymInt32(HALF_AWAY);
+    quantization_t *outputQ8 = quantizationInitSymInt32WithBits(HALF_AWAY, 8);
+
+    /* Weights (2x3). */
+    size_t *weightDims = reserveMemory(2 * sizeof(size_t));
+    weightDims[0] = 2;
+    weightDims[1] = 3;
+    size_t *weightOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, weightOrder);
+    shape_t *weightShape = reserveMemory(sizeof(shape_t));
+    setShape(weightShape, weightDims, 2, weightOrder);
+    tensor_t *weightsParam = initTensor(weightShape, quantizationInitSymInt32(HALF_AWAY), NULL);
+    tensorFillFromFloatBuffer(weightsParam, (float[]){-1.f, 2.f, -3.f, 4.f, 5.f, 6.f}, 6);
+    tensor_t *weightGrad = gradInitSymInt32(weightsParam, HALF_AWAY, NULL);
+    parameter_t *weights = parameterInit(weightsParam, weightGrad);
+
+    /* Bias (1x2). */
+    size_t *biasDims = reserveMemory(2 * sizeof(size_t));
+    biasDims[0] = 1;
+    biasDims[1] = 2;
+    size_t *biasOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, biasOrder);
+    shape_t *biasShape = reserveMemory(sizeof(shape_t));
+    setShape(biasShape, biasDims, 2, biasOrder);
+    tensor_t *biasParam = initTensor(biasShape, quantizationInitSymInt32(HALF_AWAY), NULL);
+    tensorFillFromFloatBuffer(biasParam, (float[]){-1.f, 3.f}, 2);
+    tensor_t *biasGrad = gradInitSymInt32(biasParam, HALF_AWAY, NULL);
+    parameter_t *bias = parameterInit(biasParam, biasGrad);
+
+    /* Input (1x3). */
+    size_t *inputDims = reserveMemory(2 * sizeof(size_t));
+    inputDims[0] = 1;
+    inputDims[1] = 3;
+    size_t *inputOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, inputOrder);
+    shape_t *inputShape = reserveMemory(sizeof(shape_t));
+    setShape(inputShape, inputDims, 2, inputOrder);
+    tensor_t *input = initTensor(inputShape, quantizationInitSymInt32(HALF_AWAY), NULL);
+    tensorFillFromFloatBuffer(input, (float[]){0.f, 1.f, 2.f}, 3);
+
+    layer_t *linear = buildBorrowedLinearLayer(weights, bias, q);
+    /* Override just the forward-wire storage config to a declared width of 8
+     * (not the operand default 12) — exercises initBufferOutput's SYM arm. */
+    linear->config->linear->outputQ = outputQ8;
+    layer_t *model[] = {linear};
+
+    tensor_t *output = inference(model, 1, input);
+
+    uint8_t qMaxBits = ((symInt32QConfig_t *)output->quantization->qConfig)->qMaxBits;
+
+    freeTensor(output);      /* inference() returns a heap tensor — caller owns. */
+    freeLinearLayer(linear); /* ownsQuantizations=false: leaves q/outputQ8 untouched. */
+    freeTensor(input);
+    freeQuantization(q);
+    freeQuantization(outputQ8);
+
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(8, qMaxBits,
+                                    "inference() output wire must carry the layer's declared "
+                                    "outputQ qMaxBits, not the re-defaulted int12 operand width");
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -311,6 +360,7 @@ int main(void) {
     RUN_TEST(testInferenceLinearReluFloat);
     RUN_TEST(testInferenceLinearReluSymInt32);
     RUN_TEST(testInferenceLayerNormSymInt32);
+    RUN_TEST(testInferenceOutputWireHonorsDeclaredQMaxBits);
 
     RUN_TEST(testInferenceWithLossLinearReluFloat);
     return UNITY_END();

@@ -76,6 +76,7 @@ add_elastic_ai_unit_test(
         QuantizationApi
         LinearApi
         LayerQuant
+        LayerWeightsApi
         Quantization
         Rounding
         StorageApi

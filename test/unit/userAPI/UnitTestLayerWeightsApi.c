@@ -197,8 +197,12 @@ void testLayerLoadWeightsLayerNormQuantizesForSymStorage(void) {
 
     quantization_t *symQ = quantizationInitSymInt32(HALF_AWAY);
     quantization_t *bwd = quantizationInitFloat();
-    layerQuant_t lq = {
-        .forwardMath = symQ, .backwardMath = bwd, .weightStorage = symQ, .biasStorage = symQ};
+    layerQuant_t lq = {.forwardMath = arithmeticFromQuantization(symQ),
+                       .propLossMath = arithmeticFromQuantization(bwd),
+                       .outputQ = symQ,
+                       .propLossQ = bwd,
+                       .weightStorage = symQ,
+                       .biasStorage = symQ};
     layer_t *layer = layerNormLayerInit(&init, &lq);
 
     float gammaData[3] = {2.f, 3.f, 4.f};

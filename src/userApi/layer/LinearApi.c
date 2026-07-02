@@ -15,68 +15,6 @@
 #include "Tensor.h"
 #include "TensorApi.h"
 
-layer_t *linearLayerInitLegacy(parameter_t *weights, parameter_t *bias, quantization_t *forwardQ,
-                               quantization_t *weightGradsQ, quantization_t *biasGradsQ,
-                               quantization_t *propLossQ) {
-    layer_t *linearLayer = reserveMemory(sizeof(layer_t));
-
-    linearLayer->type = LINEAR;
-
-    layerConfig_t *layerConfig = reserveMemory(sizeof(layerConfig_t));
-    linearConfig_t *linearConfig = reserveMemory(sizeof(linearConfig_t));
-    layerConfig->linear = linearConfig;
-
-    if (biasGradsQ != weightGradsQ) {
-        PRINT_ERROR("linearLayerInitLegacy: this legacy signature cannot express divergent "
-                    "weight/bias grad configs - pass the same pointer for weightGradsQ and "
-                    "biasGradsQ");
-        exit(1);
-    }
-    linearConfig->weights = weights;
-    linearConfig->bias = bias;
-    /* All three grad/backward arithmetics derive from the single weightGradsQ/biasGradsQ
-     * source (guaranteed equal by the fail-fast above) — matches today's single
-     * cfg->backwardMath->type dispatch bit-for-bit (propLossQ stays storage-only). */
-    linearConfig->forwardMath = arithmeticFromQuantizationOrDefault(forwardQ);
-    linearConfig->weightGradMath = arithmeticFromQuantizationOrDefault(weightGradsQ);
-    linearConfig->biasGradMath = arithmeticFromQuantizationOrDefault(biasGradsQ);
-    linearConfig->propLossMath = arithmeticFromQuantizationOrDefault(weightGradsQ);
-    linearConfig->outputQ = forwardQ;
-    linearConfig->propLossQ = propLossQ;
-    linearConfig->ownsQuantizations = false;
-
-    linearLayer->config = layerConfig;
-
-    return linearLayer;
-}
-
-layer_t *linearLayerInitNonTrainableLegacy(tensor_t *weights, tensor_t *bias,
-                                           quantization_t *forwardQ) {
-    layer_t *linearLayer = reserveMemory(sizeof(layer_t));
-
-    linearLayer->type = LINEAR;
-
-    layerConfig_t *layerConfig = reserveMemory(sizeof(layerConfig_t));
-    linearConfig_t *linearConfig = reserveMemory(sizeof(linearConfig_t));
-    layerConfig->linear = linearConfig;
-
-    linearConfig->weights = parameterInit(weights, NULL);
-    linearConfig->bias = parameterInit(bias, NULL);
-    linearConfig->forwardMath = arithmeticFromQuantizationOrDefault(forwardQ);
-    linearConfig->outputQ = forwardQ;
-    linearConfig->ownsQuantizations = false;
-
-    linearLayer->config = layerConfig;
-
-    return linearLayer;
-}
-
-void freeLinearLayerLegacy(layer_t *linearLayer) {
-    freeReservedMemory(linearLayer->config->linear);
-    freeReservedMemory(linearLayer->config);
-    freeReservedMemory(linearLayer);
-}
-
 /* ============================================================================
  * New factory API — layerQuant_t profile + linearInit_t struct (PR 1).
  * ========================================================================== */
@@ -159,12 +97,12 @@ static void validateLayerQuantForLinear(layerQuant_t *lq, bool hasBias) {
         PRINT_ERROR("linearLayerInit: lq pointer is NULL");
         exit(1);
     }
-    if (lq->forwardMath == NULL) {
-        PRINT_ERROR("linearLayerInit: layerQuant.forwardMath must be set");
+    if (lq->outputQ == NULL) {
+        PRINT_ERROR("linearLayerInit: layerQuant.outputQ must be set");
         exit(1);
     }
-    if (lq->backwardMath == NULL) {
-        PRINT_ERROR("linearLayerInit: layerQuant.backwardMath must be set");
+    if (lq->propLossQ == NULL) {
+        PRINT_ERROR("linearLayerInit: layerQuant.propLossQ must be set");
         exit(1);
     }
     if (lq->weightStorage == NULL) {
@@ -190,20 +128,25 @@ layer_t *linearLayerInit(linearInit_t *init, layerQuant_t *lq) {
     layerCfg->linear = cfg;
     layer->config = layerCfg;
 
+    /* Grad storage knob (#261): NULL falls back to lq->propLossQ (bit-identical
+     * to the pre-split lq->backwardMath source in every in-tree profile). */
+    quantization_t *weightGradQ =
+        lq->weightGradStorage != NULL ? lq->weightGradStorage : lq->propLossQ;
+    quantization_t *biasGradQ = lq->biasGradStorage != NULL ? lq->biasGradStorage : lq->propLossQ;
     cfg->weights = allocateLinearWeights(init->inFeatures, init->outFeatures, init->weightInit,
-                                         lq->weightStorage, lq->backwardMath);
+                                         lq->weightStorage, weightGradQ);
     cfg->bias = hasBias ? allocateLinearBias(init->outFeatures, init->inFeatures, lq->biasStorage,
-                                             lq->backwardMath)
+                                             biasGradQ)
                         : NULL;
 
     /* Borrowing: store the forward-wire/dx-wire storage configs verbatim, no copy.
-     * All three grad/backward arithmetics derive from the single lq->backwardMath source. */
-    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
-    cfg->weightGradMath = arithmeticFromQuantization(lq->backwardMath);
-    cfg->biasGradMath = arithmeticFromQuantization(lq->backwardMath);
-    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
-    cfg->outputQ = lq->forwardMath;
-    cfg->propLossQ = lq->backwardMath;
+     * Arithmetic slots are plain by-value copies of the profile's declared math. */
+    cfg->forwardMath = lq->forwardMath;
+    cfg->weightGradMath = lq->weightGradMath;
+    cfg->biasGradMath = lq->biasGradMath;
+    cfg->propLossMath = lq->propLossMath;
+    cfg->outputQ = lq->outputQ;
+    cfg->propLossQ = lq->propLossQ;
     cfg->ownsQuantizations = false;
 
     return layer;
@@ -227,20 +170,23 @@ layer_t *linearLayerInitOwning(linearInit_t *init, layerQuant_t *lq) {
      * T12) internally clone via getQLike, so the parameter tensors hold their
      * own quantization_t copies — the caller can immediately drop the lq's
      * weightStorage/biasStorage pointers without breaking the parameters. */
+    quantization_t *weightGradQ =
+        lq->weightGradStorage != NULL ? lq->weightGradStorage : lq->propLossQ;
+    quantization_t *biasGradQ = lq->biasGradStorage != NULL ? lq->biasGradStorage : lq->propLossQ;
     cfg->weights = allocateLinearWeights(init->inFeatures, init->outFeatures, init->weightInit,
-                                         lq->weightStorage, lq->backwardMath);
+                                         lq->weightStorage, weightGradQ);
     cfg->bias = hasBias ? allocateLinearBias(init->outFeatures, init->inFeatures, lq->biasStorage,
-                                             lq->backwardMath)
+                                             biasGradQ)
                         : NULL;
 
     /* Owning: same arithmetic as Borrowing; deep-copy the two storage configs
      * (outputQ, propLossQ) into fresh allocations — 2 allocs, not 3. */
-    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
-    cfg->weightGradMath = arithmeticFromQuantization(lq->backwardMath);
-    cfg->biasGradMath = arithmeticFromQuantization(lq->backwardMath);
-    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
-    cfg->outputQ = deepCopyQuantization(lq->forwardMath);
-    cfg->propLossQ = deepCopyQuantization(lq->backwardMath);
+    cfg->forwardMath = lq->forwardMath;
+    cfg->weightGradMath = lq->weightGradMath;
+    cfg->biasGradMath = lq->biasGradMath;
+    cfg->propLossMath = lq->propLossMath;
+    cfg->outputQ = deepCopyQuantization(lq->outputQ);
+    cfg->propLossQ = deepCopyQuantization(lq->propLossQ);
     cfg->ownsQuantizations = true;
 
     return layer;

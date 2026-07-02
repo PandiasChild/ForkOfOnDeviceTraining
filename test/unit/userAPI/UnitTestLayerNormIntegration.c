@@ -158,8 +158,12 @@ void testLayerNormSymInt32SingleLayerTrainingStep(void) {
     /* ---- SYM model (under test) ---- */
     layerNormInit_t initSym = {.normalizedShape = normShape, .numNormDims = 1, .eps = 1e-5f};
     quantization_t *symQ = quantizationInitSymInt32(HALF_AWAY);
-    layerQuant_t lqSym = {
-        .forwardMath = symQ, .backwardMath = symQ, .weightStorage = symQ, .biasStorage = symQ};
+    layerQuant_t lqSym = {.forwardMath = arithmeticFromQuantization(symQ),
+                          .propLossMath = arithmeticFromQuantization(symQ),
+                          .outputQ = symQ,
+                          .propLossQ = symQ,
+                          .weightStorage = symQ,
+                          .biasStorage = symQ};
     layer_t *lnSym = layerNormLayerInit(&initSym, &lqSym);
     layer_t *modelSym[1] = {lnSym};
 

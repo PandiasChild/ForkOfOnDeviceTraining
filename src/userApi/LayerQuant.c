@@ -8,10 +8,18 @@
 #include "StorageApi.h"
 
 void layerQuantInitUniform(layerQuant_t *lq, quantization_t *q) {
-    lq->forwardMath = q;
-    lq->backwardMath = q;
+    arithmetic_t a = arithmeticFromQuantization(q);
+    lq->forwardMath = a;
+    lq->weightGradMath = a;
+    lq->biasGradMath = a;
+    lq->propLossMath = a;
+
+    lq->outputQ = q;
+    lq->propLossQ = q;
     lq->weightStorage = q;
     lq->biasStorage = q;
+    lq->weightGradStorage = NULL;
+    lq->biasGradStorage = NULL;
 }
 
 quantization_t *deepCopyQuantization(quantization_t *src) {

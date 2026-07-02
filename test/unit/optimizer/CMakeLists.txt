@@ -10,5 +10,6 @@ add_elastic_ai_unit_test(
         LinearApi
         ReluApi
         LayerQuant
+        ArithmeticType
         odt_test_death
 )

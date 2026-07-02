@@ -112,12 +112,12 @@ static void validateLayerQuantForConv1dTransposed(layerQuant_t *lq, bool hasBias
         PRINT_ERROR("conv1dTransposedLayerInit: lq pointer is NULL");
         exit(1);
     }
-    if (lq->forwardMath == NULL) {
-        PRINT_ERROR("conv1dTransposedLayerInit: layerQuant.forwardMath must be set");
+    if (lq->outputQ == NULL) {
+        PRINT_ERROR("conv1dTransposedLayerInit: layerQuant.outputQ must be set");
         exit(1);
     }
-    if (lq->backwardMath == NULL) {
-        PRINT_ERROR("conv1dTransposedLayerInit: layerQuant.backwardMath must be set");
+    if (lq->propLossQ == NULL) {
+        PRINT_ERROR("conv1dTransposedLayerInit: layerQuant.propLossQ must be set");
         exit(1);
     }
     if (lq->weightStorage == NULL) {
@@ -175,13 +175,13 @@ layer_t *conv1dTransposedLayerInit(conv1dTransposedInit_t *init, layerQuant_t *l
     conv1dTransposedConfig_t *cfg = layer->config->conv1dTransposed;
 
     /* Borrowing: store the forward-wire/dx-wire storage configs verbatim, no copy.
-     * All three grad/backward arithmetics derive from the single lq->backwardMath source. */
-    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
-    cfg->weightGradMath = arithmeticFromQuantization(lq->backwardMath);
-    cfg->biasGradMath = arithmeticFromQuantization(lq->backwardMath);
-    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
-    cfg->outputQ = lq->forwardMath;
-    cfg->propLossQ = lq->backwardMath;
+     * Arithmetic slots are plain by-value copies of the profile's declared math. */
+    cfg->forwardMath = lq->forwardMath;
+    cfg->weightGradMath = lq->weightGradMath;
+    cfg->biasGradMath = lq->biasGradMath;
+    cfg->propLossMath = lq->propLossMath;
+    cfg->outputQ = lq->outputQ;
+    cfg->propLossQ = lq->propLossQ;
     cfg->ownsQuantizations = false;
     return layer;
 }
@@ -198,12 +198,12 @@ layer_t *conv1dTransposedLayerInitOwning(conv1dTransposedInit_t *init, layerQuan
 
     /* Owning: same arithmetic as Borrowing; deep-copy the two storage configs
      * (outputQ, propLossQ) into fresh allocations — 2 allocs, not 4. */
-    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
-    cfg->weightGradMath = arithmeticFromQuantization(lq->backwardMath);
-    cfg->biasGradMath = arithmeticFromQuantization(lq->backwardMath);
-    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
-    cfg->outputQ = deepCopyQuantization(lq->forwardMath);
-    cfg->propLossQ = deepCopyQuantization(lq->backwardMath);
+    cfg->forwardMath = lq->forwardMath;
+    cfg->weightGradMath = lq->weightGradMath;
+    cfg->biasGradMath = lq->biasGradMath;
+    cfg->propLossMath = lq->propLossMath;
+    cfg->outputQ = deepCopyQuantization(lq->outputQ);
+    cfg->propLossQ = deepCopyQuantization(lq->propLossQ);
     cfg->ownsQuantizations = true;
     return layer;
 }

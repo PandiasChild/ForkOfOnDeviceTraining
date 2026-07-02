@@ -5,17 +5,6 @@
 #include "LayerCommon.h"
 #include "LayerQuant.h"
 
-/* Legacy (pre-2026-05-15 factory API) — retained during PR 1/2 coexistence window.
- * New code should use the linearInit_t-based factories declared in a later PR. */
-layer_t *linearLayerInitLegacy(parameter_t *weights, parameter_t *bias, quantization_t *forwardQ,
-                               quantization_t *weightGradsQ, quantization_t *biasGradsQ,
-                               quantization_t *propLossQ);
-
-layer_t *linearLayerInitNonTrainableLegacy(tensor_t *weights, tensor_t *bias,
-                                           quantization_t *forwardQ);
-
-void freeLinearLayerLegacy(layer_t *linearLayer);
-
 typedef struct linearInit {
     /* REQUIRED — factory aborts if 0 */
     size_t inFeatures;

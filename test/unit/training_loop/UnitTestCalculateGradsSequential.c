@@ -1,9 +1,11 @@
 #define SOURCE_FILE "UnitTestCalculateGradsSequential"
 
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
+#include "ArithmeticType.h"
 #include "CalculateGradsSequential.h"
 #include "Common.h"
 #include "Layer.h"
@@ -201,6 +203,41 @@ static void agradCaptureSink(void *ctx, size_t layerIdx, layerType_t type, const
     }
 }
 
+/*! Borrows already-built weight/bias parameter_t; forwardMath/weightGradMath/
+ *  biasGradMath/outputQ derive from mathQ, propLossMath/propLossQ derive from
+ *  the (possibly divergent) propLossQ — replicates the deleted
+ *  linearLayerInitLegacy(weights, bias, mathQ, mathQ, mathQ, propLossQ)
+ *  shape. Needed because the weight/bias tensors here are SYM_INT32-native
+ *  (makeSymParam), which the factory's KAIMING init cannot allocate
+ *  (LayerCommon.c requireFloat32). */
+static layer_t *buildSymLinearLayer(parameter_t *weights, parameter_t *bias, quantization_t *mathQ,
+                                    quantization_t *propLossQ) {
+    linearConfig_t *cfg = reserveMemory(sizeof(linearConfig_t));
+    cfg->weights = weights;
+    cfg->bias = bias;
+    cfg->forwardMath = arithmeticFromQuantization(mathQ);
+    cfg->weightGradMath = arithmeticFromQuantization(mathQ);
+    cfg->biasGradMath = arithmeticFromQuantization(mathQ);
+    cfg->propLossMath = arithmeticFromQuantization(propLossQ);
+    cfg->outputQ = mathQ;
+    cfg->propLossQ = propLossQ;
+    cfg->ownsQuantizations = false;
+    layerConfig_t *layerCfg = reserveMemory(sizeof(layerConfig_t));
+    layerCfg->linear = cfg;
+    layer_t *layer = reserveMemory(sizeof(layer_t));
+    initLayer(layer, LINEAR, layerCfg);
+    return layer;
+}
+
+/*! Frees only the layer_t + layerConfig_t + linearConfig_t shells — NOT the
+ *  weight/bias parameters (caller-managed here, matches the deleted
+ *  freeLinearLayerLegacy's wrapper-only teardown contract). */
+static void freeLinearLayerShellOnly(layer_t *layer) {
+    freeReservedMemory(layer->config->linear);
+    freeReservedMemory(layer->config);
+    freeReservedMemory(layer);
+}
+
 /* Create a SYM_INT32 parameter (param tensor + optional grad tensor) from float values.
  * dims[0..ndim-1] describe the shape; vals[0..n-1] are loaded via tensorFillFromFloatBuffer. */
 static parameter_t *makeSymParam(float *vals, size_t n, size_t *dims, size_t ndim,
@@ -241,14 +278,14 @@ void testDxWireHonorsProducerPropLossQ(void) {
     parameter_t *w1 = makeSymParam(wVals, 4, wDims, 2, HALF_AWAY, /*needsGrad=*/true);
     parameter_t *b1 = makeSymParam(bVals, 2, bDims, 1, HALF_AWAY, /*needsGrad=*/true);
 
-    layer_t *linear0 = linearLayerInitLegacy(w0, b0, symQ, symQ, symQ, symQ);
+    layer_t *linear0 = buildSymLinearLayer(w0, b0, symQ, symQ);
     /* linear1: forwardQ/backwardMath = HALF_AWAY, propLossQ = SR_HALF_AWAY */
-    layer_t *linear1 = linearLayerInitLegacy(w1, b1, symQ, symQ, symQ, symQSr);
+    layer_t *linear1 = buildSymLinearLayer(w1, b1, symQ, symQSr);
 
     /* Borrowing Quantization layers between SYM producers (ownsQuantizations=false). */
     quantizationConfig_t *qCfg0 = reserveMemory(sizeof(quantizationConfig_t));
-    qCfg0->forwardQ = symQ;
-    qCfg0->backwardQ = symQ;
+    qCfg0->outputQ = symQ;
+    qCfg0->propLossQ = symQ;
     qCfg0->ownsQuantizations = false;
     layerConfig_t *lc0 = reserveMemory(sizeof(layerConfig_t));
     lc0->quantization = qCfg0;
@@ -256,8 +293,8 @@ void testDxWireHonorsProducerPropLossQ(void) {
     initLayer(quant0, QUANTIZATION, lc0);
 
     quantizationConfig_t *qCfg1 = reserveMemory(sizeof(quantizationConfig_t));
-    qCfg1->forwardQ = symQ;
-    qCfg1->backwardQ = symQ;
+    qCfg1->outputQ = symQ;
+    qCfg1->propLossQ = symQ;
     qCfg1->ownsQuantizations = false;
     layerConfig_t *lc1 = reserveMemory(sizeof(layerConfig_t));
     lc1->quantization = qCfg1;
@@ -299,8 +336,8 @@ void testDxWireHonorsProducerPropLossQ(void) {
     freeTrainingStats(stats);
     freeTensor(x);
     freeTensor(label);
-    freeLinearLayerLegacy(linear0);
-    freeLinearLayerLegacy(linear1);
+    freeLinearLayerShellOnly(linear0);
+    freeLinearLayerShellOnly(linear1);
     freeReservedMemory(qCfg0);
     freeReservedMemory(lc0);
     freeReservedMemory(quant0);
@@ -320,11 +357,208 @@ void testDxWireHonorsProducerPropLossQ(void) {
                                   "roundingMode, not the upstream forward roundingMode (#221)");
 }
 
+/* ── Task 10 regression: allocators honor the producer's declared qMaxBits ── */
+
+typedef struct {
+    uint8_t agradQMaxBits;
+    bool capturedAgrad;
+} agradBitsCapCtx_t;
+
+static void agradBitsCaptureSink(void *ctx, size_t layerIdx, layerType_t type, const char *phase,
+                                 tensor_t *t) {
+    (void)type;
+    agradBitsCapCtx_t *c = (agradBitsCapCtx_t *)ctx;
+    /* agrad@1 = dx wire produced by Linear1 (idx 2) via backwardWireQ -> propLossQ (qMaxBits=8). */
+    if (layerIdx == 1 && strcmp(phase, "agrad") == 0) {
+        c->agradQMaxBits = ((symInt32QConfig_t *)t->quantization->qConfig)->qMaxBits;
+        c->capturedAgrad = true;
+    }
+}
+
+void testDxWireHonorsProducerPropLossQMaxBits(void) {
+    /* Same 4-layer SYM_INT32 chain as testDxWireHonorsProducerPropLossQ. This time
+     * Linear1's propLossQ declares qMaxBits=8 (narrower than the int12 operand
+     * default) instead of a divergent roundingMode.
+     * Pre-fix: initGradTensor's SYM arm re-defaults the dx wire to 12 regardless
+     * of the declared width. Post-fix: it carries the declared 8. */
+    quantization_t *symQ = quantizationInitSymInt32(HALF_AWAY);
+    quantization_t *symQ8 = quantizationInitSymInt32WithBits(HALF_AWAY, 8);
+
+    float wVals[4] = {1.0f, 0.0f, 0.0f, 1.0f};
+    float bVals[2] = {0.0f, 0.0f};
+    size_t wDims[2] = {2, 2};
+    size_t bDims[1] = {2};
+    parameter_t *w0 = makeSymParam(wVals, 4, wDims, 2, HALF_AWAY, /*needsGrad=*/true);
+    parameter_t *b0 = makeSymParam(bVals, 2, bDims, 1, HALF_AWAY, /*needsGrad=*/true);
+    parameter_t *w1 = makeSymParam(wVals, 4, wDims, 2, HALF_AWAY, /*needsGrad=*/true);
+    parameter_t *b1 = makeSymParam(bVals, 2, bDims, 1, HALF_AWAY, /*needsGrad=*/true);
+
+    layer_t *linear0 = buildSymLinearLayer(w0, b0, symQ, symQ);
+    /* linear1: forwardQ/backwardMath = HALF_AWAY@12, propLossQ = HALF_AWAY@8 */
+    layer_t *linear1 = buildSymLinearLayer(w1, b1, symQ, symQ8);
+
+    quantizationConfig_t *qCfg0 = reserveMemory(sizeof(quantizationConfig_t));
+    qCfg0->outputQ = symQ;
+    qCfg0->propLossQ = symQ;
+    qCfg0->ownsQuantizations = false;
+    layerConfig_t *lc0 = reserveMemory(sizeof(layerConfig_t));
+    lc0->quantization = qCfg0;
+    layer_t *quant0 = reserveMemory(sizeof(layer_t));
+    initLayer(quant0, QUANTIZATION, lc0);
+
+    quantizationConfig_t *qCfg1 = reserveMemory(sizeof(quantizationConfig_t));
+    qCfg1->outputQ = symQ;
+    qCfg1->propLossQ = symQ;
+    qCfg1->ownsQuantizations = false;
+    layerConfig_t *lc1 = reserveMemory(sizeof(layerConfig_t));
+    lc1->quantization = qCfg1;
+    layer_t *quant1 = reserveMemory(sizeof(layer_t));
+    initLayer(quant1, QUANTIZATION, lc1);
+
+    layer_t *model[4] = {linear0, quant0, linear1, quant1};
+
+    size_t *xd = reserveMemory(2 * sizeof(size_t));
+    size_t *xo = reserveMemory(2 * sizeof(size_t));
+    xd[0] = 1;
+    xd[1] = 2;
+    setOrderOfDimsForNewTensor(2, xo);
+    shape_t *xShape = reserveMemory(sizeof(shape_t));
+    setShape(xShape, xd, 2, xo);
+    tensor_t *x = initTensor(xShape, quantizationInitSymInt32(HALF_AWAY), NULL);
+    tensorFillFromFloatBuffer(x, (float[]){1.0f, 2.0f}, 2);
+
+    size_t *ld = reserveMemory(2 * sizeof(size_t));
+    size_t *lo = reserveMemory(2 * sizeof(size_t));
+    ld[0] = 1;
+    ld[1] = 2;
+    setOrderOfDimsForNewTensor(2, lo);
+    shape_t *lShape = reserveMemory(sizeof(shape_t));
+    setShape(lShape, ld, 2, lo);
+    tensor_t *label = initTensor(lShape, quantizationInitSymInt32(HALF_AWAY), NULL);
+    tensorFillFromFloatBuffer(label, (float[]){0.0f, 0.0f}, 2);
+
+    agradBitsCapCtx_t ctx = {.capturedAgrad = false};
+    trainingStats_t *stats = tracedGrads(
+        model, 4,
+        (lossConfig_t){.funcType = MSE, .backwardReduction = REDUCTION_SUM, .classWeights = NULL},
+        REDUCTION_SUM, x, label, agradBitsCaptureSink, &ctx);
+
+    /* Capture before teardown (ASSERT LAST convention). */
+    bool captured = ctx.capturedAgrad;
+    uint8_t bits = ctx.agradQMaxBits;
+
+    freeTrainingStats(stats);
+    freeTensor(x);
+    freeTensor(label);
+    freeLinearLayerShellOnly(linear0);
+    freeLinearLayerShellOnly(linear1);
+    freeReservedMemory(qCfg0);
+    freeReservedMemory(lc0);
+    freeReservedMemory(quant0);
+    freeReservedMemory(qCfg1);
+    freeReservedMemory(lc1);
+    freeReservedMemory(quant1);
+    freeParameter(w0);
+    freeParameter(b0);
+    freeParameter(w1);
+    freeParameter(b1);
+    freeQuantization(symQ);
+    freeQuantization(symQ8);
+
+    TEST_ASSERT_TRUE_MESSAGE(captured, "sink never captured agrad for layer 1");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(8, bits,
+                                    "dx wire must carry the PRODUCER's declared propLossQ "
+                                    "qMaxBits, not the re-defaulted int12 operand width");
+}
+
+typedef struct {
+    uint8_t fwdQMaxBits;
+    bool capturedFwd;
+} fwdBitsCapCtx_t;
+
+static void fwdBitsCaptureSink(void *ctx, size_t layerIdx, layerType_t type, const char *phase,
+                               tensor_t *t) {
+    (void)type;
+    fwdBitsCapCtx_t *c = (fwdBitsCapCtx_t *)ctx;
+    if (layerIdx == 0 && strcmp(phase, "fwd") == 0) {
+        c->fwdQMaxBits = ((symInt32QConfig_t *)t->quantization->qConfig)->qMaxBits;
+        c->capturedFwd = true;
+    }
+}
+
+void testForwardWireHonorsDeclaredOutputQMaxBits(void) {
+    /* Single SYM_INT32 Linear layer whose outputQ declares qMaxBits=8 (narrower
+     * than the int12 operand default). Pre-fix: initLayerOutputs' SYM arm
+     * re-defaults the forward wire to 12, discarding the declared width.
+     * Post-fix: the forward wire carries the declared 8. */
+    quantization_t *symQ = quantizationInitSymInt32(HALF_AWAY);
+    quantization_t *symQ8 = quantizationInitSymInt32WithBits(HALF_AWAY, 8);
+
+    float wVals[4] = {1.0f, 0.0f, 0.0f, 1.0f};
+    float bVals[2] = {0.0f, 0.0f};
+    size_t wDims[2] = {2, 2};
+    size_t bDims[1] = {2};
+    parameter_t *w0 = makeSymParam(wVals, 4, wDims, 2, HALF_AWAY, /*needsGrad=*/true);
+    parameter_t *b0 = makeSymParam(bVals, 2, bDims, 1, HALF_AWAY, /*needsGrad=*/true);
+
+    layer_t *linear0 = buildSymLinearLayer(w0, b0, symQ, symQ);
+    /* Override just the forward-wire storage config to a declared width of 8. */
+    linear0->config->linear->outputQ = symQ8;
+
+    layer_t *model[1] = {linear0};
+
+    size_t *xd = reserveMemory(2 * sizeof(size_t));
+    size_t *xo = reserveMemory(2 * sizeof(size_t));
+    xd[0] = 1;
+    xd[1] = 2;
+    setOrderOfDimsForNewTensor(2, xo);
+    shape_t *xShape = reserveMemory(sizeof(shape_t));
+    setShape(xShape, xd, 2, xo);
+    tensor_t *x = initTensor(xShape, quantizationInitSymInt32(HALF_AWAY), NULL);
+    tensorFillFromFloatBuffer(x, (float[]){1.0f, 2.0f}, 2);
+
+    size_t *ld = reserveMemory(2 * sizeof(size_t));
+    size_t *lo = reserveMemory(2 * sizeof(size_t));
+    ld[0] = 1;
+    ld[1] = 2;
+    setOrderOfDimsForNewTensor(2, lo);
+    shape_t *lShape = reserveMemory(sizeof(shape_t));
+    setShape(lShape, ld, 2, lo);
+    tensor_t *label = initTensor(lShape, quantizationInitSymInt32(HALF_AWAY), NULL);
+    tensorFillFromFloatBuffer(label, (float[]){0.0f, 0.0f}, 2);
+
+    fwdBitsCapCtx_t ctx = {.capturedFwd = false};
+    trainingStats_t *stats = tracedGrads(
+        model, 1,
+        (lossConfig_t){.funcType = MSE, .backwardReduction = REDUCTION_SUM, .classWeights = NULL},
+        REDUCTION_SUM, x, label, fwdBitsCaptureSink, &ctx);
+
+    /* Capture before teardown (ASSERT LAST convention). */
+    bool captured = ctx.capturedFwd;
+    uint8_t bits = ctx.fwdQMaxBits;
+
+    freeTrainingStats(stats);
+    freeTensor(x);
+    freeTensor(label);
+    freeLinearLayerShellOnly(linear0);
+    freeParameter(w0);
+    freeParameter(b0);
+    freeQuantization(symQ);
+    freeQuantization(symQ8);
+
+    TEST_ASSERT_TRUE_MESSAGE(captured, "sink never captured fwd for layer 0");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(8, bits,
+                                    "forward wire must carry the layer's declared outputQ "
+                                    "qMaxBits, not the re-defaulted int12 operand width");
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testCalculateGradsSequentialClosedForm);
     RUN_TEST(testTracedGradsFiresInOrder);
     RUN_TEST(testTraceModelParamsFiresPerTrainableParam);
     RUN_TEST(testDxWireHonorsProducerPropLossQ);
+    RUN_TEST(testDxWireHonorsProducerPropLossQMaxBits);
+    RUN_TEST(testForwardWireHonorsDeclaredOutputQMaxBits);
     return UNITY_END();
 }

@@ -12,6 +12,7 @@
 #include "Dropout.h"
 #include "InferenceApi.h"
 #include "Layer.h"
+#include "LayerConfigAccess.h"
 #include "LayerNorm.h"
 #include "Linear.h"
 #include "MaxPool1d.h"
@@ -27,49 +28,10 @@
 static void initBufferOutput(tensor_t *buffer, layer_t *currentLayer, shape_t *inputShape,
                              sparsity_t *inputSparsity, quantization_t *inputQ) {
     layerType_t currentLayerType = currentLayer->type;
-    quantization_t *currentQ = NULL;
-
-    switch (currentLayerType) {
-    case LINEAR:
-        currentQ = currentLayer->config->linear->outputQ;
-        break;
-    case RELU:
-        currentQ = currentLayer->config->relu->outputQ;
-        break;
-    case SOFTMAX:
-        currentQ = currentLayer->config->softmax->outputQ;
-        break;
-    case FLATTEN:
+    quantization_t *currentQ = layerOutputQ(currentLayer);
+    if (currentQ == NULL) {
         // Flatten has no per-layer quantization; output dtype equals input dtype.
         currentQ = inputQ;
-        break;
-    case CONV1D:
-        currentQ = currentLayer->config->conv1d->outputQ;
-        break;
-    case CONV1D_TRANSPOSED:
-        currentQ = currentLayer->config->conv1dTransposed->outputQ;
-        break;
-    case MAXPOOL1D:
-        currentQ = currentLayer->config->maxPool1d->outputQ;
-        break;
-    case AVGPOOL1D:
-        currentQ = currentLayer->config->avgPool1d->outputQ;
-        break;
-    case ADAPTIVE_AVGPOOL1D:
-        currentQ = currentLayer->config->adaptiveAvgPool1d->outputQ;
-        break;
-    case DROPOUT:
-        currentQ = currentLayer->config->dropout->outputQ;
-        break;
-    case LAYERNORM:
-        currentQ = currentLayer->config->layerNorm->outputQ;
-        break;
-    case QUANTIZATION:
-        currentQ = currentLayer->config->quantization->forwardQ;
-        break;
-    default:
-        PRINT_ERROR("Unknown Layer Type!");
-        exit(1);
     }
 
     size_t sizeDims = inputShape->numberOfDimensions;
@@ -98,7 +60,7 @@ static void initBufferOutput(tensor_t *buffer, layer_t *currentLayer, shape_t *i
         symInt32QConfig_t *currentQC = currentQ->qConfig;
         symInt32QConfig_t *symInt32QC = reserveMemory(sizeof(symInt32QConfig_t));
 
-        initSymInt32QConfig(currentQC->roundingMode, symInt32QC);
+        initSymInt32QConfigWithQMaxBits(currentQC->roundingMode, symInt32QC, currentQC->qMaxBits);
         initSymInt32Quantization(symInt32QC, q);
         break;
     default:
@@ -138,6 +100,8 @@ static void initBufferInput(tensor_t *input, tensor_t *buffer) {
         symInt32QConfig_t *currentQC = currentQ->qConfig;
         symInt32QConfig_t *symInt32QC = reserveMemory(sizeof(symInt32QConfig_t));
         symInt32QC->roundingMode = currentQC->roundingMode;
+        symInt32QC->scale = currentQC->scale;
+        symInt32QC->qMaxBits = currentQC->qMaxBits;
         q->qConfig = symInt32QC;
         break;
     default:

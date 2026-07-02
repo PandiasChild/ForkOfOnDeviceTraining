@@ -8,7 +8,6 @@
 #include "Layer.h"
 #include "LayerNorm.h"
 #include "Linear.h"
-#include "LinearApi.h"
 #include "ModelValidationApi.h"
 #include "QuantizationApi.h"
 #include "QuantizationLayer.h"
@@ -21,11 +20,32 @@
 void setUp(void) {}
 void tearDown(void) {}
 
-/* The validator reads ONLY layer->type + config->...->outputQ, so
- * parameter-free stubs suffice (linearLayerInitLegacy stores outputQ without
- * dereferencing weights/bias — UnitTestLinear roundtrip precedent). */
+/* The validator reads ONLY layer->type + layerForwardMath(layer) (which reads
+ * config->...->forwardMath), so a parameter-free stub suffices — same shape
+ * as buildConv1dStub/buildLayerNormStub below (the deleted linearLayerInitLegacy
+ * used to store forwardMath without dereferencing weights/bias). */
 static layer_t *buildLinearStub(quantization_t *fq) {
-    return linearLayerInitLegacy(NULL, NULL, fq, fq, fq, fq);
+    linearConfig_t *cfg = reserveMemory(sizeof(linearConfig_t));
+    cfg->weights = NULL;
+    cfg->bias = NULL;
+    cfg->forwardMath = arithmeticFromQuantization(fq);
+    cfg->weightGradMath = arithmeticFromQuantization(fq);
+    cfg->biasGradMath = arithmeticFromQuantization(fq);
+    cfg->propLossMath = arithmeticFromQuantization(fq);
+    cfg->outputQ = fq;
+    cfg->propLossQ = fq;
+    cfg->ownsQuantizations = false;
+    layerConfig_t *lc = reserveMemory(sizeof(layerConfig_t));
+    lc->linear = cfg;
+    layer_t *layer = reserveMemory(sizeof(layer_t));
+    initLayer(layer, LINEAR, lc);
+    return layer;
+}
+
+static void freeLinearStub(layer_t *layer) {
+    freeReservedMemory(layer->config->linear);
+    freeReservedMemory(layer->config);
+    freeReservedMemory(layer);
 }
 
 static layer_t *buildLayerNormStub(quantization_t *fq) {
@@ -49,8 +69,8 @@ static layer_t *buildLayerNormStub(quantization_t *fq) {
 
 static layer_t *buildQuantStub(quantization_t *fq) {
     quantizationConfig_t *cfg = reserveMemory(sizeof(quantizationConfig_t));
-    cfg->forwardQ = fq;
-    cfg->backwardQ = fq;
+    cfg->outputQ = fq;
+    cfg->propLossQ = fq;
     cfg->ownsQuantizations = false;
     layerConfig_t *lc = reserveMemory(sizeof(layerConfig_t));
     lc->quantization = cfg;
@@ -146,7 +166,7 @@ void testValidatorRejectsNullElementMidArray(void) {
 
     bool valid = validateModelQuantization(model, 2);
 
-    freeLinearLayerLegacy(linear);
+    freeLinearStub(linear);
     freeQuantization(symQ);
 
     TEST_ASSERT_FALSE_MESSAGE(valid, "NULL element in model array should be rejected");
@@ -161,7 +181,7 @@ void testValidatorRejectsSymProducerFollowedByNonQuantLayer(void) {
     bool valid = validateModelQuantization(model, 2);
 
     freeLayerNormStub(norm);
-    freeLinearLayerLegacy(linear);
+    freeLinearStub(linear);
     freeQuantization(symQ);
 
     TEST_ASSERT_FALSE_MESSAGE(valid, "Linear-SYM feeding LayerNorm-SYM without a Quant layer "
@@ -179,11 +199,11 @@ void testValidatorAcceptsChainWithQuantLayersBetweenProducers(void) {
 
     bool valid = validateModelQuantization(model, 5);
 
-    freeLinearLayerLegacy(linear1);
+    freeLinearStub(linear1);
     freeQuantStub(quant2);
     freeLayerNormStub(norm);
     freeQuantStub(quant1);
-    freeLinearLayerLegacy(linear0);
+    freeLinearStub(linear0);
     freeQuantization(symQ);
 
     TEST_ASSERT_TRUE(valid);
@@ -196,7 +216,7 @@ void testValidatorAcceptsSymProducerInLastPosition(void) {
 
     bool valid = validateModelQuantization(model, 1);
 
-    freeLinearLayerLegacy(linear);
+    freeLinearStub(linear);
     freeQuantization(symQ);
 
     TEST_ASSERT_TRUE_MESSAGE(valid, "producer at the loss boundary is allowed");
@@ -211,7 +231,7 @@ void testValidatorAcceptsFloatOnlyModel(void) {
     bool valid = validateModelQuantization(model, 2);
 
     freeLayerNormStub(norm);
-    freeLinearLayerLegacy(linear);
+    freeLinearStub(linear);
     freeQuantization(fQ);
 
     TEST_ASSERT_TRUE(valid);

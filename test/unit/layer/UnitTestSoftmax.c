@@ -37,7 +37,9 @@ void unitTestSoftmaxForwardFloat() {
 
     /* 3. Build the layer with shared float quantization. */
     quantization_t *floatQ = quantizationInitFloat();
-    layer_t *softmaxLayer = softmaxLayerInitLegacy(floatQ, floatQ);
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, floatQ);
+    layer_t *softmaxLayer = softmaxLayerInit(&lq);
     layerFunctions_t softmaxFns = layerFunctions[SOFTMAX];
     softmaxFns.forward(softmaxLayer, input, output);
 
@@ -48,7 +50,7 @@ void unitTestSoftmaxForwardFloat() {
     }
 
     /* 5. FREE. */
-    freeSoftmaxLayerLegacy(softmaxLayer);
+    freeSoftmaxLayer(softmaxLayer);
     freeTensor(output);
     freeTensor(input);
     freeQuantization(floatQ);
@@ -87,7 +89,9 @@ void unitTestSoftmaxForwardSymInt32() {
 
     /* 3. Shared SymInt32 quantization for the layer. */
     quantization_t *symIntQ = quantizationInitSymInt32(HALF_AWAY);
-    layer_t *softmaxLayer = softmaxLayerInitLegacy(symIntQ, symIntQ);
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, symIntQ);
+    layer_t *softmaxLayer = softmaxLayerInit(&lq);
     layerFunctions_t softmaxFns = layerFunctions[SOFTMAX];
     softmaxFns.forward(softmaxLayer, input, output);
 
@@ -110,7 +114,7 @@ void unitTestSoftmaxForwardSymInt32() {
 
     /* 6. FREE. */
     freeTensor(outputFloat);
-    freeSoftmaxLayerLegacy(softmaxLayer);
+    freeSoftmaxLayer(softmaxLayer);
     freeTensor(output);
     freeTensor(input);
     freeQuantization(symIntQ);
@@ -162,7 +166,9 @@ void unitTestSoftmaxBackwardFloat() {
 
     /* 4. Build layer. */
     quantization_t *floatQ = quantizationInitFloat();
-    layer_t *softmaxLayer = softmaxLayerInitLegacy(floatQ, floatQ);
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, floatQ);
+    layer_t *softmaxLayer = softmaxLayerInit(&lq);
     layerFunctions_t softmaxFns = layerFunctions[SOFTMAX];
     softmaxFns.backward(softmaxLayer, input, loss, propLoss);
 
@@ -173,7 +179,7 @@ void unitTestSoftmaxBackwardFloat() {
     }
 
     /* 6. FREE. */
-    freeSoftmaxLayerLegacy(softmaxLayer);
+    freeSoftmaxLayer(softmaxLayer);
     freeTensor(propLoss);
     freeTensor(loss);
     freeTensor(input);
@@ -226,7 +232,9 @@ void unitTestSoftmaxBackwardSymInt32() {
 
     /* 4. Build layer. */
     quantization_t *symIntQ = quantizationInitSymInt32(HALF_AWAY);
-    layer_t *softmaxLayer = softmaxLayerInitLegacy(symIntQ, symIntQ);
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, symIntQ);
+    layer_t *softmaxLayer = softmaxLayerInit(&lq);
     layerFunctions_t softmaxFns = layerFunctions[SOFTMAX];
     softmaxFns.backward(softmaxLayer, input, loss, propLoss);
 
@@ -249,7 +257,7 @@ void unitTestSoftmaxBackwardSymInt32() {
 
     /* 7. FREE. */
     freeTensor(propLossFloat);
-    freeSoftmaxLayerLegacy(softmaxLayer);
+    freeSoftmaxLayer(softmaxLayer);
     freeTensor(propLoss);
     freeTensor(loss);
     freeTensor(input);
@@ -270,13 +278,15 @@ void testSoftmaxLayerInitAndFreeRoundTrip(void) {
      * sweep — this test asserts only that the round-trip completes
      * without a crash and that the layer was wired correctly. */
     quantization_t *floatQ = quantizationInitFloat();
-    layer_t *softmaxLayer = softmaxLayerInitLegacy(floatQ, floatQ);
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, floatQ);
+    layer_t *softmaxLayer = softmaxLayerInit(&lq);
     TEST_ASSERT_NOT_NULL(softmaxLayer);
     TEST_ASSERT_EQUAL_INT(SOFTMAX, softmaxLayer->type);
     TEST_ASSERT_NOT_NULL(softmaxLayer->config);
     TEST_ASSERT_NOT_NULL(softmaxLayer->config->softmax);
 
-    freeSoftmaxLayerLegacy(softmaxLayer);
+    freeSoftmaxLayer(softmaxLayer);
 
     /* floatQ is owned by the test; freeSoftmaxLayer must not have freed
      * it (quantization configs are externally owned and shared). */
@@ -291,8 +301,10 @@ void testSoftmaxLayerInitBorrowingStoresLqPointers(void) {
     quantization_t *qFwd = quantizationInitFloat();
     quantization_t *qBwd = quantizationInitFloat();
     layerQuant_t lq = {
-        .forwardMath = qFwd,
-        .backwardMath = qBwd,
+        .forwardMath = arithmeticFromQuantization(qFwd),
+        .propLossMath = arithmeticFromQuantization(qBwd),
+        .outputQ = qFwd,
+        .propLossQ = qBwd,
     };
 
     layer_t *layer = softmaxLayerInit(&lq);
@@ -316,8 +328,10 @@ void testSoftmaxLayerInitOwningDeepCopiesLqPointers(void) {
     quantization_t *qFwd = quantizationInitFloat();
     quantization_t *qBwd = quantizationInitFloat();
     layerQuant_t lq = {
-        .forwardMath = qFwd,
-        .backwardMath = qBwd,
+        .forwardMath = arithmeticFromQuantization(qFwd),
+        .propLossMath = arithmeticFromQuantization(qBwd),
+        .outputQ = qFwd,
+        .propLossQ = qBwd,
     };
 
     layer_t *layer = softmaxLayerInitOwning(&lq);

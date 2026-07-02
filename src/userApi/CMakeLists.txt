@@ -27,6 +27,7 @@ target_link_libraries(InferenceApi PRIVATE
         AdaptiveAvgPool1d
         LayerNorm
         QuantizationLayer
+        LayerConfigAccess
         LossFunction
         Common
         DataLoader
@@ -43,6 +44,7 @@ target_link_libraries(StorageApi PRIVATE
 add_library(LayerQuant LayerQuant.c)
 target_include_directories(LayerQuant PUBLIC include)
 target_link_libraries(LayerQuant PRIVATE
+        ArithmeticType
         Common
         Quantization
         Rounding
@@ -75,13 +77,21 @@ target_link_libraries(StateDictApi PRIVATE
 )
 
 
+add_library(LayerConfigAccess LayerConfigAccess.c)
+target_include_directories(LayerConfigAccess PUBLIC include)
+target_link_libraries(LayerConfigAccess PRIVATE
+        ArithmeticType
+        Common
+        CommonLayerLibs
+)
+
 add_library(ModelValidationApi ModelValidationApi.c)
 target_include_directories(ModelValidationApi PUBLIC include)
 target_link_libraries(ModelValidationApi PRIVATE
+        ArithmeticType
         Common
         Layer
-        LayerNorm
-        Linear
+        LayerConfigAccess
         Quantization
         Rounding
         Tensor

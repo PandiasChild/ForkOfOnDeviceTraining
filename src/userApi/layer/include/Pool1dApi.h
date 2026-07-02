@@ -47,13 +47,13 @@ typedef struct avgPool1dInit {
 } avgPool1dInit_t;
 
 /*! Borrowing variant — allocates kernel and (for MaxPool) the argmax
- *  tensor; stores lq->forwardMath in forwardQ and lq->backwardMath in
- *  propLossQ. */
+ *  tensor; stores lq->outputQ in outputQ and lq->propLossQ in
+ *  propLossQ verbatim. */
 layer_t *maxPool1dLayerInit(maxPool1dInit_t *init, layerQuant_t *lq);
 layer_t *avgPool1dLayerInit(avgPool1dInit_t *init, layerQuant_t *lq);
 
-/*! Owning variant — additionally deep-copies forwardMath and
- *  backwardMath via deepCopyQuantization. */
+/*! Owning variant — additionally deep-copies outputQ and
+ *  propLossQ via deepCopyQuantization. */
 layer_t *maxPool1dLayerInitOwning(maxPool1dInit_t *init, layerQuant_t *lq);
 layer_t *avgPool1dLayerInitOwning(avgPool1dInit_t *init, layerQuant_t *lq);
 

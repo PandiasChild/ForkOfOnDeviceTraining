@@ -74,21 +74,20 @@ static conv1dRunResult_t conv1dRunForward(conv1dFixtureSetup_t s, float *outputB
     }
     r.q = quantizationInitFloat();
 
-    if (s.groups == 1) {
-        r.layer = conv1dLayerInitLegacy(r.weights, r.bias, &kernelStore, r.q, r.q, r.q, r.q);
-    } else {
-        // Phase-2 will expose groups via UserAPI; here we go around the UserAPI.
-        // All statics so their addresses remain valid after this function returns.
-        static conv1dConfig_t cfg;
-        static layerConfig_t lc;
-        static layer_t l;
-        initConv1dConfigWithWeightsAndBias(&cfg, &kernelStore, r.weights, r.bias, s.groups, r.q,
-                                           r.q, r.q, r.q);
-        l.type = CONV1D;
-        lc.conv1d = &cfg;
-        l.config = &lc;
-        r.layer = &l;
-    }
+    // The UserAPI factory (conv1dLayerInit) always allocates its own weights/bias
+    // (KAIMING init requires FLOAT32 storage, LayerCommon.c requireFloat32) and
+    // cannot borrow caller-built parameter_t/kernel_t, so this fixture goes
+    // directly through initConv1dConfigWithWeightsAndBias for every groups value
+    // (all statics so their addresses remain valid after this function returns).
+    static conv1dConfig_t cfg;
+    static layerConfig_t lc;
+    static layer_t l;
+    initConv1dConfigWithWeightsAndBias(&cfg, &kernelStore, r.weights, r.bias, s.groups, r.q, r.q,
+                                       r.q, r.q);
+    l.type = CONV1D;
+    lc.conv1d = &cfg;
+    l.config = &lc;
+    r.layer = &l;
 
     r.input = tensorInitFloat((float *)s.inputData, (size_t *)s.inputDims, 3, NULL);
     r.output = tensorInitFloat(outputBuf, (size_t *)s.outputDims, 3, NULL);
@@ -127,6 +126,24 @@ static float symScaleOf(tensor_t *t) {
     return ((symInt32QConfig_t *)t->quantization->qConfig)->scale;
 }
 
+/*! Borrows already-built weights/bias/kernel and a single quantization for
+ *  forward + all backward math (groups=1) — replicates the deleted
+ *  conv1dLayerInitLegacy(weights, bias, kernel, q, q, q, q) shape. The
+ *  UserAPI factory (conv1dLayerInit) always allocates its own weights
+ *  (KAIMING init requires FLOAT32 storage), so it cannot express a directly
+ *  SYM_INT32-native weight tensor built by the test fixture; this goes
+ *  straight through initConv1dConfigWithWeightsAndBias instead. */
+static layer_t *buildBorrowedConv1dLayer(parameter_t *weights, parameter_t *bias, kernel_t *kernel,
+                                         quantization_t *q) {
+    conv1dConfig_t *cfg = reserveMemory(sizeof(conv1dConfig_t));
+    initConv1dConfigWithWeightsAndBias(cfg, kernel, weights, bias, 1u, q, q, q, q);
+    layerConfig_t *layerCfg = reserveMemory(sizeof(layerConfig_t));
+    layerCfg->conv1d = cfg;
+    layer_t *layer = reserveMemory(sizeof(layer_t));
+    initLayer(layer, CONV1D, layerCfg);
+    return layer;
+}
+
 void testConv1dForwardMultiChannelWithBias() {
     size_t weightDims[] = {2, 3, 3};
     tensor_t *weightParam =
@@ -143,7 +160,7 @@ void testConv1dForwardMultiChannelWithBias() {
     kernel_t kernel;
     initKernel(&kernel, 3, VALID, 1, 1);
     quantization_t *q = quantizationInitFloat();
-    layer_t *conv1d = conv1dLayerInitLegacy(weights, bias, &kernel, q, q, q, q);
+    layer_t *conv1d = buildBorrowedConv1dLayer(weights, bias, &kernel, q);
 
     size_t inputDims[] = {1, 3, 5};
     tensor_t *input =
@@ -170,7 +187,7 @@ void testConv1dForwardSingleChannelSingleBatch() {
     initKernel(&kernel, 2, VALID, 1, 1);
 
     quantization_t *q = quantizationInitFloat();
-    layer_t *conv1d = conv1dLayerInitLegacy(weights, NULL, &kernel, q, q, q, q);
+    layer_t *conv1d = buildBorrowedConv1dLayer(weights, NULL, &kernel, q);
 
     size_t inputDims[] = {1, 1, 4};
     tensor_t *input =
@@ -204,7 +221,7 @@ void testConv1dBackwardSingleChannelWithBias() {
     kernel_t kernel;
     initKernel(&kernel, 2, VALID, 1, 1);
     quantization_t *q = quantizationInitFloat();
-    layer_t *conv1d = conv1dLayerInitLegacy(weights, bias, &kernel, q, q, q, q);
+    layer_t *conv1d = buildBorrowedConv1dLayer(weights, bias, &kernel, q);
 
     size_t inputDims[] = {1, 1, 4};
     tensor_t *input =
@@ -249,7 +266,7 @@ void testConv1dBackwardSamePaddingSymmetric() {
     kernel_t kernel;
     initKernel(&kernel, 3, SAME, 1, 1);
     quantization_t *q = quantizationInitFloat();
-    layer_t *conv1d = conv1dLayerInitLegacy(weights, NULL, &kernel, q, q, q, q);
+    layer_t *conv1d = buildBorrowedConv1dLayer(weights, NULL, &kernel, q);
 
     size_t inputDims[] = {1, 1, 5};
     tensor_t *input =
@@ -802,7 +819,7 @@ void testConv1dForwardSymSingleChannelSingleBatch() {
     kernel_t kernel;
     initKernel(&kernel, 2, VALID, 1, 1);
     quantization_t *sq = quantizationInitSymInt32(HALF_AWAY);
-    layer_t *conv1d = conv1dLayerInitLegacy(weights, NULL, &kernel, sq, sq, sq, sq);
+    layer_t *conv1d = buildBorrowedConv1dLayer(weights, NULL, &kernel, sq);
 
     conv1dForward(conv1d, input, output);
 
@@ -835,7 +852,7 @@ void testConv1dForwardSymSingleChannelWithBias() {
     kernel_t kernel;
     initKernel(&kernel, 2, VALID, 1, 1);
     quantization_t *sq = quantizationInitSymInt32(HALF_AWAY);
-    layer_t *conv1d = conv1dLayerInitLegacy(weights, bias, &kernel, sq, sq, sq, sq);
+    layer_t *conv1d = buildBorrowedConv1dLayer(weights, bias, &kernel, sq);
 
     conv1dForward(conv1d, input, output);
 
@@ -868,7 +885,7 @@ void testConv1dForwardSymPointwise() {
     kernel_t kernel;
     initKernel(&kernel, 1, VALID, 1, 1);
     quantization_t *sq = quantizationInitSymInt32(HALF_AWAY);
-    layer_t *conv1d = conv1dLayerInitLegacy(weights, bias, &kernel, sq, sq, sq, sq);
+    layer_t *conv1d = buildBorrowedConv1dLayer(weights, bias, &kernel, sq);
 
     conv1dForward(conv1d, input, output);
 
@@ -901,7 +918,7 @@ void testConv1dForwardSymExplicitPadding() {
     kernel_t kernel;
     initKernelExplicit(&kernel, 7, 3, 1, 2);
     quantization_t *sq = quantizationInitSymInt32(HALF_AWAY);
-    layer_t *conv1d = conv1dLayerInitLegacy(weights, bias, &kernel, sq, sq, sq, sq);
+    layer_t *conv1d = buildBorrowedConv1dLayer(weights, bias, &kernel, sq);
 
     conv1dForward(conv1d, input, output);
 
@@ -1325,7 +1342,7 @@ void testConv1dBiasGradFloatRejectsOutChannelMismatch() {
     kernel_t kernel;
     initKernel(&kernel, 2, VALID, 1, 1);
     quantization_t *q = quantizationInitFloat();
-    layer_t *layer = conv1dLayerInitLegacy(weights, bias, &kernel, q, q, q, q);
+    layer_t *layer = buildBorrowedConv1dLayer(weights, bias, &kernel, q);
 
     tensor_t *input = tensorInitFloat(inputData, inputDims, 3, NULL);
     size_t lossDims[] = {1, 2, 4}; // outChannels 2 == weight Cout, != bias Cout 1

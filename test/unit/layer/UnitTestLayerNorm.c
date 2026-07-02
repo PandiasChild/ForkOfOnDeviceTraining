@@ -587,8 +587,10 @@ void testFactoryBuildsGammaOnesBetaZerosAndForwards(void) {
     quantization_t *bwdMath = quantizationInitFloat();
     quantization_t *wStore = quantizationInitFloat();
     quantization_t *bStore = quantizationInitFloat();
-    layerQuant_t lq = {.forwardMath = fwdMath,
-                       .backwardMath = bwdMath,
+    layerQuant_t lq = {.forwardMath = arithmeticFromQuantization(fwdMath),
+                       .propLossMath = arithmeticFromQuantization(bwdMath),
+                       .outputQ = fwdMath,
+                       .propLossQ = bwdMath,
                        .weightStorage = wStore,
                        .biasStorage = bStore};
 
@@ -648,8 +650,10 @@ void testFactoryOwningDeepCopiesQuantizations(void) {
     quantization_t *bwdMath = quantizationInitFloat();
     quantization_t *wStore = quantizationInitFloat();
     quantization_t *bStore = quantizationInitFloat();
-    layerQuant_t lq = {.forwardMath = fwdMath,
-                       .backwardMath = bwdMath,
+    layerQuant_t lq = {.forwardMath = arithmeticFromQuantization(fwdMath),
+                       .propLossMath = arithmeticFromQuantization(bwdMath),
+                       .outputQ = fwdMath,
+                       .propLossQ = bwdMath,
                        .weightStorage = wStore,
                        .biasStorage = bStore};
 
@@ -689,8 +693,10 @@ void testFactoryBorrowingDoesNotFreeCallerQuantizations(void) {
     quantization_t *bwdMath = quantizationInitFloat();
     quantization_t *wStore = quantizationInitFloat();
     quantization_t *bStore = quantizationInitFloat();
-    layerQuant_t lq = {.forwardMath = fwdMath,
-                       .backwardMath = bwdMath,
+    layerQuant_t lq = {.forwardMath = arithmeticFromQuantization(fwdMath),
+                       .propLossMath = arithmeticFromQuantization(bwdMath),
+                       .outputQ = fwdMath,
+                       .propLossQ = bwdMath,
                        .weightStorage = wStore,
                        .biasStorage = bStore};
 
@@ -722,7 +728,12 @@ void testFactoryRank2NormShapeAndExplicitEps(void) {
     layerNormInit_t init = {.normalizedShape = normShape, .numNormDims = 2, .eps = 0.1f};
 
     quantization_t *q = quantizationInitFloat();
-    layerQuant_t lq = {.forwardMath = q, .backwardMath = q, .weightStorage = q, .biasStorage = q};
+    layerQuant_t lq = {.forwardMath = arithmeticFromQuantization(q),
+                       .propLossMath = arithmeticFromQuantization(q),
+                       .outputQ = q,
+                       .propLossQ = q,
+                       .weightStorage = q,
+                       .biasStorage = q};
 
     layer_t *layer = layerNormLayerInit(&init, &lq);
     layerNormConfig_t *cfg = layer->config->layerNorm;
@@ -1485,8 +1496,12 @@ void testFactorySymInt32StorageQuantizesGammaBeta(void) {
 
     quantization_t *symQ = quantizationInitSymInt32(HALF_AWAY);
     quantization_t *bwdMath = quantizationInitFloat();
-    layerQuant_t lq = {
-        .forwardMath = symQ, .backwardMath = bwdMath, .weightStorage = symQ, .biasStorage = symQ};
+    layerQuant_t lq = {.forwardMath = arithmeticFromQuantization(symQ),
+                       .propLossMath = arithmeticFromQuantization(bwdMath),
+                       .outputQ = symQ,
+                       .propLossQ = bwdMath,
+                       .weightStorage = symQ,
+                       .biasStorage = symQ};
 
     layer_t *layer = layerNormLayerInit(&init, &lq);
     layerNormConfig_t *cfg = layer->config->layerNorm;
@@ -1539,8 +1554,12 @@ void testFactoryOwningSymInt32DeepCopiesQuantizations(void) {
 
     quantization_t *symQ = quantizationInitSymInt32(HALF_AWAY);
     quantization_t *bwdMath = quantizationInitFloat();
-    layerQuant_t lq = {
-        .forwardMath = symQ, .backwardMath = bwdMath, .weightStorage = symQ, .biasStorage = symQ};
+    layerQuant_t lq = {.forwardMath = arithmeticFromQuantization(symQ),
+                       .propLossMath = arithmeticFromQuantization(bwdMath),
+                       .outputQ = symQ,
+                       .propLossQ = bwdMath,
+                       .weightStorage = symQ,
+                       .biasStorage = symQ};
 
     layer_t *layer = layerNormLayerInitOwning(&init, &lq);
     layerNormConfig_t *cfg = layer->config->layerNorm;
@@ -1814,8 +1833,12 @@ void testFactoryFullSymProfileTrainsSymGrads(void) {
     layerNormInit_t init = {.normalizedShape = normShape, .numNormDims = 1, .eps = 1e-5f};
 
     quantization_t *symQ = quantizationInitSymInt32(HALF_AWAY);
-    layerQuant_t lq = {
-        .forwardMath = symQ, .backwardMath = symQ, .weightStorage = symQ, .biasStorage = symQ};
+    layerQuant_t lq = {.forwardMath = arithmeticFromQuantization(symQ),
+                       .propLossMath = arithmeticFromQuantization(symQ),
+                       .outputQ = symQ,
+                       .propLossQ = symQ,
+                       .weightStorage = symQ,
+                       .biasStorage = symQ};
     layer_t *layer = layerNormLayerInit(&init, &lq);
     layerNormConfig_t *cfg = layer->config->layerNorm;
 

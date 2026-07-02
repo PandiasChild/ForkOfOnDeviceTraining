@@ -7,6 +7,7 @@
 #include "Layer.h"
 #include "LayerCommon.h"
 #include "LayerQuant.h"
+#include "LayerWeightsApi.h"
 #include "Linear.h"
 #include "LinearApi.h"
 #include "Optimizer.h"
@@ -20,28 +21,35 @@
 #include "TensorConversion.h"
 #include "unity.h"
 
+/*! Borrows already-built weight/bias parameter_t and a single quantization
+ *  for forward + all backward math — replicates the deleted
+ *  linearLayerInitLegacy(weights, bias, q, q, q, q) uniform-Q shape.
+ *
+ *  Needed for weight/bias tensors whose STORAGE itself is SYM_INT32: the
+ *  factory's KAIMING/Xavier init (initWeightTensor/initBiasTensor,
+ *  LayerCommon.c requireFloat32) only supports FLOAT32-native weight
+ *  storage, so linearLayerInit cannot allocate a SYM_INT32 weight tensor —
+ *  the caller must build it directly and borrow it in here instead. */
+static layer_t *buildBorrowedLinearLayer(parameter_t *weights, parameter_t *bias,
+                                         quantization_t *q) {
+    linearConfig_t *cfg = reserveMemory(sizeof(linearConfig_t));
+    cfg->weights = weights;
+    cfg->bias = bias;
+    cfg->forwardMath = arithmeticFromQuantization(q);
+    cfg->weightGradMath = arithmeticFromQuantization(q);
+    cfg->biasGradMath = arithmeticFromQuantization(q);
+    cfg->propLossMath = arithmeticFromQuantization(q);
+    cfg->outputQ = q;
+    cfg->propLossQ = q;
+    cfg->ownsQuantizations = false;
+    layerConfig_t *layerCfg = reserveMemory(sizeof(layerConfig_t));
+    layerCfg->linear = cfg;
+    layer_t *layer = reserveMemory(sizeof(layer_t));
+    initLayer(layer, LINEAR, layerCfg);
+    return layer;
+}
+
 void testLinearForwardFloatRank1BiasRank2Output() {
-    size_t *weightDims = reserveMemory(2 * sizeof(size_t));
-    weightDims[0] = 2;
-    weightDims[1] = 3;
-    size_t *weightOrder = reserveMemory(2 * sizeof(size_t));
-    setOrderOfDimsForNewTensor(2, weightOrder);
-    shape_t *weightShape = reserveMemory(sizeof(shape_t));
-    setShape(weightShape, weightDims, 2, weightOrder);
-    tensor_t *weightsParam = initTensor(weightShape, quantizationInitFloat(), NULL);
-    tensorFillFromFloatBuffer(weightsParam, (float[]){-1.f, 2.f, -3.f, 4.f, 5.f, -6.f}, 6);
-    parameter_t *weights = parameterInit(weightsParam, NULL);
-
-    size_t *biasDims = reserveMemory(1 * sizeof(size_t));
-    biasDims[0] = 2;
-    size_t *biasOrder = reserveMemory(1 * sizeof(size_t));
-    setOrderOfDimsForNewTensor(1, biasOrder);
-    shape_t *biasShape = reserveMemory(sizeof(shape_t));
-    setShape(biasShape, biasDims, 1, biasOrder);
-    tensor_t *biasParam = initTensor(biasShape, quantizationInitFloat(), NULL);
-    tensorFillFromFloatBuffer(biasParam, (float[]){-1.f, 3.f}, 2);
-    parameter_t *bias = parameterInit(biasParam, NULL);
-
     size_t *inputDims = reserveMemory(2 * sizeof(size_t));
     inputDims[0] = 1;
     inputDims[1] = 3;
@@ -62,7 +70,11 @@ void testLinearForwardFloatRank1BiasRank2Output() {
     tensor_t *output = initTensor(outputShape, quantizationInitFloat(), NULL);
 
     quantization_t *testQ = quantizationInitFloat();
-    layer_t *linearLayer = linearLayerInitLegacy(weights, bias, testQ, testQ, testQ, testQ);
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, testQ);
+    layer_t *linearLayer =
+        linearLayerInit(&(linearInit_t){.inFeatures = 3, .outFeatures = 2, .bias = BIAS_TRUE}, &lq);
+    layerLoadWeights(linearLayer, (float[]){-1.f, 2.f, -3.f, 4.f, 5.f, -6.f}, (float[]){-1.f, 3.f});
 
     linearForward(linearLayer, input, output);
 
@@ -70,11 +82,9 @@ void testLinearForwardFloatRank1BiasRank2Output() {
     captured[0] = ((float *)output->data)[0];
     captured[1] = ((float *)output->data)[1];
 
-    freeLinearLayerLegacy(linearLayer);
+    freeLinearLayer(linearLayer);
     freeTensor(output);
     freeTensor(input);
-    freeParameter(bias);
-    freeParameter(weights);
     freeQuantization(testQ);
 
     float expected[] = {-5.f, -4.f};
@@ -126,7 +136,7 @@ void testLinearForwardSymInt32Rank1BiasRank2Output() {
     tensor_t *output = initTensor(outputShape, quantizationInitSymInt32(HALF_AWAY), NULL);
 
     quantization_t *test = quantizationInitSymInt32(HALF_AWAY);
-    layer_t *linearLayer = linearLayerInitLegacy(weights, bias, test, test, test, test);
+    layer_t *linearLayer = buildBorrowedLinearLayer(weights, bias, test);
 
     linearForward(linearLayer, input, output);
 
@@ -146,11 +156,9 @@ void testLinearForwardSymInt32Rank1BiasRank2Output() {
     }
 
     freeTensor(outputFloat);
-    freeLinearLayerLegacy(linearLayer);
+    freeLinearLayer(linearLayer);
     freeTensor(output);
     freeTensor(input);
-    freeParameter(bias);
-    freeParameter(weights);
     freeQuantization(test);
 
     float expected[] = {-5.f, -4.f};
@@ -160,30 +168,6 @@ void testLinearForwardSymInt32Rank1BiasRank2Output() {
 }
 
 void testLinearBackwardFloatRank1Bias() {
-    size_t *weightDims = reserveMemory(2 * sizeof(size_t));
-    weightDims[0] = 2;
-    weightDims[1] = 3;
-    size_t *weightOrder = reserveMemory(2 * sizeof(size_t));
-    setOrderOfDimsForNewTensor(2, weightOrder);
-    shape_t *weightShape = reserveMemory(sizeof(shape_t));
-    setShape(weightShape, weightDims, 2, weightOrder);
-    tensor_t *weightsParam = initTensor(weightShape, quantizationInitFloat(), NULL);
-    tensorFillFromFloatBuffer(weightsParam, (float[]){-1.f, 2.f, -3.f, 4.f, 5.f, -6.f}, 6);
-    tensor_t *weightsGrad = gradInitFloat(weightsParam, NULL);
-    parameter_t *weights = parameterInit(weightsParam, weightsGrad);
-
-    /* RANK-1 bias [2] -> rank-1 bias grad. */
-    size_t *biasDims = reserveMemory(1 * sizeof(size_t));
-    biasDims[0] = 2;
-    size_t *biasOrder = reserveMemory(1 * sizeof(size_t));
-    setOrderOfDimsForNewTensor(1, biasOrder);
-    shape_t *biasShape = reserveMemory(sizeof(shape_t));
-    setShape(biasShape, biasDims, 1, biasOrder);
-    tensor_t *biasParam = initTensor(biasShape, quantizationInitFloat(), NULL);
-    tensorFillFromFloatBuffer(biasParam, (float[]){-1.f, 3.f}, 2);
-    tensor_t *biasGrad = gradInitFloat(biasParam, NULL);
-    parameter_t *bias = parameterInit(biasParam, biasGrad);
-
     size_t *fwdDims = reserveMemory(2 * sizeof(size_t));
     fwdDims[0] = 1;
     fwdDims[1] = 3;
@@ -214,33 +198,36 @@ void testLinearBackwardFloatRank1Bias() {
     tensor_t *propLoss = initTensor(propLossShape, quantizationInitFloat(), NULL);
 
     quantization_t *testQ = quantizationInitFloat();
-    layer_t *linearLayer = linearLayerInitLegacy(weights, bias, testQ, testQ, testQ, testQ);
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, testQ);
+    layer_t *linearLayer =
+        linearLayerInit(&(linearInit_t){.inFeatures = 3, .outFeatures = 2, .bias = BIAS_TRUE}, &lq);
+    layerLoadWeights(linearLayer, (float[]){-1.f, 2.f, -3.f, 4.f, 5.f, -6.f}, (float[]){-1.f, 3.f});
+    linearConfig_t *cfg = linearLayer->config->linear;
 
     linearBackward(linearLayer, forwardInput, loss, propLoss);
 
-    size_t numWeightElements = calcNumberOfElementsByShape(weights->param->shape);
-    size_t numBiasElements = calcNumberOfElementsByShape(bias->param->shape);
+    size_t numWeightElements = calcNumberOfElementsByShape(cfg->weights->param->shape);
+    size_t numBiasElements = calcNumberOfElementsByShape(cfg->bias->param->shape);
     size_t numPropLossElements = calcNumberOfElementsByTensor(propLoss);
 
     float capturedWeightGrad[6];
     for (size_t i = 0; i < numWeightElements; i++) {
-        capturedWeightGrad[i] = ((float *)weights->grad->data)[i];
+        capturedWeightGrad[i] = ((float *)cfg->weights->grad->data)[i];
     }
     float capturedBiasGrad[2];
     for (size_t i = 0; i < numBiasElements; i++) {
-        capturedBiasGrad[i] = ((float *)bias->grad->data)[i];
+        capturedBiasGrad[i] = ((float *)cfg->bias->grad->data)[i];
     }
     float capturedPropLoss[3];
     for (size_t i = 0; i < numPropLossElements; i++) {
         capturedPropLoss[i] = ((float *)propLoss->data)[i];
     }
 
-    freeLinearLayerLegacy(linearLayer);
+    freeLinearLayer(linearLayer);
     freeTensor(propLoss);
     freeTensor(loss);
     freeTensor(forwardInput);
-    freeParameter(bias);
-    freeParameter(weights);
     freeQuantization(testQ);
 
     float expected_weight_grad[] = {0.f, -4.f, -8.f, 0.f, -3.f, -6.f};
@@ -315,7 +302,7 @@ void testLinearBackwardSymInt32Rank1Bias() {
 
     /* 6. Build layer (shared SymInt32 quantization). */
     quantization_t *test = quantizationInitSymInt32(HALF_AWAY);
-    layer_t *linearLayer = linearLayerInitLegacy(weights, bias, test, test, test, test);
+    layer_t *linearLayer = buildBorrowedLinearLayer(weights, bias, test);
 
     linearBackward(linearLayer, forwardInput, loss, propLoss);
 
@@ -367,12 +354,10 @@ void testLinearBackwardSymInt32Rank1Bias() {
     freeTensor(propLossFloat);
     freeTensor(biasGradFloat);
     freeTensor(weightGradFloat);
-    freeLinearLayerLegacy(linearLayer);
+    freeLinearLayer(linearLayer);
     freeTensor(propLoss);
     freeTensor(loss);
     freeTensor(forwardInput);
-    freeParameter(bias);
-    freeParameter(weights);
     freeQuantization(test);
 
     /* 10. ASSERT. */
@@ -396,29 +381,6 @@ void setUp() {}
 void tearDown() {}
 
 void testLinearForwardFloat() {
-    /* 1. Build heap weights tensor (shape 2x3) wrapped in a parameter (no grad). */
-    size_t *weightDims = reserveMemory(2 * sizeof(size_t));
-    weightDims[0] = 2;
-    weightDims[1] = 3;
-    size_t *weightOrder = reserveMemory(2 * sizeof(size_t));
-    setOrderOfDimsForNewTensor(2, weightOrder);
-    shape_t *weightShape = reserveMemory(sizeof(shape_t));
-    setShape(weightShape, weightDims, 2, weightOrder);
-    tensor_t *weightsParam = initTensor(weightShape, quantizationInitFloat(), NULL);
-    tensorFillFromFloatBuffer(weightsParam, (float[]){-1.f, 2.f, -3.f, 4.f, 5.f, -6.f}, 6);
-    parameter_t *weights = parameterInit(weightsParam, NULL);
-
-    /* 2. Build heap bias tensor (shape 2,). */
-    size_t *biasDims = reserveMemory(1 * sizeof(size_t));
-    biasDims[0] = 2;
-    size_t *biasOrder = reserveMemory(1 * sizeof(size_t));
-    setOrderOfDimsForNewTensor(1, biasOrder);
-    shape_t *biasShape = reserveMemory(sizeof(shape_t));
-    setShape(biasShape, biasDims, 1, biasOrder);
-    tensor_t *biasParam = initTensor(biasShape, quantizationInitFloat(), NULL);
-    tensorFillFromFloatBuffer(biasParam, (float[]){-1.f, 3.f}, 2);
-    parameter_t *bias = parameterInit(biasParam, NULL);
-
     /* 3. Build heap input tensor (shape 1x3). */
     size_t *inputDims = reserveMemory(2 * sizeof(size_t));
     inputDims[0] = 1;
@@ -441,7 +403,11 @@ void testLinearForwardFloat() {
 
     /* 5. Build the layer with shared float quantization. */
     quantization_t *testQ = quantizationInitFloat();
-    layer_t *linearLayer = linearLayerInitLegacy(weights, bias, testQ, testQ, testQ, testQ);
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, testQ);
+    layer_t *linearLayer =
+        linearLayerInit(&(linearInit_t){.inFeatures = 3, .outFeatures = 2, .bias = BIAS_TRUE}, &lq);
+    layerLoadWeights(linearLayer, (float[]){-1.f, 2.f, -3.f, 4.f, 5.f, -6.f}, (float[]){-1.f, 3.f});
 
     linearForward(linearLayer, input, output);
 
@@ -450,12 +416,10 @@ void testLinearForwardFloat() {
     captured[0] = ((float *)output->data)[0];
     captured[1] = ((float *)output->data)[1];
 
-    /* 7. FREE. freeLinearLayer releases only the layer config wrapper. */
-    freeLinearLayerLegacy(linearLayer);
+    /* 7. FREE. freeLinearLayer releases everything the factory allocated. */
+    freeLinearLayer(linearLayer);
     freeTensor(output);
     freeTensor(input);
-    freeParameter(bias);
-    freeParameter(weights);
     freeQuantization(testQ);
 
     /* 8. ASSERT. */
@@ -464,32 +428,6 @@ void testLinearForwardFloat() {
 }
 
 void testLinearBackwardFloat() {
-    /* 1. Build heap weights parameter (param + grad), shape 2x3. */
-    size_t *weightDims = reserveMemory(2 * sizeof(size_t));
-    weightDims[0] = 2;
-    weightDims[1] = 3;
-    size_t *weightOrder = reserveMemory(2 * sizeof(size_t));
-    setOrderOfDimsForNewTensor(2, weightOrder);
-    shape_t *weightShape = reserveMemory(sizeof(shape_t));
-    setShape(weightShape, weightDims, 2, weightOrder);
-    tensor_t *weightsParam = initTensor(weightShape, quantizationInitFloat(), NULL);
-    tensorFillFromFloatBuffer(weightsParam, (float[]){-1.f, 2.f, -3.f, 4.f, 5.f, -6.f}, 6);
-    tensor_t *weightsGrad = gradInitFloat(weightsParam, NULL);
-    parameter_t *weights = parameterInit(weightsParam, weightsGrad);
-
-    /* 2. Build heap bias parameter (param + grad), shape 1x2. */
-    size_t *biasDims = reserveMemory(2 * sizeof(size_t));
-    biasDims[0] = 1;
-    biasDims[1] = 2;
-    size_t *biasOrder = reserveMemory(2 * sizeof(size_t));
-    setOrderOfDimsForNewTensor(2, biasOrder);
-    shape_t *biasShape = reserveMemory(sizeof(shape_t));
-    setShape(biasShape, biasDims, 2, biasOrder);
-    tensor_t *biasParam = initTensor(biasShape, quantizationInitFloat(), NULL);
-    tensorFillFromFloatBuffer(biasParam, (float[]){-1.f, 3.f}, 2);
-    tensor_t *biasGrad = gradInitFloat(biasParam, NULL);
-    parameter_t *bias = parameterInit(biasParam, biasGrad);
-
     /* 3. Build heap forwardInput tensor, shape 1x3. */
     size_t *fwdDims = reserveMemory(2 * sizeof(size_t));
     fwdDims[0] = 1;
@@ -524,22 +462,27 @@ void testLinearBackwardFloat() {
 
     /* 6. Build the layer. */
     quantization_t *testQ = quantizationInitFloat();
-    layer_t *linearLayer = linearLayerInitLegacy(weights, bias, testQ, testQ, testQ, testQ);
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, testQ);
+    layer_t *linearLayer =
+        linearLayerInit(&(linearInit_t){.inFeatures = 3, .outFeatures = 2, .bias = BIAS_TRUE}, &lq);
+    layerLoadWeights(linearLayer, (float[]){-1.f, 2.f, -3.f, 4.f, 5.f, -6.f}, (float[]){-1.f, 3.f});
+    linearConfig_t *cfg = linearLayer->config->linear;
 
     linearBackward(linearLayer, forwardInput, loss, propLoss);
 
     /* 7. CAPTURE. */
-    size_t numWeightElements = calcNumberOfElementsByShape(weights->param->shape);
-    size_t numBiasElements = calcNumberOfElementsByShape(bias->param->shape);
+    size_t numWeightElements = calcNumberOfElementsByShape(cfg->weights->param->shape);
+    size_t numBiasElements = calcNumberOfElementsByShape(cfg->bias->param->shape);
     size_t numPropLossElements = calcNumberOfElementsByTensor(propLoss);
 
     float capturedWeightGrad[6];
     for (size_t i = 0; i < numWeightElements; i++) {
-        capturedWeightGrad[i] = ((float *)weights->grad->data)[i];
+        capturedWeightGrad[i] = ((float *)cfg->weights->grad->data)[i];
     }
     float capturedBiasGrad[2];
     for (size_t i = 0; i < numBiasElements; i++) {
-        capturedBiasGrad[i] = ((float *)bias->grad->data)[i];
+        capturedBiasGrad[i] = ((float *)cfg->bias->grad->data)[i];
     }
     float capturedPropLoss[3];
     for (size_t i = 0; i < numPropLossElements; i++) {
@@ -547,12 +490,10 @@ void testLinearBackwardFloat() {
     }
 
     /* 8. FREE. */
-    freeLinearLayerLegacy(linearLayer);
+    freeLinearLayer(linearLayer);
     freeTensor(propLoss);
     freeTensor(loss);
     freeTensor(forwardInput);
-    freeParameter(bias);
-    freeParameter(weights);
     freeQuantization(testQ);
 
     /* 9. ASSERT. */
@@ -617,7 +558,7 @@ void testLinearForwardSymInt32() {
 
     /* 5. Build layer (shared SymInt32 quantization). */
     quantization_t *test = quantizationInitSymInt32(HALF_AWAY);
-    layer_t *linearLayer = linearLayerInitLegacy(weights, bias, test, test, test, test);
+    layer_t *linearLayer = buildBorrowedLinearLayer(weights, bias, test);
 
     linearForward(linearLayer, input, output);
 
@@ -640,11 +581,9 @@ void testLinearForwardSymInt32() {
 
     /* 8. FREE. */
     freeTensor(outputFloat);
-    freeLinearLayerLegacy(linearLayer);
+    freeLinearLayer(linearLayer);
     freeTensor(output);
     freeTensor(input);
-    freeParameter(bias);
-    freeParameter(weights);
     freeQuantization(test);
 
     /* 9. ASSERT. */
@@ -718,7 +657,7 @@ void testLinearBackwardSymInt32() {
 
     /* 6. Build layer (shared SymInt32 quantization). */
     quantization_t *test = quantizationInitSymInt32(HALF_AWAY);
-    layer_t *linearLayer = linearLayerInitLegacy(weights, bias, test, test, test, test);
+    layer_t *linearLayer = buildBorrowedLinearLayer(weights, bias, test);
 
     linearBackward(linearLayer, forwardInput, loss, propLoss);
 
@@ -771,12 +710,10 @@ void testLinearBackwardSymInt32() {
     freeTensor(propLossFloat);
     freeTensor(biasGradFloat);
     freeTensor(weightGradFloat);
-    freeLinearLayerLegacy(linearLayer);
+    freeLinearLayer(linearLayer);
     freeTensor(propLoss);
     freeTensor(loss);
     freeTensor(forwardInput);
-    freeParameter(bias);
-    freeParameter(weights);
     freeQuantization(test);
 
     /* 10. ASSERT. */
@@ -801,32 +738,6 @@ void testLinearBackwardFloatWithMismatchedQuantizations() {
      * arrives in ASYM form, while the layer's parameters and propLoss are
      * Float. Validates that linearBackward routes the loss through a
      * conversion before applying it. */
-
-    /* 1. Build heap weights parameter (Float, shape 2x3) with grad. */
-    size_t *weightDims = reserveMemory(2 * sizeof(size_t));
-    weightDims[0] = 2;
-    weightDims[1] = 3;
-    size_t *weightOrder = reserveMemory(2 * sizeof(size_t));
-    setOrderOfDimsForNewTensor(2, weightOrder);
-    shape_t *weightShape = reserveMemory(sizeof(shape_t));
-    setShape(weightShape, weightDims, 2, weightOrder);
-    tensor_t *weightsParam = initTensor(weightShape, quantizationInitFloat(), NULL);
-    tensorFillFromFloatBuffer(weightsParam, (float[]){-1.f, 2.f, -3.f, 4.f, 5.f, -6.f}, 6);
-    tensor_t *weightsGrad = gradInitFloat(weightsParam, NULL);
-    parameter_t *weights = parameterInit(weightsParam, weightsGrad);
-
-    /* 2. Build heap bias parameter (Float, shape 1x2) with grad. */
-    size_t *biasDims = reserveMemory(2 * sizeof(size_t));
-    biasDims[0] = 1;
-    biasDims[1] = 2;
-    size_t *biasOrder = reserveMemory(2 * sizeof(size_t));
-    setOrderOfDimsForNewTensor(2, biasOrder);
-    shape_t *biasShape = reserveMemory(sizeof(shape_t));
-    setShape(biasShape, biasDims, 2, biasOrder);
-    tensor_t *biasParam = initTensor(biasShape, quantizationInitFloat(), NULL);
-    tensorFillFromFloatBuffer(biasParam, (float[]){-1.f, 3.f}, 2);
-    tensor_t *biasGrad = gradInitFloat(biasParam, NULL);
-    parameter_t *bias = parameterInit(biasParam, biasGrad);
 
     /* 3. Build heap forwardInput tensor (Float, shape 1x3). */
     size_t *fwdDims = reserveMemory(2 * sizeof(size_t));
@@ -866,22 +777,27 @@ void testLinearBackwardFloatWithMismatchedQuantizations() {
 
     /* 6. Build the layer with shared float quantization. */
     quantization_t *testQ = quantizationInitFloat();
-    layer_t *linearLayer = linearLayerInitLegacy(weights, bias, testQ, testQ, testQ, testQ);
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, testQ);
+    layer_t *linearLayer =
+        linearLayerInit(&(linearInit_t){.inFeatures = 3, .outFeatures = 2, .bias = BIAS_TRUE}, &lq);
+    layerLoadWeights(linearLayer, (float[]){-1.f, 2.f, -3.f, 4.f, 5.f, -6.f}, (float[]){-1.f, 3.f});
+    linearConfig_t *cfg = linearLayer->config->linear;
 
     linearBackward(linearLayer, forwardInput, lossAsym, propLoss);
 
     /* 7. CAPTURE. */
-    size_t sizeWeights = calcNumberOfElementsByParameter(weights);
-    size_t sizeBias = calcNumberOfElementsByParameter(bias);
+    size_t sizeWeights = calcNumberOfElementsByParameter(cfg->weights);
+    size_t sizeBias = calcNumberOfElementsByParameter(cfg->bias);
     size_t sizePropLoss = calcNumberOfElementsByTensor(propLoss);
 
     float capturedWeightGrad[6];
     for (size_t i = 0; i < sizeWeights; i++) {
-        capturedWeightGrad[i] = ((float *)weights->grad->data)[i];
+        capturedWeightGrad[i] = ((float *)cfg->weights->grad->data)[i];
     }
     float capturedBiasGrad[2];
     for (size_t i = 0; i < sizeBias; i++) {
-        capturedBiasGrad[i] = ((float *)bias->grad->data)[i];
+        capturedBiasGrad[i] = ((float *)cfg->bias->grad->data)[i];
     }
     float capturedPropLoss[3];
     for (size_t i = 0; i < sizePropLoss; i++) {
@@ -889,12 +805,10 @@ void testLinearBackwardFloatWithMismatchedQuantizations() {
     }
 
     /* 8. FREE. */
-    freeLinearLayerLegacy(linearLayer);
+    freeLinearLayer(linearLayer);
     freeTensor(propLoss);
     freeTensor(lossAsym);
     freeTensor(forwardInput);
-    freeParameter(bias);
-    freeParameter(weights);
     freeQuantization(testQ);
 
     /* 9. ASSERT. */
@@ -939,9 +853,24 @@ void testLinearLayerInitNonTrainable(void) {
     tensor_t *bias = initTensor(biasShape, quantizationInitFloat(), NULL);
     tensorFillFromFloatBuffer(bias, (float[]){-1.f, 3.f}, 2);
 
-    /* 3. Build the non-trainable layer. */
+    /* 3. Build the non-trainable layer. linearLayerInitNonTrainableLegacy was
+     * deleted (Task 9); no factory allocates grad-optional Linear params, so
+     * this hand-builds the config the same way that ctor used to (wrap the
+     * caller's tensors via parameterInit(t, NULL), store only forwardMath /
+     * outputQ) — every other linearConfig_t field stays calloc-zeroed
+     * (reserveMemory), which is safe since linearForward only reads
+     * forwardMath.type. */
     quantization_t *forwardQ = quantizationInitFloat();
-    layer_t *layer = linearLayerInitNonTrainableLegacy(weights, bias, forwardQ);
+    linearConfig_t *nonTrainableCfg = reserveMemory(sizeof(linearConfig_t));
+    nonTrainableCfg->weights = parameterInit(weights, NULL);
+    nonTrainableCfg->bias = parameterInit(bias, NULL);
+    nonTrainableCfg->forwardMath = arithmeticFromQuantization(forwardQ);
+    nonTrainableCfg->outputQ = forwardQ;
+    nonTrainableCfg->ownsQuantizations = false;
+    layerConfig_t *nonTrainableLayerCfg = reserveMemory(sizeof(layerConfig_t));
+    nonTrainableLayerCfg->linear = nonTrainableCfg;
+    layer_t *layer = reserveMemory(sizeof(layer_t));
+    initLayer(layer, LINEAR, nonTrainableLayerCfg);
 
     /* Wiring asserts (read into stack locals before any free). */
     int capturedLayerNotNull = (layer != NULL);
@@ -978,17 +907,11 @@ void testLinearLayerInitNonTrainable(void) {
     capturedOutput[0] = ((float *)output->data)[0];
     capturedOutput[1] = ((float *)output->data)[1];
 
-    /* 7. FREE. linearLayerInitNonTrainable wrapped weights/bias into
-     *    parameter_t* via parameterInit; freeing those parameters
-     *    cascades to freeTensor(weights) and freeTensor(bias).
-     *    freeParameter is NULL-grad-safe (post-#106, H3). */
-    parameter_t *weightsParam = config->weights;
-    parameter_t *biasParam = config->bias;
-    freeLinearLayerLegacy(layer);
+    /* 7. FREE. freeLinearLayer cascades into freeParameter(weights/bias)
+     *    (NULL-grad-safe, post-#106 H3), which cascades into freeTensor. */
+    freeLinearLayer(layer);
     freeTensor(output);
     freeTensor(input);
-    freeParameter(biasParam);
-    freeParameter(weightsParam);
     freeQuantization(forwardQ);
 
     /* 8. ASSERT. */
@@ -1002,23 +925,21 @@ void testLinearLayerInitNonTrainable(void) {
 
 void testLinearLayerInitAndFreeRoundTrip(void) {
     /* Roundtrip: linearLayerInit allocates layer + outer layerConfig +
-     * inner linearConfig (3 reserveMemory calls). freeLinearLayer must
-     * release all three. Pre-fix this test runs to completion but leaks
-     * the outer layerConfig wrapper; post-fix it is leak-clean (verified
-     * via the LSan sweep).
-     *
-     * linearLayerInit only stores the parameter and quantization pointers
-     * without dereferencing them, and freeLinearLayer does not touch
-     * parameters/quantization (those are externally owned). So NULL is a
-     * valid stand-in here — keeps the test focused on the StorageApi
-     * lifecycle, not on tensor ownership. */
-    layer_t *linearLayer = linearLayerInitLegacy(NULL, NULL, NULL, NULL, NULL, NULL);
+     * inner linearConfig (+ weights/bias parameters). freeLinearLayer must
+     * release all of it without crashing. linearLayerInit validates
+     * lq->outputQ/propLossQ/weightStorage (unlike the deleted Legacy ctor,
+     * which tolerated NULL), so this uses a minimal real profile instead. */
+    quantization_t *q = quantizationInitFloat();
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, q);
+    layer_t *linearLayer = linearLayerInit(&(linearInit_t){.inFeatures = 1, .outFeatures = 1}, &lq);
     TEST_ASSERT_NOT_NULL(linearLayer);
     TEST_ASSERT_EQUAL_INT(LINEAR, linearLayer->type);
     TEST_ASSERT_NOT_NULL(linearLayer->config);
     TEST_ASSERT_NOT_NULL(linearLayer->config->linear);
 
-    freeLinearLayerLegacy(linearLayer);
+    freeLinearLayer(linearLayer);
+    freeQuantization(q);
 }
 
 /* ============================================================================
@@ -1120,8 +1041,12 @@ void testLinearLayerInitSymInt32BackwardMathYieldsSymInt32Grad(void) {
     quantization_t *fwd = quantizationInitFloat();             /* FLOAT32 forward + storage */
     quantization_t *bwd = quantizationInitSymInt32(HALF_AWAY); /* SYM_INT32 backward */
     layerQuant_t lq = {
-        .forwardMath = fwd,
-        .backwardMath = bwd,
+        .forwardMath = arithmeticFromQuantization(fwd),
+        .weightGradMath = arithmeticFromQuantization(bwd),
+        .biasGradMath = arithmeticFromQuantization(bwd),
+        .propLossMath = arithmeticFromQuantization(bwd),
+        .outputQ = fwd,
+        .propLossQ = bwd,
         .weightStorage = fwd, /* KAIMING init requires FLOAT32 weight storage */
         .biasStorage = fwd,
     };
@@ -1202,6 +1127,57 @@ void testLinearLayerInitOwningFreesAllAllocationsWithoutLeak(void) {
     TEST_PASS();
 }
 
+/* ============================================================================
+ * Grad-storage knob (#261 / layerQuant_t restructure, Task 8 step 3).
+ * ========================================================================== */
+
+void testLinearLayerInitOwningWeightGradStorageKnobOverridesPropLossQDefault(void) {
+    /* Default (knob == NULL) grad storage derives from propLossQ; a non-NULL
+     * weightGradStorage config must override that default end-to-end, through
+     * the same getQLike path gradInit already uses. */
+    quantization_t *q = quantizationInitFloat();
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, q);
+    quantization_t *gradKnob = quantizationInitSymInt32WithBits(HALF_AWAY, 16);
+    lq.weightGradStorage = gradKnob;
+
+    layer_t *layer = linearLayerInitOwning(
+        &(linearInit_t){.inFeatures = 3, .outFeatures = 2, .bias = BIAS_TRUE}, &lq);
+
+    linearConfig_t *cfg = layer->config->linear;
+    tensor_t *wGrad = getGradFromParameter(cfg->weights);
+    int gradType = wGrad->quantization->type;
+    /* Guard the qConfig dereference: a wrong-type grad (e.g. the knob silently
+     * ignored) has qConfig == NULL for FLOAT32 — asserting gradType first
+     * keeps that failure a clean assertion, not a NULL-deref crash. */
+    uint8_t gradBits =
+        (gradType == SYM_INT32) ? ((symInt32QConfig_t *)wGrad->quantization->qConfig)->qMaxBits : 0;
+
+    freeLinearLayer(layer);
+    freeQuantization(gradKnob);
+    freeQuantization(q);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(SYM_INT32, gradType,
+                                  "weightGradStorage knob must override the propLossQ default");
+    TEST_ASSERT_EQUAL_UINT8(16, gradBits);
+}
+
+void testLinearLayerInitOwningBoolWeightGradStorageKnobAborts(void) {
+    /* getQLike (gradInit's clone path) has no SYM/BOOL arms — a knob naming an
+     * unsupported dtype must fail fast (packed grads land in PR3). */
+    quantization_t *q = quantizationInitFloat();
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, q);
+    quantization_t *boolGradQ = quantizationInitBool();
+    lq.weightGradStorage = boolGradQ;
+
+    ASSERT_EXITS_WITH_FAILURE(linearLayerInitOwning(
+        &(linearInit_t){.inFeatures = 3, .outFeatures = 2, .bias = BIAS_TRUE}, &lq));
+
+    freeQuantization(boolGradQ);
+    freeQuantization(q);
+}
+
 /* Helper: build a 2-D FLOAT32 tensor on the heap with the given values. */
 static tensor_t *buildFloatTensor2d(size_t rows, size_t cols, const float *data) {
     size_t *d = reserveMemory(2 * sizeof(size_t));
@@ -1269,8 +1245,14 @@ void testLinearSymInt32GradAccumulatesOverTwoMicrobatchesAndSteps(void) {
     /* ---- SYM_INT32-backward layer (under test) ---- */
     quantization_t *fwd = quantizationInitFloat();
     quantization_t *bwd = quantizationInitSymInt32(HALF_AWAY);
-    layerQuant_t lqSym = {
-        .forwardMath = fwd, .backwardMath = bwd, .weightStorage = fwd, .biasStorage = fwd};
+    layerQuant_t lqSym = {.forwardMath = arithmeticFromQuantization(fwd),
+                          .weightGradMath = arithmeticFromQuantization(bwd),
+                          .biasGradMath = arithmeticFromQuantization(bwd),
+                          .propLossMath = arithmeticFromQuantization(bwd),
+                          .outputQ = fwd,
+                          .propLossQ = bwd,
+                          .weightStorage = fwd,
+                          .biasStorage = fwd};
     layer_t *symLayer = linearLayerInit(
         &(linearInit_t){.inFeatures = 3, .outFeatures = 2, .bias = BIAS_TRUE}, &lqSym);
 
@@ -1317,8 +1299,14 @@ void testLinearSymInt32GradAccumulatesOverTwoMicrobatchesAndSteps(void) {
     /* ---- FLOAT32-backward layer (reference) ---- */
     quantization_t *fwd2 = quantizationInitFloat();
     quantization_t *bwd2 = quantizationInitFloat();
-    layerQuant_t lqF = {
-        .forwardMath = fwd2, .backwardMath = bwd2, .weightStorage = fwd2, .biasStorage = fwd2};
+    layerQuant_t lqF = {.forwardMath = arithmeticFromQuantization(fwd2),
+                        .weightGradMath = arithmeticFromQuantization(bwd2),
+                        .biasGradMath = arithmeticFromQuantization(bwd2),
+                        .propLossMath = arithmeticFromQuantization(bwd2),
+                        .outputQ = fwd2,
+                        .propLossQ = bwd2,
+                        .weightStorage = fwd2,
+                        .biasStorage = fwd2};
     layer_t *fLayer = linearLayerInit(
         &(linearInit_t){.inFeatures = 3, .outFeatures = 2, .bias = BIAS_TRUE}, &lqF);
     tensor_t *fWGrad = fLayer->config->linear->weights->grad;
@@ -1470,18 +1458,6 @@ void testLinearLayerInitXavierUniformOverrideUsesGlorotBound(void) {
                              "Bias must stay PyTorch default uniform regardless of weight scheme");
 }
 
-void testLinearLegacyRejectsDivergentBackwardQs(void) {
-    /* weightGradsQ and biasGradsQ collapse into one backwardMath (spec 2026-07-02
-     * §4); passing two different pointers is now a config error. */
-    quantization_t *fQ = quantizationInitFloat();
-    quantization_t *otherQ = quantizationInitFloat();
-
-    ASSERT_EXITS_WITH_FAILURE(linearLayerInitLegacy(NULL, NULL, fQ, fQ, otherQ, fQ));
-
-    freeQuantization(otherQ);
-    freeQuantization(fQ);
-}
-
 void testLinearBackwardWithoutBiasDoesNotCrash(void) {
     quantization_t *q = quantizationInitFloat();
     layerQuant_t lq;
@@ -1531,9 +1507,10 @@ int main(void) {
 
     RUN_TEST(testLinearLayerInitOwningDeepCopiesQuantizations);
     RUN_TEST(testLinearLayerInitOwningFreesAllAllocationsWithoutLeak);
+    RUN_TEST(testLinearLayerInitOwningWeightGradStorageKnobOverridesPropLossQDefault);
+    RUN_TEST(testLinearLayerInitOwningBoolWeightGradStorageKnobAborts);
     RUN_TEST(testLinearLayerInitDefaultWeightsWithinPyTorchBound);
     RUN_TEST(testLinearLayerInitXavierUniformOverrideUsesGlorotBound);
-    RUN_TEST(testLinearLegacyRejectsDivergentBackwardQs);
     RUN_TEST(testLinearBackwardWithoutBiasDoesNotCrash);
     return UNITY_END();
 }

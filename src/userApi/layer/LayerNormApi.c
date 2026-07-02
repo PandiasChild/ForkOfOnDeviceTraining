@@ -101,12 +101,12 @@ static void validateLayerQuantForLayerNorm(layerQuant_t *lq) {
         PRINT_ERROR("layerNormLayerInit: lq pointer is NULL");
         exit(1);
     }
-    if (lq->forwardMath == NULL) {
-        PRINT_ERROR("layerNormLayerInit: layerQuant.forwardMath must be set");
+    if (lq->outputQ == NULL) {
+        PRINT_ERROR("layerNormLayerInit: layerQuant.outputQ must be set");
         exit(1);
     }
-    if (lq->backwardMath == NULL) {
-        PRINT_ERROR("layerNormLayerInit: layerQuant.backwardMath must be set");
+    if (lq->propLossQ == NULL) {
+        PRINT_ERROR("layerNormLayerInit: layerQuant.propLossQ must be set");
         exit(1);
     }
     if (lq->weightStorage == NULL) {
@@ -126,9 +126,13 @@ static void validateLayerQuantForLayerNorm(layerQuant_t *lq) {
         exit(1);
     }
     /* The kernels read gamma/beta in the forward dtype: a FLOAT32 kernel over
-     * SYM mantissas (or vice versa) is silent garbage. Fail at construction. */
-    if (lq->weightStorage->type != lq->forwardMath->type ||
-        lq->biasStorage->type != lq->forwardMath->type) {
+     * SYM mantissas (or vice versa) is silent garbage. Fail at construction.
+     * lq->forwardMath is now the declared arithmetic directly (by value); the
+     * storage dtype is bridged through the same derivation the runtime uses
+     * so a storage-only dtype (ASYM/SYM/BOOL/INT32) compares against its
+     * ARITH_FLOAT32 bridge, not its raw qtype_t. */
+    if (arithmeticFromQuantization(lq->weightStorage).type != lq->forwardMath.type ||
+        arithmeticFromQuantization(lq->biasStorage).type != lq->forwardMath.type) {
         PRINT_ERROR("layerNormLayerInit: gamma/beta storage type must match forwardMath");
         exit(1);
     }
@@ -136,16 +140,8 @@ static void validateLayerQuantForLayerNorm(layerQuant_t *lq) {
      * mantissas and reads gamma mantissas; with a FLOAT32 forward those
      * buffers hold float bits — silent garbage. The REVERSE (SYM forwardMath +
      * FLOAT32 backwardMath) stays constructible: it is the inference-only
-     * profile, and the runtime backward guard rejects training it. Expressed
-     * against the derived arithmetic_t (spec D5): storage-only quantization_t
-     * dtypes bridge through ARITH_FLOAT32, so this now covers every dtype
-     * lq->backwardMath/forwardMath could carry, not just the FLOAT32/SYM_INT32
-     * pair — the old raw "backwardMath must be FLOAT32 or SYM_INT32" check is
-     * vacuous by construction (arithmeticFromQuantization always yields one of
-     * the two arithmeticType_t values) and is dropped. */
-    arithmetic_t derivedForwardMath = arithmeticFromQuantization(lq->forwardMath);
-    arithmetic_t derivedPropLossMath = arithmeticFromQuantization(lq->backwardMath);
-    if (derivedPropLossMath.type == ARITH_SYM_INT32 && derivedForwardMath.type != ARITH_SYM_INT32) {
+     * profile, and the runtime backward guard rejects training it. */
+    if (lq->propLossMath.type == ARITH_SYM_INT32 && lq->forwardMath.type != ARITH_SYM_INT32) {
         PRINT_ERROR("layerNormLayerInit: SYM_INT32 backwardMath requires SYM_INT32 forwardMath");
         exit(1);
     }
@@ -171,10 +167,15 @@ static layer_t *layerNormLayerInitCommon(layerNormInit_t *init, layerQuant_t *lq
     layerCfg->layerNorm = cfg;
     layer->config = layerCfg;
 
+    /* Grad storage knob (#261): NULL falls back to lq->propLossQ (bit-identical
+     * to the pre-split lq->backwardMath source in every in-tree profile). */
+    quantization_t *gammaGradQ =
+        lq->weightGradStorage != NULL ? lq->weightGradStorage : lq->propLossQ;
+    quantization_t *betaGradQ = lq->biasGradStorage != NULL ? lq->biasGradStorage : lq->propLossQ;
     parameter_t *gamma = allocateLayerNormGamma(init->normalizedShape, init->numNormDims,
-                                                lq->weightStorage, lq->backwardMath);
-    parameter_t *beta = allocateLayerNormBeta(init->normalizedShape, init->numNormDims,
-                                              lq->biasStorage, lq->backwardMath);
+                                                lq->weightStorage, gammaGradQ);
+    parameter_t *beta =
+        allocateLayerNormBeta(init->normalizedShape, init->numNormDims, lq->biasStorage, betaGradQ);
 
     /* Factory-owned copy of normalizedShape (caller may free its own array). */
     size_t *normShapeCopy = reserveMemory(init->numNormDims * sizeof(size_t));
@@ -194,13 +195,13 @@ layer_t *layerNormLayerInit(layerNormInit_t *init, layerQuant_t *lq) {
     layer_t *layer = layerNormLayerInitCommon(init, lq, &cfg);
 
     /* Borrowing: store the storage pointers verbatim; the arithmetic slots are
-     * by-value derivations of lq's declared math. The caller owns
-     * forwardMath/backwardMath and frees them; freeLayerNormLayer leaves them
+     * plain by-value copies of lq's declared math. The caller owns
+     * outputQ/propLossQ and frees them; freeLayerNormLayer leaves them
      * untouched (ownsQuantizations=false). */
-    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
-    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
-    cfg->outputQ = lq->forwardMath;
-    cfg->propLossQ = lq->backwardMath;
+    cfg->forwardMath = lq->forwardMath;
+    cfg->propLossMath = lq->propLossMath;
+    cfg->outputQ = lq->outputQ;
+    cfg->propLossQ = lq->propLossQ;
     cfg->ownsQuantizations = false;
 
     return layer;
@@ -211,12 +212,12 @@ layer_t *layerNormLayerInitOwning(layerNormInit_t *init, layerQuant_t *lq) {
     layer_t *layer = layerNormLayerInitCommon(init, lq, &cfg);
 
     /* Owning: deep-copy each storage quantization so the caller can drop its
-     * forwardMath/backwardMath pointers immediately. freeLayerNormLayer tears
+     * outputQ/propLossQ pointers immediately. freeLayerNormLayer tears
      * the copies down (ownsQuantizations=true). Mirrors linearLayerInitOwning. */
-    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
-    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
-    cfg->outputQ = deepCopyQuantization(lq->forwardMath);
-    cfg->propLossQ = deepCopyQuantization(lq->backwardMath);
+    cfg->forwardMath = lq->forwardMath;
+    cfg->propLossMath = lq->propLossMath;
+    cfg->outputQ = deepCopyQuantization(lq->outputQ);
+    cfg->propLossQ = deepCopyQuantization(lq->propLossQ);
     cfg->ownsQuantizations = true;
 
     return layer;

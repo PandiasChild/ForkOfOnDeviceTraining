@@ -3,29 +3,25 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "ArithmeticType.h"
 #include "Common.h"
-#include "Conv1d.h"
-#include "Conv1dTransposed.h"
 #include "Layer.h"
-#include "LayerNorm.h"
-#include "Linear.h"
+#include "LayerConfigAccess.h"
 #include "ModelValidationApi.h"
 
-/* Returns the forwardQ of accumulator-range producers (layers whose SYM
- * forward emits raw matmul/post-affine mantissas beyond the int16 norm),
- * NULL for every other layer type. */
-static quantization_t *producerForwardQ(layer_t *layer) {
+/* True for accumulator-range producers (layers whose SYM forward emits raw
+ * matmul/post-affine mantissas beyond the int16 norm) that ALSO declared
+ * ARITH_SYM_INT32 as their forward compute representation; false for every
+ * other layer type or arithmetic. */
+static bool isAccumulatorRangeSymProducer(layer_t *layer) {
     switch (layer->type) {
     case LINEAR:
-        return layer->config->linear->outputQ;
     case LAYERNORM:
-        return layer->config->layerNorm->outputQ;
     case CONV1D:
-        return layer->config->conv1d->outputQ;
     case CONV1D_TRANSPOSED:
-        return layer->config->conv1dTransposed->outputQ;
+        return layerForwardMath(layer).type == ARITH_SYM_INT32;
     default:
-        return NULL;
+        return false;
     }
 }
 
@@ -41,8 +37,7 @@ bool validateModelQuantization(layer_t **model, size_t modelSize) {
             valid = false;
             continue;
         }
-        quantization_t *forwardQ = producerForwardQ(model[i]);
-        if (forwardQ == NULL || forwardQ->type != SYM_INT32) {
+        if (!isAccumulatorRangeSymProducer(model[i])) {
             continue; /* not a SYM accumulator-range producer */
         }
         if (i + 1 == modelSize) {

@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "ArithmeticType.h"
 #include "Deserialize.h"
 #include "Linear.h"
 #include "LinearApi.h"
@@ -14,6 +15,40 @@
 #include "Tensor.h"
 #include "TensorApi.h"
 #include "unity.h"
+
+/*! Borrows already-built weight/bias parameter_t and a single quantization
+ *  for forward + all backward math — replicates the deleted
+ *  linearLayerInitLegacy(weights, bias, q, q, q, q) uniform-Q shape. This
+ *  test needs bias tensors shaped [1, N] (matching the serialized-model
+ *  fixture below byte-for-byte); the factory always allocates bias as
+ *  rank-1 [N], so the layer is wired by hand instead. */
+static layer_t *buildBorrowedLinearLayer(parameter_t *weights, parameter_t *bias,
+                                         quantization_t *q) {
+    linearConfig_t *cfg = reserveMemory(sizeof(linearConfig_t));
+    cfg->weights = weights;
+    cfg->bias = bias;
+    cfg->forwardMath = arithmeticFromQuantization(q);
+    cfg->weightGradMath = arithmeticFromQuantization(q);
+    cfg->biasGradMath = arithmeticFromQuantization(q);
+    cfg->propLossMath = arithmeticFromQuantization(q);
+    cfg->outputQ = q;
+    cfg->propLossQ = q;
+    cfg->ownsQuantizations = false;
+    layerConfig_t *layerCfg = reserveMemory(sizeof(layerConfig_t));
+    layerCfg->linear = cfg;
+    layer_t *layer = reserveMemory(sizeof(layer_t));
+    initLayer(layer, LINEAR, layerCfg);
+    return layer;
+}
+
+/*! Frees only the layer_t + layerConfig_t + linearConfig_t shells — NOT the
+ *  weight/bias parameters (caller-managed here, matches the deleted
+ *  freeLinearLayerLegacy's wrapper-only teardown contract). */
+static void freeLinearLayerShellOnly(layer_t *layer) {
+    freeReservedMemory(layer->config->linear);
+    freeReservedMemory(layer->config);
+    freeReservedMemory(layer);
+}
 
 /* SERIALIZE_TEST_FILE_PATH is injected by the CMake target_compile_definitions
  * in test/unit/serial/CMakeLists.txt as an absolute path so the test does not
@@ -112,9 +147,10 @@ void testSerializeAndDeserializeModel() {
     tensor_t *serialBias0Grad = gradInitFloat(serialBias0Param, NULL);
     parameter_t *serialBias0 = parameterInit(serialBias0Param, serialBias0Grad);
 
-    layer_t *serialLinear0 = linearLayerInitLegacy(serialWeight0, serialBias0, serialLayerQ,
-                                                   serialLayerQ, serialLayerQ, serialLayerQ);
-    layer_t *serialRelu = reluLayerInitLegacy(serialLayerQ, serialLayerQ);
+    layerQuant_t serialLq;
+    layerQuantInitUniform(&serialLq, serialLayerQ);
+    layer_t *serialLinear0 = buildBorrowedLinearLayer(serialWeight0, serialBias0, serialLayerQ);
+    layer_t *serialRelu = reluLayerInit(&serialLq);
 
     float serialWeight1Data[10 * 20];
     for (size_t i = 0; i < 10 * 20; i++) {
@@ -132,9 +168,8 @@ void testSerializeAndDeserializeModel() {
     tensor_t *serialBias1Grad = gradInitFloat(serialBias1Param, NULL);
     parameter_t *serialBias1 = parameterInit(serialBias1Param, serialBias1Grad);
 
-    layer_t *serialLinear1 = linearLayerInitLegacy(serialWeight1, serialBias1, serialLayerQ,
-                                                   serialLayerQ, serialLayerQ, serialLayerQ);
-    layer_t *serialSoftmax = softmaxLayerInitLegacy(serialLayerQ, serialLayerQ);
+    layer_t *serialLinear1 = buildBorrowedLinearLayer(serialWeight1, serialBias1, serialLayerQ);
+    layer_t *serialSoftmax = softmaxLayerInit(&serialLq);
 
     layer_t *serialModel[] = {serialLinear0, serialRelu, serialLinear1, serialSoftmax};
     size_t sizeModel = 4;
@@ -152,10 +187,11 @@ void testSerializeAndDeserializeModel() {
     tensor_t *deserialBias0Grad = gradInitFloat(deserialBias0Param, NULL);
     parameter_t *deserialBias0 = parameterInit(deserialBias0Param, deserialBias0Grad);
 
+    layerQuant_t deserialLq;
+    layerQuantInitUniform(&deserialLq, deserialLayerQ);
     layer_t *deserialLinear0 =
-        linearLayerInitLegacy(deserialWeight0, deserialBias0, deserialLayerQ, deserialLayerQ,
-                              deserialLayerQ, deserialLayerQ);
-    layer_t *deserialRelu = reluLayerInitLegacy(deserialLayerQ, deserialLayerQ);
+        buildBorrowedLinearLayer(deserialWeight0, deserialBias0, deserialLayerQ);
+    layer_t *deserialRelu = reluLayerInit(&deserialLq);
 
     tensor_t *deserialWeight1Param = makeFloatTensor2D(10, 20, NULL, 0);
     tensor_t *deserialWeight1Grad = gradInitFloat(deserialWeight1Param, NULL);
@@ -166,9 +202,8 @@ void testSerializeAndDeserializeModel() {
     parameter_t *deserialBias1 = parameterInit(deserialBias1Param, deserialBias1Grad);
 
     layer_t *deserialLinear1 =
-        linearLayerInitLegacy(deserialWeight1, deserialBias1, deserialLayerQ, deserialLayerQ,
-                              deserialLayerQ, deserialLayerQ);
-    layer_t *deserialSoftmax = softmaxLayerInitLegacy(deserialLayerQ, deserialLayerQ);
+        buildBorrowedLinearLayer(deserialWeight1, deserialBias1, deserialLayerQ);
+    layer_t *deserialSoftmax = softmaxLayerInit(&deserialLq);
 
     layer_t *deserialModel[] = {deserialLinear0, deserialRelu, deserialLinear1, deserialSoftmax};
 
@@ -238,22 +273,22 @@ void testSerializeAndDeserializeModel() {
     /* FREE in reverse-init order. Layer free-functions release only the
      * wrapper; parameters and the shared layerQ are caller-managed (per
      * docs/CONVENTIONS.md "Test memory discipline"). */
-    freeSoftmaxLayerLegacy(deserialSoftmax);
-    freeLinearLayerLegacy(deserialLinear1);
+    freeSoftmaxLayer(deserialSoftmax);
+    freeLinearLayerShellOnly(deserialLinear1);
     freeParameter(deserialBias1);
     freeParameter(deserialWeight1);
-    freeReluLayerLegacy(deserialRelu);
-    freeLinearLayerLegacy(deserialLinear0);
+    freeReluLayer(deserialRelu);
+    freeLinearLayerShellOnly(deserialLinear0);
     freeParameter(deserialBias0);
     freeParameter(deserialWeight0);
     freeQuantization(deserialLayerQ);
 
-    freeSoftmaxLayerLegacy(serialSoftmax);
-    freeLinearLayerLegacy(serialLinear1);
+    freeSoftmaxLayer(serialSoftmax);
+    freeLinearLayerShellOnly(serialLinear1);
     freeParameter(serialBias1);
     freeParameter(serialWeight1);
-    freeReluLayerLegacy(serialRelu);
-    freeLinearLayerLegacy(serialLinear0);
+    freeReluLayer(serialRelu);
+    freeLinearLayerShellOnly(serialLinear0);
     freeParameter(serialBias0);
     freeParameter(serialWeight0);
     freeQuantization(serialLayerQ);

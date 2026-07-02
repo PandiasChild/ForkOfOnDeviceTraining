@@ -4,25 +4,6 @@
 #include "Kernel.h"
 #include "Layer.h"
 
-/* Legacy (pre-2026-05-15 factory API) — retained during PR 1/2 coexistence window.
- * New code should use the conv1dInit_t-based factories declared in PR 2. */
-
-/*! Legacy Conv1d factory.
- *
- * @param weights Weights with gradients
- * @param bias Optional bias parameter with gradients
- * @param kernel Kernel to be used for convolution
- * @param forwardQ Quantization for forward pass
- * @param weightGradQ Quantization for weight gradient calculation
- * @param biasGradQ Quantization for bias gradient calculation
- * @param propLossQ Quantization for prop loss calculation
- *
- * @returns Pointer to initialized layer_t
- */
-layer_t *conv1dLayerInitLegacy(parameter_t *weights, parameter_t *bias, kernel_t *kernel,
-                               quantization_t *forwardQ, quantization_t *weightGradQ,
-                               quantization_t *biasGradQ, quantization_t *propLossQ);
-
 #include "LayerCommon.h"
 #include "LayerQuant.h"
 

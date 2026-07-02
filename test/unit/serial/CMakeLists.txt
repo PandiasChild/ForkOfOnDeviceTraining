@@ -12,6 +12,8 @@ add_elastic_ai_unit_test(
         Layer
         Linear
         LinearApi
+        LayerQuant
+        ArithmeticType
         Relu
         ReluApi
         Softmax

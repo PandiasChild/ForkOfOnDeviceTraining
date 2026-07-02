@@ -2,10 +2,13 @@
 
 #include <stddef.h>
 
+#include "ArithmeticType.h"
 #include "CalculateGradsSequential.h"
 #include "DataLoaderApi.h"
 #include "Dataset.h"
 #include "InferenceApi.h"
+#include "LayerQuant.h"
+#include "Linear.h"
 #include "LinearApi.h"
 #include "LossFunction.h"
 #include "QuantizationApi.h"
@@ -22,12 +25,48 @@
 void setUp() {}
 void tearDown() {}
 
+/*! Borrows already-built weight/bias parameter_t and a single quantization
+ *  for forward + all backward math — replicates the deleted
+ *  linearLayerInitLegacy(weights, bias, q, q, q, q) uniform-Q shape. These
+ *  tests need exact hand-seeded weight values (regression fixtures), which
+ *  the factory can't express (it always allocates + randomly initializes
+ *  its own weights), so the layer is wired by hand instead. */
+static layer_t *buildBorrowedLinearLayer(parameter_t *weights, parameter_t *bias,
+                                         quantization_t *q) {
+    linearConfig_t *cfg = reserveMemory(sizeof(linearConfig_t));
+    cfg->weights = weights;
+    cfg->bias = bias;
+    cfg->forwardMath = arithmeticFromQuantization(q);
+    cfg->weightGradMath = arithmeticFromQuantization(q);
+    cfg->biasGradMath = arithmeticFromQuantization(q);
+    cfg->propLossMath = arithmeticFromQuantization(q);
+    cfg->outputQ = q;
+    cfg->propLossQ = q;
+    cfg->ownsQuantizations = false;
+    layerConfig_t *layerCfg = reserveMemory(sizeof(layerConfig_t));
+    layerCfg->linear = cfg;
+    layer_t *layer = reserveMemory(sizeof(layer_t));
+    initLayer(layer, LINEAR, layerCfg);
+    return layer;
+}
+
+/*! Frees only the layer_t + layerConfig_t + linearConfig_t shells — NOT the
+ *  weight/bias parameters. Needed after freeOptimSgdM, which already frees
+ *  every parameter it registered (freeLinearLayer would double-free them). */
+static void freeLinearLayerShellOnly(layer_t *layer) {
+    freeReservedMemory(layer->config->linear);
+    freeReservedMemory(layer->config);
+    freeReservedMemory(layer);
+}
+
 /*! Integration test: multi-layer model (Linear→ReLU→Linear→Softmax) with CrossEntropy.
  *  Reproduces the MnistExperiment structure at small scale (3→4→2).
  *  Uses initDistribution to init weights/biases with ZEROS — exposes the += vs *= bug.
  */
 void testMultiLayerBackward_WithCrossEntropy_DoesNotCrash() {
     quantization_t *q = quantizationInitFloat();
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, q);
     distribution_t zeros = {.type = ZEROS};
 
     /* Layer 0 weights w0 (4x3, ZEROS). */
@@ -56,8 +95,8 @@ void testMultiLayerBackward_WithCrossEntropy_DoesNotCrash() {
     tensor_t *b0Grad = gradInitFloat(b0Param, NULL);
     parameter_t *b0 = parameterInit(b0Param, b0Grad);
 
-    layer_t *linear0 = linearLayerInitLegacy(w0, b0, q, q, q, q);
-    layer_t *relu = reluLayerInitLegacy(q, q);
+    layer_t *linear0 = buildBorrowedLinearLayer(w0, b0, q);
+    layer_t *relu = reluLayerInit(&lq);
 
     /* Layer 1 weights w1 (2x4, ZEROS). */
     size_t *w1Dims = reserveMemory(2 * sizeof(size_t));
@@ -85,8 +124,8 @@ void testMultiLayerBackward_WithCrossEntropy_DoesNotCrash() {
     tensor_t *b1Grad = gradInitFloat(b1Param, NULL);
     parameter_t *b1 = parameterInit(b1Param, b1Grad);
 
-    layer_t *linear1 = linearLayerInitLegacy(w1, b1, q, q, q, q);
-    layer_t *softmax = softmaxLayerInitLegacy(q, q);
+    layer_t *linear1 = buildBorrowedLinearLayer(w1, b1, q);
+    layer_t *softmax = softmaxLayerInit(&lq);
 
     layer_t *model[] = {linear0, relu, linear1, softmax};
     size_t sizeModel = 4;
@@ -126,12 +165,12 @@ void testMultiLayerBackward_WithCrossEntropy_DoesNotCrash() {
     freeTrainingStats(stats);
     freeTensor(label);
     freeTensor(input);
-    freeSoftmaxLayerLegacy(softmax);
-    freeLinearLayerLegacy(linear1);
+    freeSoftmaxLayer(softmax);
+    freeLinearLayerShellOnly(linear1);
     freeParameter(b1);
     freeParameter(w1);
-    freeReluLayerLegacy(relu);
-    freeLinearLayerLegacy(linear0);
+    freeReluLayer(relu);
+    freeLinearLayerShellOnly(linear0);
     freeParameter(b0);
     freeParameter(w0);
     freeQuantization(q);
@@ -146,6 +185,8 @@ void testMultiLayerBackward_WithCrossEntropy_DoesNotCrash() {
  */
 void testMultiLayerBackward_WithManualInit_DoesNotCrash() {
     quantization_t *q = quantizationInitFloat();
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, q);
 
     /* Layer 0 weights w0 (4x3, manual values). */
     size_t *w0Dims = reserveMemory(2 * sizeof(size_t));
@@ -175,8 +216,8 @@ void testMultiLayerBackward_WithManualInit_DoesNotCrash() {
     tensor_t *b0Grad = gradInitFloat(b0Param, NULL);
     parameter_t *b0 = parameterInit(b0Param, b0Grad);
 
-    layer_t *linear0 = linearLayerInitLegacy(w0, b0, q, q, q, q);
-    layer_t *relu = reluLayerInitLegacy(q, q);
+    layer_t *linear0 = buildBorrowedLinearLayer(w0, b0, q);
+    layer_t *relu = reluLayerInit(&lq);
 
     /* Layer 1 weights w1 (2x4, manual). */
     size_t *w1Dims = reserveMemory(2 * sizeof(size_t));
@@ -204,8 +245,8 @@ void testMultiLayerBackward_WithManualInit_DoesNotCrash() {
     tensor_t *b1Grad = gradInitFloat(b1Param, NULL);
     parameter_t *b1 = parameterInit(b1Param, b1Grad);
 
-    layer_t *linear1 = linearLayerInitLegacy(w1, b1, q, q, q, q);
-    layer_t *softmax = softmaxLayerInitLegacy(q, q);
+    layer_t *linear1 = buildBorrowedLinearLayer(w1, b1, q);
+    layer_t *softmax = softmaxLayerInit(&lq);
 
     layer_t *model[] = {linear0, relu, linear1, softmax};
     size_t sizeModel = 4;
@@ -257,12 +298,12 @@ void testMultiLayerBackward_WithManualInit_DoesNotCrash() {
     freeTrainingStats(stats);
     freeTensor(label);
     freeTensor(input);
-    freeSoftmaxLayerLegacy(softmax);
-    freeLinearLayerLegacy(linear1);
+    freeSoftmaxLayer(softmax);
+    freeLinearLayerShellOnly(linear1);
     freeParameter(b1);
     freeParameter(w1);
-    freeReluLayerLegacy(relu);
-    freeLinearLayerLegacy(linear0);
+    freeReluLayer(relu);
+    freeLinearLayerShellOnly(linear0);
     freeParameter(b0);
     freeParameter(w0);
     freeQuantization(q);
@@ -276,6 +317,8 @@ void testMultiLayerBackward_WithManualInit_DoesNotCrash() {
 /*! Integration test: run multiple training steps to verify grad accumulation is stable. */
 void testMultiLayerTraining_MultipleSteps_GradsAccumulate() {
     quantization_t *q = quantizationInitFloat();
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, q);
 
     /* Layer 0 weights w0 (4x3). */
     size_t *w0Dims = reserveMemory(2 * sizeof(size_t));
@@ -304,8 +347,8 @@ void testMultiLayerTraining_MultipleSteps_GradsAccumulate() {
     tensor_t *b0Grad = gradInitFloat(b0Param, NULL);
     parameter_t *b0 = parameterInit(b0Param, b0Grad);
 
-    layer_t *linear0 = linearLayerInitLegacy(w0, b0, q, q, q, q);
-    layer_t *relu = reluLayerInitLegacy(q, q);
+    layer_t *linear0 = buildBorrowedLinearLayer(w0, b0, q);
+    layer_t *relu = reluLayerInit(&lq);
 
     /* Layer 1 weights w1 (2x4). */
     size_t *w1Dims = reserveMemory(2 * sizeof(size_t));
@@ -333,8 +376,8 @@ void testMultiLayerTraining_MultipleSteps_GradsAccumulate() {
     tensor_t *b1Grad = gradInitFloat(b1Param, NULL);
     parameter_t *b1 = parameterInit(b1Param, b1Grad);
 
-    layer_t *linear1 = linearLayerInitLegacy(w1, b1, q, q, q, q);
-    layer_t *softmax = softmaxLayerInitLegacy(q, q);
+    layer_t *linear1 = buildBorrowedLinearLayer(w1, b1, q);
+    layer_t *softmax = softmaxLayerInit(&lq);
 
     layer_t *model[] = {linear0, relu, linear1, softmax};
     size_t sizeModel = 4;
@@ -389,10 +432,10 @@ void testMultiLayerTraining_MultipleSteps_GradsAccumulate() {
     freeTensor(label);
     freeTensor(input);
     freeOptimSgdM(sgd);
-    freeSoftmaxLayerLegacy(softmax);
-    freeLinearLayerLegacy(linear1);
-    freeReluLayerLegacy(relu);
-    freeLinearLayerLegacy(linear0);
+    freeSoftmaxLayer(softmax);
+    freeLinearLayerShellOnly(linear1);
+    freeReluLayer(relu);
+    freeLinearLayerShellOnly(linear0);
     freeQuantization(q);
 
     /* ASSERT on captured. */

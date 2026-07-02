@@ -15,12 +15,12 @@ static void validateLayerQuantForQuantLayer(layerQuant_t *lq) {
         PRINT_ERROR("quantLayerInit: lq pointer is NULL");
         exit(1);
     }
-    if (lq->forwardMath == NULL) {
-        PRINT_ERROR("quantLayerInit: layerQuant.forwardMath must be set");
+    if (lq->outputQ == NULL) {
+        PRINT_ERROR("quantLayerInit: layerQuant.outputQ must be set");
         exit(1);
     }
-    if (lq->backwardMath == NULL) {
-        PRINT_ERROR("quantLayerInit: layerQuant.backwardMath must be set");
+    if (lq->propLossQ == NULL) {
+        PRINT_ERROR("quantLayerInit: layerQuant.propLossQ must be set");
         exit(1);
     }
 }
@@ -40,11 +40,11 @@ layer_t *quantLayerInit(layerQuant_t *lq) {
     layer_t *layer = quantLayerInitCommon();
     quantizationConfig_t *cfg = layer->config->quantization;
 
-    /* Borrowing: store the two math quant pointers verbatim. The caller owns
-     * forwardMath/backwardMath and frees them; freeQuantLayer leaves them
+    /* Borrowing: store the two storage quant pointers verbatim. The caller owns
+     * outputQ/propLossQ and frees them; freeQuantLayer leaves them
      * untouched (ownsQuantizations=false). */
-    cfg->forwardQ = lq->forwardMath;
-    cfg->backwardQ = lq->backwardMath;
+    cfg->outputQ = lq->outputQ;
+    cfg->propLossQ = lq->propLossQ;
     cfg->ownsQuantizations = false;
     return layer;
 }
@@ -54,12 +54,12 @@ layer_t *quantLayerInitOwning(layerQuant_t *lq) {
     layer_t *layer = quantLayerInitCommon();
     quantizationConfig_t *cfg = layer->config->quantization;
 
-    /* Owning: deep-copy each math quantization so the caller can drop its
+    /* Owning: deep-copy each storage quantization so the caller can drop its
      * pointers immediately. Always two separate copies, even if both lq slots
      * point at the same instance — keeps freeQuantLayer simple. Mirrors
      * linearLayerInitOwning / layerNormLayerInitOwning. */
-    cfg->forwardQ = deepCopyQuantization(lq->forwardMath);
-    cfg->backwardQ = deepCopyQuantization(lq->backwardMath);
+    cfg->outputQ = deepCopyQuantization(lq->outputQ);
+    cfg->propLossQ = deepCopyQuantization(lq->propLossQ);
     cfg->ownsQuantizations = true;
     return layer;
 }
@@ -71,16 +71,16 @@ void freeQuantLayer(layer_t *quantLayer) {
     quantizationConfig_t *cfg = quantLayer->config->quantization;
 
     /* Owning-variant only — tear down the two math quantization_t (qConfig +
-     * struct). Dedup guard exactly like freeLayerNormLayer: free backwardQ only
-     * if it is a distinct allocation from forwardQ. */
+     * struct). Dedup guard exactly like freeLayerNormLayer: free propLossQ only
+     * if it is a distinct allocation from outputQ. */
     if (cfg->ownsQuantizations) {
-        if (cfg->forwardQ != NULL) {
-            freeReservedMemory(cfg->forwardQ->qConfig);
-            freeReservedMemory(cfg->forwardQ);
+        if (cfg->outputQ != NULL) {
+            freeReservedMemory(cfg->outputQ->qConfig);
+            freeReservedMemory(cfg->outputQ);
         }
-        if (cfg->backwardQ != NULL && cfg->backwardQ != cfg->forwardQ) {
-            freeReservedMemory(cfg->backwardQ->qConfig);
-            freeReservedMemory(cfg->backwardQ);
+        if (cfg->propLossQ != NULL && cfg->propLossQ != cfg->outputQ) {
+            freeReservedMemory(cfg->propLossQ->qConfig);
+            freeReservedMemory(cfg->propLossQ);
         }
     }
 

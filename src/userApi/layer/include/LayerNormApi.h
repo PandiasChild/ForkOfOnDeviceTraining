@@ -14,16 +14,17 @@ typedef struct layerNormInit {
     /* affine is ALWAYS ON for v1 (gamma + beta present). */
 } layerNormInit_t;
 
-/*! Borrowing factory — stores lq->forwardMath / lq->backwardMath verbatim
+/*! Borrowing factory — stores lq->outputQ / lq->propLossQ verbatim
  *  into the config (ownsQuantizations=false; caller retains ownership of the
- *  math quantizations). Allocates gamma (init 1) and beta (init 0) parameter_t
+ *  storage quantizations). Allocates gamma (init 1) and beta (init 0) parameter_t
  *  (storage dtype = lq->weightStorage / lq->biasStorage) and their grads via
- *  gradInit(param, lq->backwardMath, NULL). Copies normalizedShape into
- *  factory-owned memory. */
+ *  gradInit(param, lq->weightGradStorage ?: lq->propLossQ, NULL) (resp.
+ *  biasGradStorage for beta). Copies normalizedShape into factory-owned
+ *  memory. */
 layer_t *layerNormLayerInit(layerNormInit_t *init, layerQuant_t *lq);
 
-/*! Owning factory — deep-copies lq->forwardMath / lq->backwardMath into the
- *  config (ownsQuantizations=true; the caller may drop its forwardMath/backwardMath
+/*! Owning factory — deep-copies lq->outputQ / lq->propLossQ into the
+ *  config (ownsQuantizations=true; the caller may drop its outputQ/propLossQ
  *  pointers immediately). Identical gamma/beta allocation + normalizedShape copy
  *  as the Borrowing variant. Mirrors linearLayerInitOwning. */
 layer_t *layerNormLayerInitOwning(layerNormInit_t *init, layerQuant_t *lq);

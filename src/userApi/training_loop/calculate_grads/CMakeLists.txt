@@ -14,6 +14,7 @@ target_link_libraries(CalculateGradsSequential PRIVATE
         AdaptiveAvgPool1d
         LayerNorm
         QuantizationLayer
+        LayerConfigAccess
         Optimizer
         LossFunction
         InferenceApi

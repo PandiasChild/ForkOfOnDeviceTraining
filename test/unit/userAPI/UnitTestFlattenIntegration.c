@@ -6,6 +6,7 @@
 #include "CalculateGradsSequential.h"
 #include "FlattenApi.h"
 #include "Layer.h"
+#include "LayerQuant.h"
 #include "LinearApi.h"
 #include "LossFunction.h"
 #include "QuantizationApi.h"
@@ -19,39 +20,17 @@
 // If that case is missing, initLayerOutputs hits `default: exit(1)`.
 void testCalculateGradsSequential_WithFlattenFirst_DoesNotCrash(void) {
     quantization_t *q = quantizationInitFloat();
-
-    /* Linear weights w0 (2x6, XAVIER_UNIFORM). */
-    size_t *w0Dims = reserveMemory(2 * sizeof(size_t));
-    w0Dims[0] = 2;
-    w0Dims[1] = 6;
-    size_t *w0Order = reserveMemory(2 * sizeof(size_t));
-    setOrderOfDimsForNewTensor(2, w0Order);
-    shape_t *w0Shape = reserveMemory(sizeof(shape_t));
-    setShape(w0Shape, w0Dims, 2, w0Order);
-    tensor_t *w0Param = initTensor(w0Shape, quantizationInitFloat(), NULL);
-    distribution_t xavier = {.type = XAVIER_UNIFORM,
-                             .params.xavier = {.gain = 1.0f, .fanIn = 6, .fanOut = 2}};
-    initDistribution(w0Param, &xavier);
-    tensor_t *w0Grad = gradInitFloat(w0Param, NULL);
-    parameter_t *w0 = parameterInit(w0Param, w0Grad);
-
-    /* Linear bias b0 (1x2, ZEROS). */
-    size_t *b0Dims = reserveMemory(2 * sizeof(size_t));
-    b0Dims[0] = 1;
-    b0Dims[1] = 2;
-    size_t *b0Order = reserveMemory(2 * sizeof(size_t));
-    setOrderOfDimsForNewTensor(2, b0Order);
-    shape_t *b0Shape = reserveMemory(sizeof(shape_t));
-    setShape(b0Shape, b0Dims, 2, b0Order);
-    tensor_t *b0Param = initTensor(b0Shape, quantizationInitFloat(), NULL);
-    distribution_t zeros = {.type = ZEROS};
-    initDistribution(b0Param, &zeros);
-    tensor_t *b0Grad = gradInitFloat(b0Param, NULL);
-    parameter_t *b0 = parameterInit(b0Param, b0Grad);
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, q);
 
     layer_t *flatten = flattenLayerInit();
-    layer_t *linear = linearLayerInitLegacy(w0, b0, q, q, q, q);
-    layer_t *softmax = softmaxLayerInitLegacy(q, q);
+    layer_t *linear = linearLayerInit(
+        &(linearInit_t){.inFeatures = 6,
+                        .outFeatures = 2,
+                        .bias = BIAS_TRUE,
+                        .weightInit = {.scheme = INIT_XAVIER_UNIFORM, .gain = 1.0f}},
+        &lq);
+    layer_t *softmax = softmaxLayerInit(&lq);
     layer_t *model[3] = {flatten, linear, softmax};
 
     /* Input [1, 2, 3] = 6 elements. */
@@ -93,11 +72,9 @@ void testCalculateGradsSequential_WithFlattenFirst_DoesNotCrash(void) {
     freeTrainingStats(stats);
     freeTensor(label);
     freeTensor(input);
-    freeSoftmaxLayerLegacy(softmax);
-    freeLinearLayerLegacy(linear);
+    freeSoftmaxLayer(softmax);
+    freeLinearLayer(linear);
     freeFlattenLayer(flatten);
-    freeParameter(b0);
-    freeParameter(w0);
     freeQuantization(q);
 
     /* ASSERT. */

@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include "ArithmeticType.h"
 #include "CalculateGradsSequential.h"
 #include "Conv1dTransposed.h"
 #include "InferenceApi.h"
@@ -96,8 +97,9 @@ static parameter_t *buildConvTSymParam(size_t numDims, const size_t *dimsIn, con
 
 /* Trainable Linear with manually built parameters: the new-factory KAIMING
  * init requires FLOAT32 weight storage (LinearApi.c guard), so SYM Linear
- * layers use the Legacy factory + explicit parameter_t (UnitTestLinear SYM
- * precedent), extended with grad tensors for sgdMCreateOptim / sgdStepM. */
+ * layers wire a linearConfig_t by hand around explicit parameter_t
+ * (UnitTestLinear SYM precedent), extended with grad tensors for
+ * sgdMCreateOptim / sgdStepM. */
 static layer_t *buildTrainableLinear(size_t inF, size_t outF, const float *w, const float *b,
                                      quantization_t *mathQ, bool sym) {
     size_t *wDims = reserveMemory(2 * sizeof(size_t));
@@ -123,15 +125,29 @@ static layer_t *buildTrainableLinear(size_t inF, size_t outF, const float *w, co
     tensorFillFromFloatBuffer(bParam, (float *)b, outF);
     parameter_t *bias = parameterInit(bParam, gradInit(bParam, mathQ, NULL));
 
-    return linearLayerInitLegacy(weights, bias, mathQ, mathQ, mathQ, mathQ);
+    linearConfig_t *cfg = reserveMemory(sizeof(linearConfig_t));
+    cfg->weights = weights;
+    cfg->bias = bias;
+    cfg->forwardMath = arithmeticFromQuantization(mathQ);
+    cfg->weightGradMath = arithmeticFromQuantization(mathQ);
+    cfg->biasGradMath = arithmeticFromQuantization(mathQ);
+    cfg->propLossMath = arithmeticFromQuantization(mathQ);
+    cfg->outputQ = mathQ;
+    cfg->propLossQ = mathQ;
+    cfg->ownsQuantizations = false;
+    layerConfig_t *lc = reserveMemory(sizeof(layerConfig_t));
+    lc->linear = cfg;
+    layer_t *layer = reserveMemory(sizeof(layer_t));
+    initLayer(layer, LINEAR, lc);
+    return layer;
 }
 
 /* Manual Quant-layer builder: documents the quantizationConfig_t contract
  * without depending on the factory (Task D.7). Borrowed quantizations. */
 static layer_t *buildQuantLayer(quantization_t *forwardQ, quantization_t *backwardQ) {
     quantizationConfig_t *cfg = reserveMemory(sizeof(quantizationConfig_t));
-    cfg->forwardQ = forwardQ;
-    cfg->backwardQ = backwardQ;
+    cfg->outputQ = forwardQ;
+    cfg->propLossQ = backwardQ;
     cfg->ownsQuantizations = false;
     layerConfig_t *lc = reserveMemory(sizeof(layerConfig_t));
     lc->quantization = cfg;
@@ -306,8 +322,8 @@ void testFullSymChainTrainingStepMatchesFloatTwin(void) {
 
     /* ---- SYM model (under test) ---- */
     quantization_t *symQ = quantizationInitSymInt32(HALF_AWAY);
-    layerQuant_t lqSym = {
-        .forwardMath = symQ, .backwardMath = symQ, .weightStorage = symQ, .biasStorage = symQ};
+    layerQuant_t lqSym;
+    layerQuantInitUniform(&lqSym, symQ);
     layer_t *lin0S = buildTrainableLinear(4, 3, W0_VALS, B0_VALS, symQ, true);
     layer_t *quant1 = quantLayerInit(&lqSym);
     layer_t *lnS = layerNormLayerInit(
@@ -477,8 +493,8 @@ void testConv1dTransposedSymChainTrains(void) {
 
 void testValidatorRejectsChainWithoutQuantLayers(void) {
     quantization_t *symQ = quantizationInitSymInt32(HALF_AWAY);
-    layerQuant_t lqSym = {
-        .forwardMath = symQ, .backwardMath = symQ, .weightStorage = symQ, .biasStorage = symQ};
+    layerQuant_t lqSym;
+    layerQuantInitUniform(&lqSym, symQ);
     size_t normShape[1] = {3};
     layer_t *lin0 = buildTrainableLinear(4, 3, W0_VALS, B0_VALS, symQ, true);
     layer_t *ln = layerNormLayerInit(

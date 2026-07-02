@@ -253,14 +253,14 @@ void testLayerFunctionsVtableHasQuantizationRow(void) {
 void testQuantizationConfigUnionMemberRoundTrip(void) {
     quantization_t *fq = quantizationInitSymInt32(HALF_AWAY);
     quantization_t *bq = quantizationInitSymInt32(HALF_AWAY);
-    quantizationConfig_t cfg = {.forwardQ = fq, .backwardQ = bq, .ownsQuantizations = false};
+    quantizationConfig_t cfg = {.outputQ = fq, .propLossQ = bq, .ownsQuantizations = false};
     layerConfig_t lc = {.quantization = &cfg};
     layer_t layer;
     initLayer(&layer, QUANTIZATION, &lc);
 
     TEST_ASSERT_EQUAL_INT(QUANTIZATION, layer.type);
-    TEST_ASSERT_EQUAL_PTR(fq, layer.config->quantization->forwardQ);
-    TEST_ASSERT_EQUAL_PTR(bq, layer.config->quantization->backwardQ);
+    TEST_ASSERT_EQUAL_PTR(fq, layer.config->quantization->outputQ);
+    TEST_ASSERT_EQUAL_PTR(bq, layer.config->quantization->propLossQ);
 
     freeQuantization(bq);
     freeQuantization(fq);
@@ -269,7 +269,7 @@ void testQuantizationConfigUnionMemberRoundTrip(void) {
 void testQuantLayerInitBorrowingStoresQuantPointersVerbatim(void) {
     quantization_t *fq = quantizationInitSymInt32(HALF_AWAY);
     quantization_t *bq = quantizationInitSymInt32(HALF_AWAY);
-    layerQuant_t lq = {.forwardMath = fq, .backwardMath = bq};
+    layerQuant_t lq = {.outputQ = fq, .propLossQ = bq};
 
     layer_t *layer = quantLayerInit(&lq);
 
@@ -278,8 +278,8 @@ void testQuantLayerInitBorrowingStoresQuantPointersVerbatim(void) {
     quantizationConfig_t *cfg = layer->config->quantization;
     TEST_ASSERT_NOT_NULL(cfg);
     TEST_ASSERT_FALSE(cfg->ownsQuantizations);
-    TEST_ASSERT_EQUAL_PTR(fq, cfg->forwardQ);
-    TEST_ASSERT_EQUAL_PTR(bq, cfg->backwardQ);
+    TEST_ASSERT_EQUAL_PTR(fq, cfg->outputQ);
+    TEST_ASSERT_EQUAL_PTR(bq, cfg->propLossQ);
 
     freeQuantLayer(layer);
     /* Borrowing: caller-owned quantizations survive the layer teardown. */
@@ -290,17 +290,17 @@ void testQuantLayerInitBorrowingStoresQuantPointersVerbatim(void) {
 
 void testQuantLayerInitOwningDeepCopiesQuantizations(void) {
     quantization_t *q = quantizationInitSymInt32(HALF_AWAY);
-    layerQuant_t lq = {.forwardMath = q, .backwardMath = q};
+    layerQuant_t lq = {.outputQ = q, .propLossQ = q};
 
     layer_t *layer = quantLayerInitOwning(&lq);
 
     quantizationConfig_t *cfg = layer->config->quantization;
     TEST_ASSERT_TRUE(cfg->ownsQuantizations);
-    TEST_ASSERT_NOT_EQUAL(q, cfg->forwardQ);
-    TEST_ASSERT_NOT_EQUAL(q, cfg->backwardQ);
-    TEST_ASSERT_NOT_EQUAL(cfg->forwardQ, cfg->backwardQ); /* two separate copies */
-    TEST_ASSERT_EQUAL_INT(SYM_INT32, cfg->forwardQ->type);
-    TEST_ASSERT_EQUAL_INT(SYM_INT32, cfg->backwardQ->type);
+    TEST_ASSERT_NOT_EQUAL(q, cfg->outputQ);
+    TEST_ASSERT_NOT_EQUAL(q, cfg->propLossQ);
+    TEST_ASSERT_NOT_EQUAL(cfg->outputQ, cfg->propLossQ); /* two separate copies */
+    TEST_ASSERT_EQUAL_INT(SYM_INT32, cfg->outputQ->type);
+    TEST_ASSERT_EQUAL_INT(SYM_INT32, cfg->propLossQ->type);
 
     freeQuantLayer(layer);
     freeQuantization(q);
@@ -312,7 +312,7 @@ void testQuantLayerInitOwningFreesAllAllocationsWithoutLeak(void) {
      * precedent). */
     for (int i = 0; i < 5; i++) {
         quantization_t *q = quantizationInitSymInt32(HALF_AWAY);
-        layerQuant_t lq = {.forwardMath = q, .backwardMath = q};
+        layerQuant_t lq = {.outputQ = q, .propLossQ = q};
         layer_t *layer = quantLayerInitOwning(&lq);
         freeQuantLayer(layer);
         freeQuantization(q);
