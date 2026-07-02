@@ -3,11 +3,14 @@
 
 #include <stdbool.h>
 
+#include "ArithmeticType.h"
 #include "Layer.h"
 
 typedef struct softmaxConfig {
-    quantization_t *forwardQ;
-    quantization_t *backwardQ;
+    arithmetic_t forwardMath;
+    arithmetic_t propLossMath;
+    quantization_t *outputQ;
+    quantization_t *propLossQ;
     bool ownsQuantizations;
 } softmaxConfig_t;
 

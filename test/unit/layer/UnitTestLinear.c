@@ -1,6 +1,7 @@
 #include <math.h>
 #include <string.h>
 
+#include "ArithmeticType.h"
 #include "DTypes.h"
 #include "DeathTest.h"
 #include "Layer.h"
@@ -1044,9 +1045,10 @@ void testLinearLayerInitBorrowingBuildsLayerWithCorrectShapeAndStoresQuantPointe
     TEST_ASSERT_NOT_NULL(cfg);
     TEST_ASSERT_FALSE(cfg->ownsQuantizations);
 
-    /* Borrowing variant stores pointers verbatim */
-    TEST_ASSERT_EQUAL_PTR(q, cfg->forwardQ);
-    TEST_ASSERT_EQUAL_PTR(q, cfg->backwardMath);
+    /* Borrowing variant stores the storage pointer verbatim; the arithmetic
+     * slots are by-value derivations of q's type. */
+    TEST_ASSERT_EQUAL_PTR(q, cfg->outputQ);
+    TEST_ASSERT_EQUAL_INT(ARITH_FLOAT32, cfg->weightGradMath.type);
     TEST_ASSERT_EQUAL_PTR(q, cfg->propLossQ);
 
     /* Weights allocated with shape [outFeatures, inFeatures] */
@@ -1161,13 +1163,13 @@ void testLinearLayerInitOwningDeepCopiesQuantizations(void) {
 
     linearConfig_t *cfg = layer->config->linear;
 
-    /* Owning variant: cfg->forwardQ is a fresh allocation, NOT the original q */
-    TEST_ASSERT_NOT_EQUAL(q, cfg->forwardQ);
-    TEST_ASSERT_NOT_EQUAL(q, cfg->backwardMath);
+    /* Owning variant: cfg->outputQ is a fresh allocation, NOT the original q */
+    TEST_ASSERT_NOT_EQUAL(q, cfg->outputQ);
+    TEST_ASSERT_EQUAL_INT(ARITH_FLOAT32, cfg->weightGradMath.type);
     TEST_ASSERT_NOT_EQUAL(q, cfg->propLossQ);
 
     /* But the copy has equal type to the original */
-    TEST_ASSERT_EQUAL_INT(q->type, cfg->forwardQ->type);
+    TEST_ASSERT_EQUAL_INT(q->type, cfg->outputQ->type);
 
     /* ownsQuantizations flag is set */
     TEST_ASSERT_TRUE(cfg->ownsQuantizations);

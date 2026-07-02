@@ -31,9 +31,11 @@ void initConv1dConfigWithWeightsAndBias(conv1dConfig_t *conv1dConfig, kernel_t *
     conv1dConfig->weights = weights;
     conv1dConfig->bias = bias;
     conv1dConfig->groups = groups;
-    conv1dConfig->forwardQ = forwardQ;
-    conv1dConfig->weightGradQ = weightGradQ;
-    conv1dConfig->biasGradQ = biasGradQ;
+    conv1dConfig->forwardMath = arithmeticFromQuantizationOrDefault(forwardQ);
+    conv1dConfig->weightGradMath = arithmeticFromQuantizationOrDefault(weightGradQ);
+    conv1dConfig->biasGradMath = arithmeticFromQuantizationOrDefault(biasGradQ);
+    conv1dConfig->propLossMath = arithmeticFromQuantizationOrDefault(propLossQ);
+    conv1dConfig->outputQ = forwardQ;
     conv1dConfig->propLossQ = propLossQ;
 }
 
@@ -55,11 +57,11 @@ void conv1dForwardSymInt32(layer_t *conv1dLayer, tensor_t *input, tensor_t *outp
 
 void conv1dForward(layer_t *layer, tensor_t *input, tensor_t *output) {
     conv1dConfig_t *cfg = layer->config->conv1d;
-    switch (cfg->forwardQ->type) {
-    case FLOAT32:
+    switch (cfg->forwardMath.type) {
+    case ARITH_FLOAT32:
         conv1dForwardFloat(layer, input, output);
         break;
-    case SYM_INT32:
+    case ARITH_SYM_INT32:
         conv1dForwardSymInt32(layer, input, output);
         break;
     default:
@@ -305,11 +307,11 @@ void conv1dBackward(layer_t *layer, tensor_t *forwardInput, tensor_t *lossGrad,
                     tensor_t *propLoss) {
     conv1dConfig_t *cfg = layer->config->conv1d;
 
-    switch (cfg->weightGradQ->type) {
-    case FLOAT32:
+    switch (cfg->weightGradMath.type) {
+    case ARITH_FLOAT32:
         conv1dCalcWeightGradsFloat32(cfg, forwardInput, lossGrad);
         break;
-    case SYM_INT32:
+    case ARITH_SYM_INT32:
         conv1dCalcWeightGradsSymInt32(cfg, forwardInput, lossGrad);
         break;
     default:
@@ -317,13 +319,13 @@ void conv1dBackward(layer_t *layer, tensor_t *forwardInput, tensor_t *lossGrad,
         exit(1);
     }
 
-    switch (cfg->biasGradQ->type) {
-    case FLOAT32:
+    switch (cfg->biasGradMath.type) {
+    case ARITH_FLOAT32:
         if (cfg->bias) {
             conv1dCalcBiasGradsFloat32(cfg, lossGrad);
         }
         break;
-    case SYM_INT32:
+    case ARITH_SYM_INT32:
         if (cfg->bias) {
             conv1dCalcBiasGradsSymInt32(cfg, lossGrad);
         }
@@ -333,12 +335,12 @@ void conv1dBackward(layer_t *layer, tensor_t *forwardInput, tensor_t *lossGrad,
         exit(1);
     }
 
-    switch (cfg->propLossQ->type) {
-    case FLOAT32:
+    switch (cfg->propLossMath.type) {
+    case ARITH_FLOAT32:
         convTranspose1dKernelFloat32(lossGrad, cfg->weights->param, NULL, cfg->kernel, cfg->groups,
                                      0u, propLoss);
         break;
-    case SYM_INT32:
+    case ARITH_SYM_INT32:
         if (propLoss->quantization->type != SYM_INT32) {
             PRINT_ERROR("Conv1d backward: propLossQ is SYM_INT32 but the propLoss tensor is "
                         "not (#187)");

@@ -4,6 +4,7 @@
 
 #include "MaxPool1d.h"
 
+#include "ArithmeticType.h"
 #include "Common.h"
 #include "Layer.h"
 #include "SlidingWindow1d.h"
@@ -17,7 +18,9 @@ void initMaxPool1dConfig(maxPool1dConfig_t *cfg, kernel_t *kernel, tensor_t *arg
     }
     cfg->kernel = kernel;
     cfg->argmaxIndices = argmaxIndices;
-    cfg->forwardQ = forwardQ;
+    cfg->forwardMath = arithmeticFromQuantizationOrDefault(forwardQ);
+    cfg->propLossMath = arithmeticFromQuantizationOrDefault(propLossQ);
+    cfg->outputQ = forwardQ;
     cfg->propLossQ = propLossQ;
 }
 
@@ -83,8 +86,8 @@ void maxPool1dForwardFloat(layer_t *layer, tensor_t *input, tensor_t *output) {
 
 void maxPool1dForward(layer_t *layer, tensor_t *input, tensor_t *output) {
     maxPool1dConfig_t *cfg = layer->config->maxPool1d;
-    switch (cfg->forwardQ->type) {
-    case FLOAT32:
+    switch (cfg->forwardMath.type) {
+    case ARITH_FLOAT32:
         maxPool1dForwardFloat(layer, input, output);
         break;
     default:
@@ -132,8 +135,8 @@ void maxPool1dBackwardFloat(layer_t *layer, tensor_t *forwardInput, tensor_t *lo
 void maxPool1dBackward(layer_t *layer, tensor_t *forwardInput, tensor_t *lossGrad,
                        tensor_t *propLoss) {
     maxPool1dConfig_t *cfg = layer->config->maxPool1d;
-    switch (cfg->propLossQ->type) {
-    case FLOAT32:
+    switch (cfg->propLossMath.type) {
+    case ARITH_FLOAT32:
         maxPool1dBackwardFloat(layer, forwardInput, lossGrad, propLoss);
         break;
     default:

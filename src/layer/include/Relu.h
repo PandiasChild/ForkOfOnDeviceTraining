@@ -3,13 +3,16 @@
 
 #include <stdbool.h>
 
+#include "ArithmeticType.h"
 #include "Tensor.h"
 
 typedef struct layer layer_t;
 
 typedef struct reluConfig {
-    quantization_t *forwardQ;
-    quantization_t *backwardQ;
+    arithmetic_t forwardMath;
+    arithmetic_t propLossMath;
+    quantization_t *outputQ;
+    quantization_t *propLossQ;
     bool ownsQuantizations;
 } reluConfig_t;
 

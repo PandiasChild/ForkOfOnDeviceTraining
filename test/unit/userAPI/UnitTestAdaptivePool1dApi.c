@@ -2,6 +2,7 @@
 
 #include "AdaptiveAvgPool1d.h"
 #include "AdaptivePool1dApi.h"
+#include "ArithmeticType.h"
 #include "Layer.h"
 #include "LayerQuant.h"
 #include "QuantizationApi.h"
@@ -25,8 +26,10 @@ void testBorrowingBuildsLayer(void) {
     TEST_ASSERT_NOT_NULL(cfg);
     TEST_ASSERT_FALSE(cfg->ownsQuantizations);
     TEST_ASSERT_EQUAL_UINT(8, cfg->outputSize);
-    TEST_ASSERT_EQUAL_PTR(q, cfg->forwardQ);
+    TEST_ASSERT_EQUAL_PTR(q, cfg->outputQ);
     TEST_ASSERT_EQUAL_PTR(q, cfg->propLossQ);
+    TEST_ASSERT_EQUAL_INT(ARITH_FLOAT32, cfg->forwardMath.type);
+    TEST_ASSERT_EQUAL_INT(ARITH_FLOAT32, cfg->propLossMath.type);
 
     freeAdaptiveAvgPool1dLayer(layer);
     freeQuantization(q);
@@ -41,12 +44,13 @@ void testOwningDeepCopiesTwoQuantizations(void) {
         adaptiveAvgPool1dLayerInitOwning(&(adaptiveAvgPool1dInit_t){.outputSize = 4}, &lq);
 
     adaptiveAvgPool1dConfig_t *cfg = layer->config->adaptiveAvgPool1d;
-    TEST_ASSERT_NOT_EQUAL(q, cfg->forwardQ);
+    TEST_ASSERT_NOT_EQUAL(q, cfg->outputQ);
     TEST_ASSERT_NOT_EQUAL(q, cfg->propLossQ);
     /* The two deep copies must be distinct allocations, else freeAdaptive...
        would double-free and the borrowing/owning contract would be broken. */
-    TEST_ASSERT_NOT_EQUAL(cfg->forwardQ, cfg->propLossQ);
-    TEST_ASSERT_EQUAL_INT(q->type, cfg->forwardQ->type);
+    TEST_ASSERT_NOT_EQUAL(cfg->outputQ, cfg->propLossQ);
+    TEST_ASSERT_EQUAL_INT(q->type, cfg->outputQ->type);
+    TEST_ASSERT_EQUAL_INT(ARITH_FLOAT32, cfg->forwardMath.type);
     TEST_ASSERT_TRUE(cfg->ownsQuantizations);
 
     freeAdaptiveAvgPool1dLayer(layer);

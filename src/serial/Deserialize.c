@@ -92,22 +92,18 @@ static void deserializeLayer(layer_t *layer, FILE *f) {
         linearConfig_t *linearConfig = layer->config->linear;
         deserializeParameter(linearConfig->weights, f);
         deserializeParameter(linearConfig->bias, f);
-        deserializeQuantization(linearConfig->forwardQ, f);
-        /* backwardMath read twice: byte-compat with the pre-collapse weightGradQ/biasGradQ
-         * record (spec 2026-07-02 §4) */
-        deserializeQuantization(linearConfig->backwardMath, f);
-        deserializeQuantization(linearConfig->backwardMath, f);
+        deserializeQuantization(linearConfig->outputQ, f);
         deserializeQuantization(linearConfig->propLossQ, f);
         break;
     case RELU:
         reluConfig_t *reluConfig = layer->config->relu;
-        deserializeQuantization(reluConfig->forwardQ, f);
-        deserializeQuantization(reluConfig->backwardQ, f);
+        deserializeQuantization(reluConfig->outputQ, f);
+        deserializeQuantization(reluConfig->propLossQ, f);
         break;
     case SOFTMAX:
         softmaxConfig_t *softmaxConfig = layer->config->softmax;
-        deserializeQuantization(softmaxConfig->forwardQ, f);
-        deserializeQuantization(softmaxConfig->backwardQ, f);
+        deserializeQuantization(softmaxConfig->outputQ, f);
+        deserializeQuantization(softmaxConfig->propLossQ, f);
         break;
     case FLATTEN:
         // Flatten carries no state (no parameters, no quantization).

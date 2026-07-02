@@ -2,6 +2,7 @@
 
 #include <math.h>
 
+#include "ArithmeticType.h"
 #include "Conv1dTransposed.h"
 #include "Conv1dTransposedApi.h"
 #include "Kernel.h"
@@ -57,10 +58,11 @@ void testConv1dTransposedLayerInitBorrowingBuildsLayerWithCorrectShape(void) {
     TEST_ASSERT_NOT_NULL(cfg);
     TEST_ASSERT_FALSE(cfg->ownsQuantizations);
 
-    /* Borrowing variant stores pointers verbatim */
-    TEST_ASSERT_EQUAL_PTR(q, cfg->forwardQ);
-    TEST_ASSERT_EQUAL_PTR(q, cfg->weightGradQ);
-    TEST_ASSERT_EQUAL_PTR(q, cfg->biasGradQ);
+    /* Borrowing variant stores the storage pointer verbatim; the arithmetic
+     * slots are by-value derivations of q's type. */
+    TEST_ASSERT_EQUAL_PTR(q, cfg->outputQ);
+    TEST_ASSERT_EQUAL_INT(ARITH_FLOAT32, cfg->weightGradMath.type);
+    TEST_ASSERT_EQUAL_INT(ARITH_FLOAT32, cfg->biasGradMath.type);
     TEST_ASSERT_EQUAL_PTR(q, cfg->propLossQ);
 
     /* Weight shape: [inChannels, outChannels/groups, kernelSize] per Conv1dTransposed.h:12.
@@ -154,11 +156,11 @@ void testConv1dTransposedLayerInitOwningDeepCopiesQuantizations(void) {
 
     conv1dTransposedConfig_t *cfg = layer->config->conv1dTransposed;
 
-    TEST_ASSERT_NOT_EQUAL(q, cfg->forwardQ);
-    TEST_ASSERT_NOT_EQUAL(q, cfg->weightGradQ);
-    TEST_ASSERT_NOT_EQUAL(q, cfg->biasGradQ);
+    TEST_ASSERT_NOT_EQUAL(q, cfg->outputQ);
+    TEST_ASSERT_EQUAL_INT(ARITH_FLOAT32, cfg->weightGradMath.type);
+    TEST_ASSERT_EQUAL_INT(ARITH_FLOAT32, cfg->biasGradMath.type);
     TEST_ASSERT_NOT_EQUAL(q, cfg->propLossQ);
-    TEST_ASSERT_EQUAL_INT(q->type, cfg->forwardQ->type);
+    TEST_ASSERT_EQUAL_INT(q->type, cfg->outputQ->type);
     TEST_ASSERT_TRUE(cfg->ownsQuantizations);
 
     freeConv1dTransposedLayer(layer);

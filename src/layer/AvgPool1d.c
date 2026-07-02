@@ -2,6 +2,7 @@
 
 #include "AvgPool1d.h"
 
+#include "ArithmeticType.h"
 #include "Common.h"
 #include "Layer.h"
 #include "SlidingWindow1d.h"
@@ -14,7 +15,9 @@ void initAvgPool1dConfig(avgPool1dConfig_t *cfg, kernel_t *kernel, quantization_
         exit(1);
     }
     cfg->kernel = kernel;
-    cfg->forwardQ = forwardQ;
+    cfg->forwardMath = arithmeticFromQuantizationOrDefault(forwardQ);
+    cfg->propLossMath = arithmeticFromQuantizationOrDefault(propLossQ);
+    cfg->outputQ = forwardQ;
     cfg->propLossQ = propLossQ;
 }
 
@@ -59,8 +62,8 @@ void avgPool1dForwardFloat(layer_t *layer, tensor_t *input, tensor_t *output) {
 
 void avgPool1dForward(layer_t *layer, tensor_t *input, tensor_t *output) {
     avgPool1dConfig_t *cfg = layer->config->avgPool1d;
-    switch (cfg->forwardQ->type) {
-    case FLOAT32:
+    switch (cfg->forwardMath.type) {
+    case ARITH_FLOAT32:
         avgPool1dForwardFloat(layer, input, output);
         break;
     default:
@@ -110,8 +113,8 @@ void avgPool1dBackwardFloat(layer_t *layer, tensor_t *forwardInput, tensor_t *lo
 void avgPool1dBackward(layer_t *layer, tensor_t *forwardInput, tensor_t *lossGrad,
                        tensor_t *propLoss) {
     avgPool1dConfig_t *cfg = layer->config->avgPool1d;
-    switch (cfg->propLossQ->type) {
-    case FLOAT32:
+    switch (cfg->propLossMath.type) {
+    case ARITH_FLOAT32:
         avgPool1dBackwardFloat(layer, forwardInput, lossGrad, propLoss);
         break;
     default:

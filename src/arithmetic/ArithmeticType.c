@@ -1,5 +1,7 @@
 #define SOURCE_FILE "ARITHMETIC-TYPE"
 
+#include <stddef.h>
+
 #include "ArithmeticType.h"
 
 arithmetic_t arithmeticFromQuantization(const quantization_t *q) {
@@ -22,4 +24,9 @@ arithmetic_t arithmeticFromQuantization(const quantization_t *q) {
         break;
     }
     return a;
+}
+
+arithmetic_t arithmeticFromQuantizationOrDefault(const quantization_t *q) {
+    return (q == NULL) ? (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY}
+                       : arithmeticFromQuantization(q);
 }

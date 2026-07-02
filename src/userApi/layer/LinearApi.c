@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
+#include "ArithmeticType.h"
 #include "Common.h"
 #include "Layer.h"
 #include "LayerCommon.h"
@@ -26,14 +27,21 @@ layer_t *linearLayerInitLegacy(parameter_t *weights, parameter_t *bias, quantiza
     layerConfig->linear = linearConfig;
 
     if (biasGradsQ != weightGradsQ) {
-        PRINT_ERROR("linearLayerInitLegacy: weightGradsQ and biasGradsQ collapsed into one "
-                    "backwardMath (spec 2026-07-02) - pass the same pointer");
+        PRINT_ERROR("linearLayerInitLegacy: this legacy signature cannot express divergent "
+                    "weight/bias grad configs - pass the same pointer for weightGradsQ and "
+                    "biasGradsQ");
         exit(1);
     }
     linearConfig->weights = weights;
     linearConfig->bias = bias;
-    linearConfig->forwardQ = forwardQ;
-    linearConfig->backwardMath = weightGradsQ;
+    /* All three grad/backward arithmetics derive from the single weightGradsQ/biasGradsQ
+     * source (guaranteed equal by the fail-fast above) — matches today's single
+     * cfg->backwardMath->type dispatch bit-for-bit (propLossQ stays storage-only). */
+    linearConfig->forwardMath = arithmeticFromQuantizationOrDefault(forwardQ);
+    linearConfig->weightGradMath = arithmeticFromQuantizationOrDefault(weightGradsQ);
+    linearConfig->biasGradMath = arithmeticFromQuantizationOrDefault(biasGradsQ);
+    linearConfig->propLossMath = arithmeticFromQuantizationOrDefault(weightGradsQ);
+    linearConfig->outputQ = forwardQ;
     linearConfig->propLossQ = propLossQ;
     linearConfig->ownsQuantizations = false;
 
@@ -54,7 +62,8 @@ layer_t *linearLayerInitNonTrainableLegacy(tensor_t *weights, tensor_t *bias,
 
     linearConfig->weights = parameterInit(weights, NULL);
     linearConfig->bias = parameterInit(bias, NULL);
-    linearConfig->forwardQ = forwardQ;
+    linearConfig->forwardMath = arithmeticFromQuantizationOrDefault(forwardQ);
+    linearConfig->outputQ = forwardQ;
     linearConfig->ownsQuantizations = false;
 
     linearLayer->config = layerConfig;
@@ -187,10 +196,13 @@ layer_t *linearLayerInit(linearInit_t *init, layerQuant_t *lq) {
                                              lq->backwardMath)
                         : NULL;
 
-    /* Borrowing: store quant pointers verbatim, no copy.
-     * Three slots: forwardQ, backwardMath (weight+bias grad arithmetic), propLossQ (dx-wire). */
-    cfg->forwardQ = lq->forwardMath;
-    cfg->backwardMath = lq->backwardMath;
+    /* Borrowing: store the forward-wire/dx-wire storage configs verbatim, no copy.
+     * All three grad/backward arithmetics derive from the single lq->backwardMath source. */
+    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
+    cfg->weightGradMath = arithmeticFromQuantization(lq->backwardMath);
+    cfg->biasGradMath = arithmeticFromQuantization(lq->backwardMath);
+    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
+    cfg->outputQ = lq->forwardMath;
     cfg->propLossQ = lq->backwardMath;
     cfg->ownsQuantizations = false;
 
@@ -221,9 +233,13 @@ layer_t *linearLayerInitOwning(linearInit_t *init, layerQuant_t *lq) {
                                              lq->backwardMath)
                         : NULL;
 
-    /* Owning: deep-copy each math quantization into a fresh allocation. */
-    cfg->forwardQ = deepCopyQuantization(lq->forwardMath);
-    cfg->backwardMath = deepCopyQuantization(lq->backwardMath);
+    /* Owning: same arithmetic as Borrowing; deep-copy the two storage configs
+     * (outputQ, propLossQ) into fresh allocations — 2 allocs, not 3. */
+    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
+    cfg->weightGradMath = arithmeticFromQuantization(lq->backwardMath);
+    cfg->biasGradMath = arithmeticFromQuantization(lq->backwardMath);
+    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
+    cfg->outputQ = deepCopyQuantization(lq->forwardMath);
     cfg->propLossQ = deepCopyQuantization(lq->backwardMath);
     cfg->ownsQuantizations = true;
 
@@ -246,16 +262,11 @@ void freeLinearLayer(layer_t *linearLayer) {
     }
 
     if (cfg->ownsQuantizations) {
-        if (cfg->forwardQ != NULL) {
-            freeReservedMemory(cfg->forwardQ->qConfig);
-            freeReservedMemory(cfg->forwardQ);
+        if (cfg->outputQ != NULL) {
+            freeReservedMemory(cfg->outputQ->qConfig);
+            freeReservedMemory(cfg->outputQ);
         }
-        if (cfg->backwardMath != NULL && cfg->backwardMath != cfg->forwardQ) {
-            freeReservedMemory(cfg->backwardMath->qConfig);
-            freeReservedMemory(cfg->backwardMath);
-        }
-        if (cfg->propLossQ != NULL && cfg->propLossQ != cfg->forwardQ &&
-            cfg->propLossQ != cfg->backwardMath) {
+        if (cfg->propLossQ != NULL && cfg->propLossQ != cfg->outputQ) {
             freeReservedMemory(cfg->propLossQ->qConfig);
             freeReservedMemory(cfg->propLossQ);
         }

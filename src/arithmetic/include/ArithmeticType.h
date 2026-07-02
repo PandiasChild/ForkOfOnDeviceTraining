@@ -21,4 +21,10 @@ typedef struct arithmetic {
  * the dtype carries one, else HALF_AWAY. */
 arithmetic_t arithmeticFromQuantization(const quantization_t *q);
 
+/* NULL -> {ARITH_FLOAT32, HALF_AWAY}; else identical to
+ * arithmeticFromQuantization(q). Legacy callers may pass NULL quantizations
+ * (arithmeticFromQuantization itself does not NULL-check) — this guard lets
+ * them derive an arithmetic_t eagerly without crashing on that path. */
+arithmetic_t arithmeticFromQuantizationOrDefault(const quantization_t *q);
+
 #endif // ENV5_RUNTIME_ARITHMETIC_TYPE_H

@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
+#include "ArithmeticType.h"
 #include "Common.h"
 #include "Conv1d.h"
 #include "Conv1dApi.h"
@@ -16,7 +17,7 @@
 #include "TensorApi.h"
 
 /* ============================================================================
- * Legacy factory (renamed in Task 4).
+ * Legacy factory (renamed in Task 4; dies Task 9).
  * ========================================================================== */
 
 layer_t *conv1dLayerInitLegacy(parameter_t *weights, parameter_t *bias, kernel_t *kernel,
@@ -35,22 +36,6 @@ layer_t *conv1dLayerInitLegacy(parameter_t *weights, parameter_t *bias, kernel_t
     conv1dLayer->config = layerConfig;
 
     return conv1dLayer;
-}
-
-void freeConv1dLayerLegacy(layer_t *conv1dLayer) {
-    conv1dConfig_t *conv1dConfig = conv1dLayer->config->conv1d;
-
-    freeParameter(conv1dConfig->weights);
-    if (conv1dConfig->bias) {
-        freeParameter(conv1dConfig->bias);
-    }
-
-    freeQuantization(conv1dConfig->forwardQ);
-    freeQuantization(conv1dConfig->weightGradQ);
-    freeQuantization(conv1dConfig->biasGradQ);
-    freeQuantization(conv1dConfig->propLossQ);
-    freeReservedMemory(conv1dConfig);
-    freeReservedMemory(conv1dLayer);
 }
 
 /* ============================================================================
@@ -211,9 +196,14 @@ layer_t *conv1dLayerInit(conv1dInit_t *init, layerQuant_t *lq) {
         hasBias ? allocateConv1dBias(init->outChannels, fanIn, lq->biasStorage, gradQ) : NULL;
     freeQuantization(gradQ);
     cfg->groups = groups;
-    cfg->forwardQ = lq->forwardMath;
-    cfg->weightGradQ = lq->backwardMath;
-    cfg->biasGradQ = lq->backwardMath;
+
+    /* Borrowing: store the forward-wire/dx-wire storage configs verbatim, no copy.
+     * All three grad/backward arithmetics derive from the single lq->backwardMath source. */
+    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
+    cfg->weightGradMath = arithmeticFromQuantization(lq->backwardMath);
+    cfg->biasGradMath = arithmeticFromQuantization(lq->backwardMath);
+    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
+    cfg->outputQ = lq->forwardMath;
     cfg->propLossQ = lq->backwardMath;
     cfg->ownsQuantizations = false;
 
@@ -249,11 +239,13 @@ layer_t *conv1dLayerInitOwning(conv1dInit_t *init, layerQuant_t *lq) {
     freeQuantization(gradQ);
     cfg->groups = groups;
 
-    /* Owning: deep-copy each of the four math quantizations. Always four
-     * separate copies (no aliasing), keeping freeConv1dLayer simple. */
-    cfg->forwardQ = deepCopyQuantization(lq->forwardMath);
-    cfg->weightGradQ = deepCopyQuantization(lq->backwardMath);
-    cfg->biasGradQ = deepCopyQuantization(lq->backwardMath);
+    /* Owning: same arithmetic as Borrowing; deep-copy the two storage configs
+     * (outputQ, propLossQ) into fresh allocations — 2 allocs, not 4. */
+    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
+    cfg->weightGradMath = arithmeticFromQuantization(lq->backwardMath);
+    cfg->biasGradMath = arithmeticFromQuantization(lq->backwardMath);
+    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
+    cfg->outputQ = deepCopyQuantization(lq->forwardMath);
     cfg->propLossQ = deepCopyQuantization(lq->backwardMath);
     cfg->ownsQuantizations = true;
 
@@ -275,26 +267,13 @@ void freeConv1dLayer(layer_t *conv1dLayer) {
     }
     freeReservedMemory(cfg->kernel);
 
-    /* Conditionally factory-owned: quantizations (Owning variant only).
-     * Defensive dedup: the Owning factory in Task 9 allocates four
-     * separate copies (no aliasing), so the dedup is a no-op there but
-     * protects against future aliasing. */
+    /* Conditionally factory-owned: the two storage configs (Owning variant only). */
     if (cfg->ownsQuantizations) {
-        if (cfg->forwardQ != NULL) {
-            freeReservedMemory(cfg->forwardQ->qConfig);
-            freeReservedMemory(cfg->forwardQ);
+        if (cfg->outputQ != NULL) {
+            freeReservedMemory(cfg->outputQ->qConfig);
+            freeReservedMemory(cfg->outputQ);
         }
-        if (cfg->weightGradQ != NULL && cfg->weightGradQ != cfg->forwardQ) {
-            freeReservedMemory(cfg->weightGradQ->qConfig);
-            freeReservedMemory(cfg->weightGradQ);
-        }
-        if (cfg->biasGradQ != NULL && cfg->biasGradQ != cfg->forwardQ &&
-            cfg->biasGradQ != cfg->weightGradQ) {
-            freeReservedMemory(cfg->biasGradQ->qConfig);
-            freeReservedMemory(cfg->biasGradQ);
-        }
-        if (cfg->propLossQ != NULL && cfg->propLossQ != cfg->forwardQ &&
-            cfg->propLossQ != cfg->weightGradQ && cfg->propLossQ != cfg->biasGradQ) {
+        if (cfg->propLossQ != NULL && cfg->propLossQ != cfg->outputQ) {
             freeReservedMemory(cfg->propLossQ->qConfig);
             freeReservedMemory(cfg->propLossQ);
         }

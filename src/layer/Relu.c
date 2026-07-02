@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "ArithmeticType.h"
 #include "Common.h"
 #include "Comparison.h"
 #include "DTypes.h"
@@ -11,8 +12,10 @@
 #include "Tensor.h"
 
 void reluInitConfig(reluConfig_t *reluConfig, quantization_t *forwardQ, quantization_t *backwardQ) {
-    reluConfig->forwardQ = forwardQ;
-    reluConfig->backwardQ = backwardQ;
+    reluConfig->forwardMath = arithmeticFromQuantizationOrDefault(forwardQ);
+    reluConfig->propLossMath = arithmeticFromQuantizationOrDefault(backwardQ);
+    reluConfig->outputQ = forwardQ;
+    reluConfig->propLossQ = backwardQ;
 }
 
 void reluForwardFloat(tensor_t *input, tensor_t *output) {
@@ -29,11 +32,11 @@ void reluForwardSymInt32(tensor_t *input, tensor_t *output) {
 void reluForward(layer_t *reluLayer, tensor_t *input, tensor_t *output) {
     reluConfig_t *reluConfig = reluLayer->config->relu;
 
-    switch (reluConfig->forwardQ->type) {
-    case FLOAT32:
+    switch (reluConfig->forwardMath.type) {
+    case ARITH_FLOAT32:
         reluForwardFloat(input, output);
         break;
-    case SYM_INT32:
+    case ARITH_SYM_INT32:
         reluForwardSymInt32(input, output);
         break;
     default:
@@ -81,11 +84,11 @@ void reluBackwardSymInt32(tensor_t *forwardInput, tensor_t *loss, tensor_t *prop
 void reluBackward(layer_t *reluLayer, tensor_t *forwardInput, tensor_t *loss, tensor_t *propLoss) {
     reluConfig_t *reluConfig = reluLayer->config->relu;
 
-    switch (reluConfig->backwardQ->type) {
-    case FLOAT32:
+    switch (reluConfig->propLossMath.type) {
+    case ARITH_FLOAT32:
         reluBackwardFloat(forwardInput, loss, propLoss);
         break;
-    case SYM_INT32:
+    case ARITH_SYM_INT32:
         reluBackwardSymInt32(forwardInput, loss, propLoss);
         break;
     default:

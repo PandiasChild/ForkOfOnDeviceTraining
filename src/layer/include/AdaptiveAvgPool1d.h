@@ -4,12 +4,15 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
+#include "ArithmeticType.h"
 #include "Layer.h"
 #include "Tensor.h"
 
 typedef struct adaptiveAvgPool1dConfig {
     size_t outputSize;
-    quantization_t *forwardQ;
+    arithmetic_t forwardMath;
+    arithmetic_t propLossMath;
+    quantization_t *outputQ;
     quantization_t *propLossQ;
     bool ownsQuantizations;
 } adaptiveAvgPool1dConfig_t;

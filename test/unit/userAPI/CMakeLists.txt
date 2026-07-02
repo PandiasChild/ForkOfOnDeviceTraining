@@ -100,6 +100,7 @@ add_elastic_ai_unit_test(
         LIB_UNDER_TEST
         Conv1dApi
         MORE_LIBS
+        ArithmeticType
         LayerQuant
         LayerCommon
         QuantizationApi
@@ -117,6 +118,7 @@ add_elastic_ai_unit_test(
         LIB_UNDER_TEST
         Conv1dTransposedApi
         MORE_LIBS
+        ArithmeticType
         LayerQuant
         LayerCommon
         QuantizationApi
@@ -134,6 +136,7 @@ add_elastic_ai_unit_test(
         LIB_UNDER_TEST
         Pool1dApi
         MORE_LIBS
+        ArithmeticType
         LayerQuant
         QuantizationApi
         Quantization
@@ -149,6 +152,7 @@ add_elastic_ai_unit_test(
         LIB_UNDER_TEST
         AdaptivePool1dApi
         MORE_LIBS
+        ArithmeticType
         LayerQuant
         QuantizationApi
         Quantization
@@ -347,6 +351,7 @@ add_elastic_ai_unit_test(
         LIB_UNDER_TEST
         ModelValidationApi
         MORE_LIBS
+        ArithmeticType
         CommonLayerLibs
         QuantizationLayer
         LinearApi

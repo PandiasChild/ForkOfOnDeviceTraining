@@ -5,6 +5,7 @@
 
 #include "AdaptiveAvgPool1d.h"
 #include "AdaptivePool1dApi.h"
+#include "ArithmeticType.h"
 #include "Common.h"
 #include "Layer.h"
 #include "LayerQuant.h"
@@ -55,7 +56,9 @@ layer_t *adaptiveAvgPool1dLayerInit(adaptiveAvgPool1dInit_t *init, layerQuant_t 
 
     layer_t *layer = buildSkeleton(init);
     adaptiveAvgPool1dConfig_t *cfg = layer->config->adaptiveAvgPool1d;
-    cfg->forwardQ = lq->forwardMath;
+    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
+    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
+    cfg->outputQ = lq->forwardMath;
     cfg->propLossQ = lq->backwardMath;
     cfg->ownsQuantizations = false;
     return layer;
@@ -67,7 +70,9 @@ layer_t *adaptiveAvgPool1dLayerInitOwning(adaptiveAvgPool1dInit_t *init, layerQu
 
     layer_t *layer = buildSkeleton(init);
     adaptiveAvgPool1dConfig_t *cfg = layer->config->adaptiveAvgPool1d;
-    cfg->forwardQ = deepCopyQuantization(lq->forwardMath);
+    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
+    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
+    cfg->outputQ = deepCopyQuantization(lq->forwardMath);
     cfg->propLossQ = deepCopyQuantization(lq->backwardMath);
     cfg->ownsQuantizations = true;
     return layer;
@@ -80,11 +85,11 @@ void freeAdaptiveAvgPool1dLayer(layer_t *layer) {
     adaptiveAvgPool1dConfig_t *cfg = layer->config->adaptiveAvgPool1d;
 
     if (cfg->ownsQuantizations) {
-        if (cfg->forwardQ != NULL) {
-            freeReservedMemory(cfg->forwardQ->qConfig);
-            freeReservedMemory(cfg->forwardQ);
+        if (cfg->outputQ != NULL) {
+            freeReservedMemory(cfg->outputQ->qConfig);
+            freeReservedMemory(cfg->outputQ);
         }
-        if (cfg->propLossQ != NULL && cfg->propLossQ != cfg->forwardQ) {
+        if (cfg->propLossQ != NULL && cfg->propLossQ != cfg->outputQ) {
             freeReservedMemory(cfg->propLossQ->qConfig);
             freeReservedMemory(cfg->propLossQ);
         }

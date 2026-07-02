@@ -1,5 +1,6 @@
 #define SOURCE_FILE "UNIT_TEST_POOL1D_API"
 
+#include "ArithmeticType.h"
 #include "AvgPool1d.h"
 #include "Kernel.h"
 #include "Layer.h"
@@ -40,8 +41,10 @@ void testMaxPool1dLayerInitBorrowingBuildsLayerWithKernelAndArgmax(void) {
     TEST_ASSERT_NOT_NULL(cfg);
     TEST_ASSERT_FALSE(cfg->ownsQuantizations);
 
-    TEST_ASSERT_EQUAL_PTR(q, cfg->forwardQ);
+    TEST_ASSERT_EQUAL_PTR(q, cfg->outputQ);
     TEST_ASSERT_EQUAL_PTR(q, cfg->propLossQ);
+    TEST_ASSERT_EQUAL_INT(ARITH_FLOAT32, cfg->forwardMath.type);
+    TEST_ASSERT_EQUAL_INT(ARITH_FLOAT32, cfg->propLossMath.type);
 
     /* Kernel correctness */
     TEST_ASSERT_NOT_NULL(cfg->kernel);
@@ -101,9 +104,10 @@ void testMaxPool1dLayerInitOwningDeepCopiesTwoQuantizations(void) {
         &lq);
 
     maxPool1dConfig_t *cfg = layer->config->maxPool1d;
-    TEST_ASSERT_NOT_EQUAL(q, cfg->forwardQ);
+    TEST_ASSERT_NOT_EQUAL(q, cfg->outputQ);
     TEST_ASSERT_NOT_EQUAL(q, cfg->propLossQ);
-    TEST_ASSERT_EQUAL_INT(q->type, cfg->forwardQ->type);
+    TEST_ASSERT_EQUAL_INT(q->type, cfg->outputQ->type);
+    TEST_ASSERT_EQUAL_INT(ARITH_FLOAT32, cfg->forwardMath.type);
     TEST_ASSERT_TRUE(cfg->ownsQuantizations);
 
     freeMaxPool1dLayer(layer);
@@ -154,8 +158,10 @@ void testAvgPool1dLayerInitBorrowingBuildsLayerWithKernel(void) {
     TEST_ASSERT_NOT_NULL(cfg);
     TEST_ASSERT_FALSE(cfg->ownsQuantizations);
 
-    TEST_ASSERT_EQUAL_PTR(q, cfg->forwardQ);
+    TEST_ASSERT_EQUAL_PTR(q, cfg->outputQ);
     TEST_ASSERT_EQUAL_PTR(q, cfg->propLossQ);
+    TEST_ASSERT_EQUAL_INT(ARITH_FLOAT32, cfg->forwardMath.type);
+    TEST_ASSERT_EQUAL_INT(ARITH_FLOAT32, cfg->propLossMath.type);
 
     TEST_ASSERT_NOT_NULL(cfg->kernel);
     TEST_ASSERT_EQUAL_UINT(5, cfg->kernel->size);
@@ -198,7 +204,7 @@ void testAvgPool1dLayerInitOwningDeepCopiesTwoQuantizations(void) {
         &lq);
 
     avgPool1dConfig_t *cfg = layer->config->avgPool1d;
-    TEST_ASSERT_NOT_EQUAL(q, cfg->forwardQ);
+    TEST_ASSERT_NOT_EQUAL(q, cfg->outputQ);
     TEST_ASSERT_NOT_EQUAL(q, cfg->propLossQ);
     TEST_ASSERT_TRUE(cfg->ownsQuantizations);
 

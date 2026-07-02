@@ -2,6 +2,7 @@
 
 #include <stdbool.h>
 
+#include "ArithmeticType.h"
 #include "Conv1d.h"
 #include "Conv1dTransposed.h"
 #include "Layer.h"
@@ -20,8 +21,8 @@
 void setUp(void) {}
 void tearDown(void) {}
 
-/* The validator reads ONLY layer->type + config->...->forwardQ, so
- * parameter-free stubs suffice (linearLayerInitLegacy stores forwardQ without
+/* The validator reads ONLY layer->type + config->...->outputQ, so
+ * parameter-free stubs suffice (linearLayerInitLegacy stores outputQ without
  * dereferencing weights/bias — UnitTestLinear roundtrip precedent). */
 static layer_t *buildLinearStub(quantization_t *fq) {
     return linearLayerInitLegacy(NULL, NULL, fq, fq, fq, fq);
@@ -34,8 +35,10 @@ static layer_t *buildLayerNormStub(quantization_t *fq) {
     cfg->normalizedShape = NULL;
     cfg->numNormDims = 0;
     cfg->eps = 1e-5f;
-    cfg->forwardQ = fq;
-    cfg->backwardQ = fq;
+    cfg->forwardMath = arithmeticFromQuantization(fq);
+    cfg->propLossMath = arithmeticFromQuantization(fq);
+    cfg->outputQ = fq;
+    cfg->propLossQ = fq;
     cfg->ownsQuantizations = false;
     layerConfig_t *lc = reserveMemory(sizeof(layerConfig_t));
     lc->layerNorm = cfg;
@@ -68,9 +71,11 @@ static layer_t *buildConv1dStub(quantization_t *fq) {
     cfg->weights = NULL;
     cfg->bias = NULL;
     cfg->groups = 1;
-    cfg->forwardQ = fq;
-    cfg->weightGradQ = fq;
-    cfg->biasGradQ = fq;
+    cfg->forwardMath = arithmeticFromQuantization(fq);
+    cfg->weightGradMath = arithmeticFromQuantization(fq);
+    cfg->biasGradMath = arithmeticFromQuantization(fq);
+    cfg->propLossMath = arithmeticFromQuantization(fq);
+    cfg->outputQ = fq;
     cfg->propLossQ = fq;
     cfg->ownsQuantizations = false;
     layerConfig_t *lc = reserveMemory(sizeof(layerConfig_t));
@@ -93,9 +98,11 @@ static layer_t *buildConv1dTransposedStub(quantization_t *fq) {
     cfg->bias = NULL;
     cfg->groups = 1;
     cfg->outputPadding = 0;
-    cfg->forwardQ = fq;
-    cfg->weightGradQ = fq;
-    cfg->biasGradQ = fq;
+    cfg->forwardMath = arithmeticFromQuantization(fq);
+    cfg->weightGradMath = arithmeticFromQuantization(fq);
+    cfg->biasGradMath = arithmeticFromQuantization(fq);
+    cfg->propLossMath = arithmeticFromQuantization(fq);
+    cfg->outputQ = fq;
     cfg->propLossQ = fq;
     cfg->ownsQuantizations = false;
     layerConfig_t *lc = reserveMemory(sizeof(layerConfig_t));

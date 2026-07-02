@@ -1,5 +1,6 @@
 #include <stdlib.h>
 
+#include "ArithmeticType.h"
 #include "LayerQuant.h"
 #include "QuantizationApi.h"
 #include "Softmax.h"
@@ -300,8 +301,10 @@ void testSoftmaxLayerInitBorrowingStoresLqPointers(void) {
     TEST_ASSERT_EQUAL_INT(SOFTMAX, layer->type);
 
     softmaxConfig_t *cfg = layer->config->softmax;
-    TEST_ASSERT_EQUAL_PTR(qFwd, cfg->forwardQ);
-    TEST_ASSERT_EQUAL_PTR(qBwd, cfg->backwardQ);
+    TEST_ASSERT_EQUAL_PTR(qFwd, cfg->outputQ);
+    TEST_ASSERT_EQUAL_PTR(qBwd, cfg->propLossQ);
+    TEST_ASSERT_EQUAL_INT(ARITH_FLOAT32, cfg->forwardMath.type);
+    TEST_ASSERT_EQUAL_INT(ARITH_FLOAT32, cfg->propLossMath.type);
     TEST_ASSERT_FALSE(cfg->ownsQuantizations);
 
     freeSoftmaxLayer(layer);
@@ -320,9 +323,10 @@ void testSoftmaxLayerInitOwningDeepCopiesLqPointers(void) {
     layer_t *layer = softmaxLayerInitOwning(&lq);
 
     softmaxConfig_t *cfg = layer->config->softmax;
-    TEST_ASSERT_NOT_EQUAL(qFwd, cfg->forwardQ);
-    TEST_ASSERT_NOT_EQUAL(qBwd, cfg->backwardQ);
-    TEST_ASSERT_EQUAL_INT(qFwd->type, cfg->forwardQ->type);
+    TEST_ASSERT_NOT_EQUAL(qFwd, cfg->outputQ);
+    TEST_ASSERT_NOT_EQUAL(qBwd, cfg->propLossQ);
+    TEST_ASSERT_EQUAL_INT(qFwd->type, cfg->outputQ->type);
+    TEST_ASSERT_EQUAL_INT(ARITH_FLOAT32, cfg->forwardMath.type);
     TEST_ASSERT_TRUE(cfg->ownsQuantizations);
 
     freeSoftmaxLayer(layer);

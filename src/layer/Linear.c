@@ -20,8 +20,11 @@ void linearInitConfig(linearConfig_t *linearConfig, parameter_t *weights, parame
                       quantization_t *propLossQ) {
     linearConfig->weights = weights;
     linearConfig->bias = bias;
-    linearConfig->forwardQ = forwardQ;
-    linearConfig->backwardMath = backwardMath;
+    linearConfig->forwardMath = arithmeticFromQuantizationOrDefault(forwardQ);
+    linearConfig->weightGradMath = arithmeticFromQuantizationOrDefault(backwardMath);
+    linearConfig->biasGradMath = arithmeticFromQuantizationOrDefault(backwardMath);
+    linearConfig->propLossMath = arithmeticFromQuantizationOrDefault(backwardMath);
+    linearConfig->outputQ = forwardQ;
     linearConfig->propLossQ = propLossQ;
 }
 
@@ -43,11 +46,11 @@ void linearForward(layer_t *linearLayer, tensor_t *input, tensor_t *output) {
     tensor_t *weights = getParamFromParameter(linearConfig->weights);
     tensor_t *bias = getParamFromParameter(linearConfig->bias);
 
-    switch (linearConfig->forwardQ->type) {
-    case FLOAT32:
+    switch (linearConfig->forwardMath.type) {
+    case ARITH_FLOAT32:
         linearForwardFloat(weights, bias, input, output);
         break;
-    case SYM_INT32:
+    case ARITH_SYM_INT32:
         linearForwardSymInt32(weights, bias, input, output);
         break;
     default:
@@ -146,32 +149,21 @@ void linearBackward(layer_t *linearLayer, tensor_t *forwardInput, tensor_t *loss
                     tensor_t *propLoss) {
     linearConfig_t *cfg = linearLayer->config->linear;
 
-    bool symArith;
-    switch (cfg->backwardMath->type) {
-    case FLOAT32:
-        symArith = false;
-        break;
-    case SYM_INT32:
-        symArith = true;
-        break;
-    default:
-        PRINT_ERROR("Unknown QType!");
-        exit(1);
-    }
-
-    executeOp(symArith ? weightGradKernelSym : weightGradKernelFloat,
-              (tensor_t *[]){loss, forwardInput}, 2, arithmeticFromQuantization(cfg->backwardMath),
+    executeOp(cfg->weightGradMath.type == ARITH_SYM_INT32 ? weightGradKernelSym
+                                                          : weightGradKernelFloat,
+              (tensor_t *[]){loss, forwardInput}, 2, cfg->weightGradMath,
               getGradFromParameter(cfg->weights), OUT_ACC_DYNAMIC_RESCALE);
 
     if (cfg->bias != NULL) {
-        executeOp(symArith ? biasGradKernelSym : biasGradKernelFloat, (tensor_t *[]){loss}, 1,
-                  arithmeticFromQuantization(cfg->backwardMath), getGradFromParameter(cfg->bias),
+        executeOp(cfg->biasGradMath.type == ARITH_SYM_INT32 ? biasGradKernelSym
+                                                            : biasGradKernelFloat,
+                  (tensor_t *[]){loss}, 1, cfg->biasGradMath, getGradFromParameter(cfg->bias),
                   OUT_ACC_FIXED_SCALE);
     }
 
-    executeOp(symArith ? propLossKernelSym : propLossKernelFloat,
-              (tensor_t *[]){loss, getParamFromParameter(cfg->weights)}, 2,
-              arithmeticFromQuantization(cfg->backwardMath), propLoss, OUT_WRITE);
+    executeOp(cfg->propLossMath.type == ARITH_SYM_INT32 ? propLossKernelSym : propLossKernelFloat,
+              (tensor_t *[]){loss, getParamFromParameter(cfg->weights)}, 2, cfg->propLossMath,
+              propLoss, OUT_WRITE);
 }
 
 void linearCalcOutputShape(layer_t *linearLayer, shape_t *inputShape, shape_t *outputShape) {

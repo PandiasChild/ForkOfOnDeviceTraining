@@ -92,6 +92,7 @@ add_elastic_ai_unit_test(
         LIB_UNDER_TEST
         Relu
         MORE_LIBS
+        ArithmeticType
         CommonLayerLibs
         ReluApi
         TensorApi
@@ -106,6 +107,7 @@ add_elastic_ai_unit_test(
         LIB_UNDER_TEST
         Softmax
         MORE_LIBS
+        ArithmeticType
         CommonLayerLibs
         TensorApi
         SoftmaxApi
@@ -247,6 +249,7 @@ add_elastic_ai_unit_test(
         LIB_UNDER_TEST
         LayerNorm
         MORE_LIBS
+        ArithmeticType
         CommonLayerLibs
         TensorApi
         QuantizationApi

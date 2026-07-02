@@ -1,3 +1,4 @@
+#include "ArithmeticType.h"
 #include "DTypes.h"
 #include "LayerQuant.h"
 #include "Quantization.h"
@@ -279,8 +280,10 @@ void testReluLayerInitBorrowingStoresLqPointers(void) {
     TEST_ASSERT_EQUAL_INT(RELU, layer->type);
 
     reluConfig_t *cfg = layer->config->relu;
-    TEST_ASSERT_EQUAL_PTR(qFwd, cfg->forwardQ);
-    TEST_ASSERT_EQUAL_PTR(qBwd, cfg->backwardQ);
+    TEST_ASSERT_EQUAL_PTR(qFwd, cfg->outputQ);
+    TEST_ASSERT_EQUAL_PTR(qBwd, cfg->propLossQ);
+    TEST_ASSERT_EQUAL_INT(ARITH_FLOAT32, cfg->forwardMath.type);
+    TEST_ASSERT_EQUAL_INT(ARITH_FLOAT32, cfg->propLossMath.type);
     TEST_ASSERT_FALSE(cfg->ownsQuantizations);
 
     freeReluLayer(layer);
@@ -297,9 +300,10 @@ void testReluLayerInitOwningDeepCopiesLqPointers(void) {
     layer_t *layer = reluLayerInitOwning(&lq);
 
     reluConfig_t *cfg = layer->config->relu;
-    TEST_ASSERT_NOT_EQUAL(qFwd, cfg->forwardQ);
-    TEST_ASSERT_NOT_EQUAL(qBwd, cfg->backwardQ);
-    TEST_ASSERT_EQUAL_INT(qFwd->type, cfg->forwardQ->type);
+    TEST_ASSERT_NOT_EQUAL(qFwd, cfg->outputQ);
+    TEST_ASSERT_NOT_EQUAL(qBwd, cfg->propLossQ);
+    TEST_ASSERT_EQUAL_INT(qFwd->type, cfg->outputQ->type);
+    TEST_ASSERT_EQUAL_INT(ARITH_FLOAT32, cfg->forwardMath.type);
     TEST_ASSERT_TRUE(cfg->ownsQuantizations);
 
     freeReluLayer(layer);

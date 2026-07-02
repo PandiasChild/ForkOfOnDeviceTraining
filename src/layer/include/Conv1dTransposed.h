@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
+#include "ArithmeticType.h"
 #include "Kernel.h"
 #include "Layer.h"
 #include "Tensor.h"
@@ -14,11 +15,17 @@ typedef struct conv1dTransposedConfig {
     parameter_t *bias;    // [Cout] or NULL
     size_t groups;        // must divide Cin and Cout
     size_t outputPadding; // PyTorch parameter; default 0; < max(stride, dilation)
-    quantization_t *forwardQ;
-    quantization_t *weightGradQ;
-    quantization_t *biasGradQ;
-    quantization_t *propLossQ;
-    bool ownsQuantizations;
+
+    arithmetic_t forwardMath;    /* declared forward compute representation */
+    arithmetic_t weightGradMath; /* declared weight-grad ARITHMETIC */
+    arithmetic_t biasGradMath;   /* declared bias-grad ARITHMETIC */
+    arithmetic_t propLossMath;   /* declared dx-wire ARITHMETIC (kernel selection) */
+
+    quantization_t *outputQ;   /* produced forward-wire storage config */
+    quantization_t *propLossQ; /* storage config of the produced dx-wire buffer */
+
+    bool ownsQuantizations; /* true -> free* will tear down outputQ/propLossQ and their
+                               qConfigs */
 } conv1dTransposedConfig_t;
 
 void initConv1dTransposedConfigWithWeightsAndBias(

@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
+#include "ArithmeticType.h"
 #include "Kernel.h"
 #include "Layer.h"
 #include "Tensor.h"
@@ -11,7 +12,9 @@
 typedef struct maxPool1dConfig {
     kernel_t *kernel;
     tensor_t *argmaxIndices; // INT32, shape == output shape; pre-allocated by caller
-    quantization_t *forwardQ;
+    arithmetic_t forwardMath;
+    arithmetic_t propLossMath;
+    quantization_t *outputQ;
     quantization_t *propLossQ;
     bool ownsQuantizations;
 } maxPool1dConfig_t;

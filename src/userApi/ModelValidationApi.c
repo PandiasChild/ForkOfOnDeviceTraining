@@ -17,13 +17,13 @@
 static quantization_t *producerForwardQ(layer_t *layer) {
     switch (layer->type) {
     case LINEAR:
-        return layer->config->linear->forwardQ;
+        return layer->config->linear->outputQ;
     case LAYERNORM:
-        return layer->config->layerNorm->forwardQ;
+        return layer->config->layerNorm->outputQ;
     case CONV1D:
-        return layer->config->conv1d->forwardQ;
+        return layer->config->conv1d->outputQ;
     case CONV1D_TRANSPOSED:
-        return layer->config->conv1dTransposed->forwardQ;
+        return layer->config->conv1dTransposed->outputQ;
     default:
         return NULL;
     }

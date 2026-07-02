@@ -2,6 +2,7 @@
 #define ENV5_RUNTIME_LINEAR_H
 #include <stdbool.h>
 
+#include "ArithmeticType.h"
 #include "Tensor.h"
 
 typedef struct layer layer_t;
@@ -10,13 +11,16 @@ typedef struct linearConfig {
     parameter_t *weights;
     parameter_t *bias;
 
-    quantization_t *forwardQ;
-    quantization_t *backwardMath; /* declared backward ARITHMETIC (weight+bias grad ops;
-                                   * roundingMode source for SYM intermediates) */
-    quantization_t *propLossQ;    /* storage config of the produced dx-wire buffer */
+    arithmetic_t forwardMath;    /* declared forward compute representation */
+    arithmetic_t weightGradMath; /* declared weight-grad ARITHMETIC */
+    arithmetic_t biasGradMath;   /* declared bias-grad ARITHMETIC */
+    arithmetic_t propLossMath;   /* declared dx-wire ARITHMETIC (kernel selection) */
 
-    bool ownsQuantizations; /* true → free* will tear down forwardQ/backwardMath/propLossQ
-                               and their qConfigs */
+    quantization_t *outputQ;   /* produced forward-wire storage config */
+    quantization_t *propLossQ; /* storage config of the produced dx-wire buffer */
+
+    bool ownsQuantizations; /* true → free* will tear down outputQ/propLossQ and their
+                               qConfigs */
 } linearConfig_t;
 
 void linearInitConfig(linearConfig_t *linearConfig, parameter_t *weights, parameter_t *bias,

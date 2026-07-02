@@ -23,9 +23,6 @@ layer_t *conv1dLayerInitLegacy(parameter_t *weights, parameter_t *bias, kernel_t
                                quantization_t *forwardQ, quantization_t *weightGradQ,
                                quantization_t *biasGradQ, quantization_t *propLossQ);
 
-/*! Frees a Conv1d layer built via the legacy factory. */
-void freeConv1dLayerLegacy(layer_t *conv1dLayer);
-
 #include "LayerCommon.h"
 #include "LayerQuant.h"
 

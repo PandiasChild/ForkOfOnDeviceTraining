@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
+#include "ArithmeticType.h"
 #include "Common.h"
 #include "LayerQuant.h"
 #include "Softmax.h"
@@ -18,8 +19,10 @@ layer_t *softmaxLayerInitLegacy(quantization_t *forwardQ, quantization_t *backwa
     softmaxConfig_t *softmaxConfig = reserveMemory(sizeof(softmaxConfig_t));
     layerConfig->softmax = softmaxConfig;
 
-    softmaxConfig->forwardQ = forwardQ;
-    softmaxConfig->backwardQ = backwardQ;
+    softmaxConfig->forwardMath = arithmeticFromQuantizationOrDefault(forwardQ);
+    softmaxConfig->propLossMath = arithmeticFromQuantizationOrDefault(backwardQ);
+    softmaxConfig->outputQ = forwardQ;
+    softmaxConfig->propLossQ = backwardQ;
     softmaxConfig->ownsQuantizations = false;
     softmaxLayer->config = layerConfig;
 
@@ -62,8 +65,10 @@ layer_t *softmaxLayerInit(layerQuant_t *lq) {
     layerCfg->softmax = cfg;
     layer->config = layerCfg;
 
-    cfg->forwardQ = lq->forwardMath;
-    cfg->backwardQ = lq->backwardMath;
+    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
+    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
+    cfg->outputQ = lq->forwardMath;
+    cfg->propLossQ = lq->backwardMath;
     cfg->ownsQuantizations = false;
 
     return layer;
@@ -80,8 +85,10 @@ layer_t *softmaxLayerInitOwning(layerQuant_t *lq) {
     layerCfg->softmax = cfg;
     layer->config = layerCfg;
 
-    cfg->forwardQ = deepCopyQuantization(lq->forwardMath);
-    cfg->backwardQ = deepCopyQuantization(lq->backwardMath);
+    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
+    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
+    cfg->outputQ = deepCopyQuantization(lq->forwardMath);
+    cfg->propLossQ = deepCopyQuantization(lq->backwardMath);
     cfg->ownsQuantizations = true;
 
     return layer;
@@ -94,13 +101,13 @@ void freeSoftmaxLayer(layer_t *softmaxLayer) {
     softmaxConfig_t *cfg = softmaxLayer->config->softmax;
 
     if (cfg->ownsQuantizations) {
-        if (cfg->forwardQ != NULL) {
-            freeReservedMemory(cfg->forwardQ->qConfig);
-            freeReservedMemory(cfg->forwardQ);
+        if (cfg->outputQ != NULL) {
+            freeReservedMemory(cfg->outputQ->qConfig);
+            freeReservedMemory(cfg->outputQ);
         }
-        if (cfg->backwardQ != NULL && cfg->backwardQ != cfg->forwardQ) {
-            freeReservedMemory(cfg->backwardQ->qConfig);
-            freeReservedMemory(cfg->backwardQ);
+        if (cfg->propLossQ != NULL && cfg->propLossQ != cfg->outputQ) {
+            freeReservedMemory(cfg->propLossQ->qConfig);
+            freeReservedMemory(cfg->propLossQ);
         }
     }
     freeReservedMemory(cfg);

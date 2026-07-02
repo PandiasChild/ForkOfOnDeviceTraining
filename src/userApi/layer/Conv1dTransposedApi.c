@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
+#include "ArithmeticType.h"
 #include "Common.h"
 #include "Conv1dTransposed.h"
 #include "Conv1dTransposedApi.h"
@@ -172,9 +173,14 @@ layer_t *conv1dTransposedLayerInit(conv1dTransposedInit_t *init, layerQuant_t *l
 
     layer_t *layer = buildConv1dTransposedLayerSkeleton(init, lq, hasBias, groups);
     conv1dTransposedConfig_t *cfg = layer->config->conv1dTransposed;
-    cfg->forwardQ = lq->forwardMath;
-    cfg->weightGradQ = lq->backwardMath;
-    cfg->biasGradQ = lq->backwardMath;
+
+    /* Borrowing: store the forward-wire/dx-wire storage configs verbatim, no copy.
+     * All three grad/backward arithmetics derive from the single lq->backwardMath source. */
+    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
+    cfg->weightGradMath = arithmeticFromQuantization(lq->backwardMath);
+    cfg->biasGradMath = arithmeticFromQuantization(lq->backwardMath);
+    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
+    cfg->outputQ = lq->forwardMath;
     cfg->propLossQ = lq->backwardMath;
     cfg->ownsQuantizations = false;
     return layer;
@@ -190,9 +196,13 @@ layer_t *conv1dTransposedLayerInitOwning(conv1dTransposedInit_t *init, layerQuan
     layer_t *layer = buildConv1dTransposedLayerSkeleton(init, lq, hasBias, groups);
     conv1dTransposedConfig_t *cfg = layer->config->conv1dTransposed;
 
-    cfg->forwardQ = deepCopyQuantization(lq->forwardMath);
-    cfg->weightGradQ = deepCopyQuantization(lq->backwardMath);
-    cfg->biasGradQ = deepCopyQuantization(lq->backwardMath);
+    /* Owning: same arithmetic as Borrowing; deep-copy the two storage configs
+     * (outputQ, propLossQ) into fresh allocations — 2 allocs, not 4. */
+    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
+    cfg->weightGradMath = arithmeticFromQuantization(lq->backwardMath);
+    cfg->biasGradMath = arithmeticFromQuantization(lq->backwardMath);
+    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
+    cfg->outputQ = deepCopyQuantization(lq->forwardMath);
     cfg->propLossQ = deepCopyQuantization(lq->backwardMath);
     cfg->ownsQuantizations = true;
     return layer;
@@ -213,21 +223,11 @@ void freeConv1dTransposedLayer(layer_t *layer) {
     freeReservedMemory(cfg->kernel);
 
     if (cfg->ownsQuantizations) {
-        if (cfg->forwardQ != NULL) {
-            freeReservedMemory(cfg->forwardQ->qConfig);
-            freeReservedMemory(cfg->forwardQ);
+        if (cfg->outputQ != NULL) {
+            freeReservedMemory(cfg->outputQ->qConfig);
+            freeReservedMemory(cfg->outputQ);
         }
-        if (cfg->weightGradQ != NULL && cfg->weightGradQ != cfg->forwardQ) {
-            freeReservedMemory(cfg->weightGradQ->qConfig);
-            freeReservedMemory(cfg->weightGradQ);
-        }
-        if (cfg->biasGradQ != NULL && cfg->biasGradQ != cfg->forwardQ &&
-            cfg->biasGradQ != cfg->weightGradQ) {
-            freeReservedMemory(cfg->biasGradQ->qConfig);
-            freeReservedMemory(cfg->biasGradQ);
-        }
-        if (cfg->propLossQ != NULL && cfg->propLossQ != cfg->forwardQ &&
-            cfg->propLossQ != cfg->weightGradQ && cfg->propLossQ != cfg->biasGradQ) {
+        if (cfg->propLossQ != NULL && cfg->propLossQ != cfg->outputQ) {
             freeReservedMemory(cfg->propLossQ->qConfig);
             freeReservedMemory(cfg->propLossQ);
         }

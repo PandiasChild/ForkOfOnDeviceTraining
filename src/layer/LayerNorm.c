@@ -26,8 +26,10 @@ void initLayerNormConfig(layerNormConfig_t *cfg, parameter_t *gamma, parameter_t
     cfg->normalizedShape = normalizedShape;
     cfg->numNormDims = numNormDims;
     cfg->eps = eps;
-    cfg->forwardQ = forwardQ;
-    cfg->backwardQ = backwardQ;
+    cfg->forwardMath = arithmeticFromQuantizationOrDefault(forwardQ);
+    cfg->propLossMath = arithmeticFromQuantizationOrDefault(backwardQ);
+    cfg->outputQ = forwardQ;
+    cfg->propLossQ = backwardQ;
     cfg->ownsQuantizations = false;
 }
 
@@ -349,11 +351,11 @@ static void layerNormForwardFloat(layerNormConfig_t *cfg, tensor_t *input, tenso
 void layerNormForward(layer_t *layer, tensor_t *input, tensor_t *output) {
     layerNormConfig_t *cfg = layer->config->layerNorm;
     layerNormValidateInputShape(cfg, input);
-    switch (cfg->forwardQ->type) {
-    case FLOAT32:
+    switch (cfg->forwardMath.type) {
+    case ARITH_FLOAT32:
         layerNormForwardFloat(cfg, input, output);
         break;
-    case SYM_INT32:
+    case ARITH_SYM_INT32:
         layerNormForwardSymInt32(cfg, input, output);
         break;
     default:
@@ -563,8 +565,8 @@ static void layerNormBackwardSymInt32(layerNormConfig_t *cfg, tensor_t *forwardI
 void layerNormBackward(layer_t *layer, tensor_t *forwardInput, tensor_t *loss, tensor_t *propLoss) {
     layerNormConfig_t *cfg = layer->config->layerNorm;
     layerNormValidateInputShape(cfg, forwardInput);
-    switch (cfg->backwardQ->type) {
-    case FLOAT32:
+    switch (cfg->propLossMath.type) {
+    case ARITH_FLOAT32:
         /* SYM_INT32 forwardMath + FLOAT32 backwardMath is an inference-only
          * profile: reading a SYM_INT32 forwardInput / loss / gamma as float*
          * here would be silent garbage — fail fast. Training a SYM forward
@@ -578,7 +580,7 @@ void layerNormBackward(layer_t *layer, tensor_t *forwardInput, tensor_t *loss, t
         }
         layerNormBackwardFloat(cfg, forwardInput, loss, propLoss);
         break;
-    case SYM_INT32:
+    case ARITH_SYM_INT32:
         layerNormBackwardSymInt32(cfg, forwardInput, loss, propLoss);
         break;
     default:

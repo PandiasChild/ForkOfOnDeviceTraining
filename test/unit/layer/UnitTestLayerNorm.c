@@ -6,6 +6,7 @@
 #include <stdlib.h>
 
 #include "Arithmetic.h"
+#include "ArithmeticType.h"
 #include "Layer.h"
 #include "LayerNorm.h"
 #include "LayerNormApi.h"
@@ -100,8 +101,10 @@ void testConfigStructIsPopulated(void) {
     float eps = cfg.eps;
     bool gammaOk = (cfg.gamma == gamma);
     bool betaOk = (cfg.beta == beta);
-    bool fqOk = (cfg.forwardQ == fq);
-    bool bqOk = (cfg.backwardQ == bq);
+    bool fqOk = (cfg.outputQ == fq);
+    bool bqOk = (cfg.propLossQ == bq);
+    bool forwardMathOk = (cfg.forwardMath.type == ARITH_FLOAT32);
+    bool propLossMathOk = (cfg.propLossMath.type == ARITH_FLOAT32);
 
     freeQuantization(bq);
     freeQuantization(fq);
@@ -115,6 +118,8 @@ void testConfigStructIsPopulated(void) {
     TEST_ASSERT_TRUE(betaOk);
     TEST_ASSERT_TRUE(fqOk);
     TEST_ASSERT_TRUE(bqOk);
+    TEST_ASSERT_TRUE(forwardMathOk);
+    TEST_ASSERT_TRUE(propLossMathOk);
 }
 
 void testCalcOutputShapeIsIdentity(void) {
@@ -599,8 +604,10 @@ void testFactoryBuildsGammaOnesBetaZerosAndForwards(void) {
     float b0 = ((float *)cfg->beta->param->data)[0];
     bool gammaGradFloat = (cfg->gamma->grad->quantization->type == FLOAT32);
     bool betaGradFloat = (cfg->beta->grad->quantization->type == FLOAT32);
-    bool fwdMapped = (cfg->forwardQ == fwdMath);
-    bool bwdMapped = (cfg->backwardQ == bwdMath);
+    bool fwdMapped = (cfg->outputQ == fwdMath);
+    bool bwdMapped = (cfg->propLossQ == bwdMath);
+    bool fwdMathOk = (cfg->forwardMath.type == ARITH_FLOAT32);
+    bool propLossMathOk = (cfg->propLossMath.type == ARITH_FLOAT32);
 
     /* Forward: x=[1,-1,1,-1], gamma=1, beta=0 -> n ~ [+1,-1,+1,-1] (eps=1e-5). */
     size_t dims[] = {4};
@@ -627,6 +634,8 @@ void testFactoryBuildsGammaOnesBetaZerosAndForwards(void) {
     TEST_ASSERT_TRUE(betaGradFloat);
     TEST_ASSERT_TRUE(fwdMapped);
     TEST_ASSERT_TRUE(bwdMapped);
+    TEST_ASSERT_TRUE(fwdMathOk);
+    TEST_ASSERT_TRUE(propLossMathOk);
     TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.999995f, y0);
     TEST_ASSERT_FLOAT_WITHIN(1e-4f, -0.999995f, y1);
 }
@@ -647,10 +656,10 @@ void testFactoryOwningDeepCopiesQuantizations(void) {
     layer_t *layer = layerNormLayerInitOwning(&init, &lq);
     layerNormConfig_t *cfg = layer->config->layerNorm;
 
-    /* Owning: forwardQ/backwardQ are fresh allocations, NOT the caller's. */
-    bool fwdIsCopy = (cfg->forwardQ != fwdMath);
-    bool bwdIsCopy = (cfg->backwardQ != bwdMath);
-    bool fwdTypeOk = (cfg->forwardQ->type == fwdMath->type);
+    /* Owning: outputQ/propLossQ are fresh allocations, NOT the caller's. */
+    bool fwdIsCopy = (cfg->outputQ != fwdMath);
+    bool bwdIsCopy = (cfg->propLossQ != bwdMath);
+    bool fwdTypeOk = (cfg->outputQ->type == fwdMath->type);
     bool owns = cfg->ownsQuantizations;
 
     /* Caller drops its math quant configs IMMEDIATELY — the layer holds copies.
@@ -689,15 +698,15 @@ void testFactoryBorrowingDoesNotFreeCallerQuantizations(void) {
     layerNormConfig_t *cfg = layer->config->layerNorm;
 
     /* Borrowing: verbatim pointers, no ownership. */
-    bool fwdVerbatim = (cfg->forwardQ == fwdMath);
-    bool bwdVerbatim = (cfg->backwardQ == bwdMath);
+    bool fwdVerbatim = (cfg->outputQ == fwdMath);
+    bool bwdVerbatim = (cfg->propLossQ == bwdMath);
     bool owns = cfg->ownsQuantizations;
 
     /* Free the layer FIRST — it must NOT touch the borrowed math quantizations. */
     freeLayerNormLayer(layer);
 
     /* Caller frees its own quant configs AFTER. If freeLayerNormLayer had freed
-     * forwardQ/backwardQ, these would be double-frees (ASan/valgrind catch them). */
+     * outputQ/propLossQ, these would be double-frees (ASan/valgrind catch them). */
     freeQuantization(bStore);
     freeQuantization(wStore);
     freeQuantization(bwdMath);
@@ -1536,9 +1545,9 @@ void testFactoryOwningSymInt32DeepCopiesQuantizations(void) {
     layer_t *layer = layerNormLayerInitOwning(&init, &lq);
     layerNormConfig_t *cfg = layer->config->layerNorm;
 
-    bool fwdIsCopy = (cfg->forwardQ != symQ);
-    bool fwdIsSym = (cfg->forwardQ->type == SYM_INT32);
-    bool fwdCfgIsCopy = (cfg->forwardQ->qConfig != symQ->qConfig);
+    bool fwdIsCopy = (cfg->outputQ != symQ);
+    bool fwdIsSym = (cfg->outputQ->type == SYM_INT32);
+    bool fwdCfgIsCopy = (cfg->outputQ->qConfig != symQ->qConfig);
     bool owns = cfg->ownsQuantizations;
 
     /* Caller drops its quants immediately — the layer holds deep copies

@@ -92,22 +92,18 @@ static void serializeLayer(layer_t *layer, FILE *f) {
         linearConfig_t *linearConfig = layer->config->linear;
         serializeParameter(linearConfig->weights, f);
         serializeParameter(linearConfig->bias, f);
-        serializeQuantization(linearConfig->forwardQ, f);
-        /* backwardMath written twice: byte-compat with the pre-collapse weightGradQ/biasGradQ
-         * record (spec 2026-07-02 §4) */
-        serializeQuantization(linearConfig->backwardMath, f);
-        serializeQuantization(linearConfig->backwardMath, f);
+        serializeQuantization(linearConfig->outputQ, f);
         serializeQuantization(linearConfig->propLossQ, f);
         break;
     case RELU:
         reluConfig_t *reluConfig = layer->config->relu;
-        serializeQuantization(reluConfig->forwardQ, f);
-        serializeQuantization(reluConfig->backwardQ, f);
+        serializeQuantization(reluConfig->outputQ, f);
+        serializeQuantization(reluConfig->propLossQ, f);
         break;
     case SOFTMAX:
         softmaxConfig_t *softmaxConfig = layer->config->softmax;
-        serializeQuantization(softmaxConfig->forwardQ, f);
-        serializeQuantization(softmaxConfig->backwardQ, f);
+        serializeQuantization(softmaxConfig->outputQ, f);
+        serializeQuantization(softmaxConfig->propLossQ, f);
         break;
     case FLATTEN:
         // Flatten carries no state (no parameters, no quantization).

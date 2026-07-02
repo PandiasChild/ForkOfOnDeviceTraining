@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
+#include "ArithmeticType.h"
 #include "AvgPool1d.h"
 #include "Common.h"
 #include "Kernel.h"
@@ -130,7 +131,9 @@ layer_t *maxPool1dLayerInit(maxPool1dInit_t *init, layerQuant_t *lq) {
 
     layer_t *layer = buildMaxPool1dLayerSkeleton(init);
     maxPool1dConfig_t *cfg = layer->config->maxPool1d;
-    cfg->forwardQ = lq->forwardMath;
+    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
+    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
+    cfg->outputQ = lq->forwardMath;
     cfg->propLossQ = lq->backwardMath;
     cfg->ownsQuantizations = false;
     return layer;
@@ -142,7 +145,9 @@ layer_t *maxPool1dLayerInitOwning(maxPool1dInit_t *init, layerQuant_t *lq) {
 
     layer_t *layer = buildMaxPool1dLayerSkeleton(init);
     maxPool1dConfig_t *cfg = layer->config->maxPool1d;
-    cfg->forwardQ = deepCopyQuantization(lq->forwardMath);
+    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
+    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
+    cfg->outputQ = deepCopyQuantization(lq->forwardMath);
     cfg->propLossQ = deepCopyQuantization(lq->backwardMath);
     cfg->ownsQuantizations = true;
     return layer;
@@ -160,11 +165,11 @@ void freeMaxPool1dLayer(layer_t *layer) {
     }
 
     if (cfg->ownsQuantizations) {
-        if (cfg->forwardQ != NULL) {
-            freeReservedMemory(cfg->forwardQ->qConfig);
-            freeReservedMemory(cfg->forwardQ);
+        if (cfg->outputQ != NULL) {
+            freeReservedMemory(cfg->outputQ->qConfig);
+            freeReservedMemory(cfg->outputQ);
         }
-        if (cfg->propLossQ != NULL && cfg->propLossQ != cfg->forwardQ) {
+        if (cfg->propLossQ != NULL && cfg->propLossQ != cfg->outputQ) {
             freeReservedMemory(cfg->propLossQ->qConfig);
             freeReservedMemory(cfg->propLossQ);
         }
@@ -229,7 +234,9 @@ layer_t *avgPool1dLayerInit(avgPool1dInit_t *init, layerQuant_t *lq) {
 
     layer_t *layer = buildAvgPool1dLayerSkeleton(init);
     avgPool1dConfig_t *cfg = layer->config->avgPool1d;
-    cfg->forwardQ = lq->forwardMath;
+    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
+    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
+    cfg->outputQ = lq->forwardMath;
     cfg->propLossQ = lq->backwardMath;
     cfg->ownsQuantizations = false;
     return layer;
@@ -241,7 +248,9 @@ layer_t *avgPool1dLayerInitOwning(avgPool1dInit_t *init, layerQuant_t *lq) {
 
     layer_t *layer = buildAvgPool1dLayerSkeleton(init);
     avgPool1dConfig_t *cfg = layer->config->avgPool1d;
-    cfg->forwardQ = deepCopyQuantization(lq->forwardMath);
+    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
+    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
+    cfg->outputQ = deepCopyQuantization(lq->forwardMath);
     cfg->propLossQ = deepCopyQuantization(lq->backwardMath);
     cfg->ownsQuantizations = true;
     return layer;
@@ -256,11 +265,11 @@ void freeAvgPool1dLayer(layer_t *layer) {
     freeReservedMemory(cfg->kernel);
 
     if (cfg->ownsQuantizations) {
-        if (cfg->forwardQ != NULL) {
-            freeReservedMemory(cfg->forwardQ->qConfig);
-            freeReservedMemory(cfg->forwardQ);
+        if (cfg->outputQ != NULL) {
+            freeReservedMemory(cfg->outputQ->qConfig);
+            freeReservedMemory(cfg->outputQ);
         }
-        if (cfg->propLossQ != NULL && cfg->propLossQ != cfg->forwardQ) {
+        if (cfg->propLossQ != NULL && cfg->propLossQ != cfg->outputQ) {
             freeReservedMemory(cfg->propLossQ->qConfig);
             freeReservedMemory(cfg->propLossQ);
         }

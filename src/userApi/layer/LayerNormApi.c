@@ -4,6 +4,7 @@
 
 #include "LayerNormApi.h"
 
+#include "ArithmeticType.h"
 #include "Common.h"
 #include "Layer.h"
 #include "LayerNorm.h"
@@ -131,16 +132,20 @@ static void validateLayerQuantForLayerNorm(layerQuant_t *lq) {
         PRINT_ERROR("layerNormLayerInit: gamma/beta storage type must match forwardMath");
         exit(1);
     }
-    if (lq->backwardMath->type != FLOAT32 && lq->backwardMath->type != SYM_INT32) {
-        PRINT_ERROR("layerNormLayerInit: backwardMath must be FLOAT32 or SYM_INT32");
-        exit(1);
-    }
     /* The SYM_INT32 backward recomputes group stats from forwardInput's int32
      * mantissas and reads gamma mantissas; with a FLOAT32 forward those
      * buffers hold float bits — silent garbage. The REVERSE (SYM forwardMath +
      * FLOAT32 backwardMath) stays constructible: it is the inference-only
-     * profile, and the runtime backward guard rejects training it. */
-    if (lq->backwardMath->type == SYM_INT32 && lq->forwardMath->type != SYM_INT32) {
+     * profile, and the runtime backward guard rejects training it. Expressed
+     * against the derived arithmetic_t (spec D5): storage-only quantization_t
+     * dtypes bridge through ARITH_FLOAT32, so this now covers every dtype
+     * lq->backwardMath/forwardMath could carry, not just the FLOAT32/SYM_INT32
+     * pair — the old raw "backwardMath must be FLOAT32 or SYM_INT32" check is
+     * vacuous by construction (arithmeticFromQuantization always yields one of
+     * the two arithmeticType_t values) and is dropped. */
+    arithmetic_t derivedForwardMath = arithmeticFromQuantization(lq->forwardMath);
+    arithmetic_t derivedPropLossMath = arithmeticFromQuantization(lq->backwardMath);
+    if (derivedPropLossMath.type == ARITH_SYM_INT32 && derivedForwardMath.type != ARITH_SYM_INT32) {
         PRINT_ERROR("layerNormLayerInit: SYM_INT32 backwardMath requires SYM_INT32 forwardMath");
         exit(1);
     }
@@ -188,11 +193,14 @@ layer_t *layerNormLayerInit(layerNormInit_t *init, layerQuant_t *lq) {
     layerNormConfig_t *cfg;
     layer_t *layer = layerNormLayerInitCommon(init, lq, &cfg);
 
-    /* Borrowing: store the two math quant pointers verbatim. The caller owns
+    /* Borrowing: store the storage pointers verbatim; the arithmetic slots are
+     * by-value derivations of lq's declared math. The caller owns
      * forwardMath/backwardMath and frees them; freeLayerNormLayer leaves them
      * untouched (ownsQuantizations=false). */
-    cfg->forwardQ = lq->forwardMath;
-    cfg->backwardQ = lq->backwardMath;
+    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
+    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
+    cfg->outputQ = lq->forwardMath;
+    cfg->propLossQ = lq->backwardMath;
     cfg->ownsQuantizations = false;
 
     return layer;
@@ -202,11 +210,13 @@ layer_t *layerNormLayerInitOwning(layerNormInit_t *init, layerQuant_t *lq) {
     layerNormConfig_t *cfg;
     layer_t *layer = layerNormLayerInitCommon(init, lq, &cfg);
 
-    /* Owning: deep-copy each math quantization so the caller can drop its
+    /* Owning: deep-copy each storage quantization so the caller can drop its
      * forwardMath/backwardMath pointers immediately. freeLayerNormLayer tears
      * the copies down (ownsQuantizations=true). Mirrors linearLayerInitOwning. */
-    cfg->forwardQ = deepCopyQuantization(lq->forwardMath);
-    cfg->backwardQ = deepCopyQuantization(lq->backwardMath);
+    cfg->forwardMath = arithmeticFromQuantization(lq->forwardMath);
+    cfg->propLossMath = arithmeticFromQuantization(lq->backwardMath);
+    cfg->outputQ = deepCopyQuantization(lq->forwardMath);
+    cfg->propLossQ = deepCopyQuantization(lq->backwardMath);
     cfg->ownsQuantizations = true;
 
     return layer;
@@ -229,20 +239,20 @@ void freeLayerNormLayer(layer_t *layer) {
     }
     freeReservedMemory(cfg->normalizedShape);
 
-    /* Owning-variant only — tear down the two math quantization_t (qConfig +
-     * struct). Dedup guard exactly like freeLinearLayer: free backwardQ only if
-     * it is a distinct allocation from forwardQ. The Owning factory always
+    /* Owning-variant only — tear down the two storage quantization_t (qConfig +
+     * struct). Dedup guard exactly like freeLinearLayer: free propLossQ only if
+     * it is a distinct allocation from outputQ. The Owning factory always
      * deep-copies into two separate instances, so the guard is a defensive
      * measure; the Borrowing variant has ownsQuantizations=false and skips this
      * branch (caller frees them). */
     if (cfg->ownsQuantizations) {
-        if (cfg->forwardQ != NULL) {
-            freeReservedMemory(cfg->forwardQ->qConfig);
-            freeReservedMemory(cfg->forwardQ);
+        if (cfg->outputQ != NULL) {
+            freeReservedMemory(cfg->outputQ->qConfig);
+            freeReservedMemory(cfg->outputQ);
         }
-        if (cfg->backwardQ != NULL && cfg->backwardQ != cfg->forwardQ) {
-            freeReservedMemory(cfg->backwardQ->qConfig);
-            freeReservedMemory(cfg->backwardQ);
+        if (cfg->propLossQ != NULL && cfg->propLossQ != cfg->outputQ) {
+            freeReservedMemory(cfg->propLossQ->qConfig);
+            freeReservedMemory(cfg->propLossQ);
         }
     }
 

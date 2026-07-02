@@ -174,40 +174,40 @@ static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t si
         switch (currentLayer->type) {
         case LINEAR:
             linearConfig_t *linearConfig = currentLayer->config->linear;
-            currentQ = linearConfig->forwardQ;
+            currentQ = linearConfig->outputQ;
             break;
         case RELU:
             reluConfig_t *reluConfig = currentLayer->config->relu;
-            currentQ = reluConfig->forwardQ;
+            currentQ = reluConfig->outputQ;
             break;
         case SOFTMAX:
             softmaxConfig_t *softmaxConfig = currentLayer->config->softmax;
-            currentQ = softmaxConfig->forwardQ;
+            currentQ = softmaxConfig->outputQ;
             break;
         case FLATTEN:
             // Flatten has no per-layer quantization; output dtype equals input dtype.
             currentQ = layerOutputs[i]->quantization;
             break;
         case CONV1D:
-            currentQ = currentLayer->config->conv1d->forwardQ;
+            currentQ = currentLayer->config->conv1d->outputQ;
             break;
         case CONV1D_TRANSPOSED:
-            currentQ = currentLayer->config->conv1dTransposed->forwardQ;
+            currentQ = currentLayer->config->conv1dTransposed->outputQ;
             break;
         case MAXPOOL1D:
-            currentQ = currentLayer->config->maxPool1d->forwardQ;
+            currentQ = currentLayer->config->maxPool1d->outputQ;
             break;
         case AVGPOOL1D:
-            currentQ = currentLayer->config->avgPool1d->forwardQ;
+            currentQ = currentLayer->config->avgPool1d->outputQ;
             break;
         case ADAPTIVE_AVGPOOL1D:
-            currentQ = currentLayer->config->adaptiveAvgPool1d->forwardQ;
+            currentQ = currentLayer->config->adaptiveAvgPool1d->outputQ;
             break;
         case DROPOUT:
-            currentQ = currentLayer->config->dropout->forwardQ;
+            currentQ = currentLayer->config->dropout->outputQ;
             break;
         case LAYERNORM:
-            currentQ = currentLayer->config->layerNorm->forwardQ;
+            currentQ = currentLayer->config->layerNorm->outputQ;
             break;
         case QUANTIZATION:
             currentQ = currentLayer->config->quantization->forwardQ;
@@ -294,13 +294,13 @@ static quantization_t *backwardWireQ(layer_t *layer) {
     case ADAPTIVE_AVGPOOL1D:
         return layer->config->adaptiveAvgPool1d->propLossQ;
     case RELU:
-        return layer->config->relu->backwardQ;
+        return layer->config->relu->propLossQ;
     case SOFTMAX:
-        return layer->config->softmax->backwardQ;
+        return layer->config->softmax->propLossQ;
     case DROPOUT:
-        return layer->config->dropout->backwardQ;
+        return layer->config->dropout->propLossQ;
     case LAYERNORM:
-        return layer->config->layerNorm->backwardQ;
+        return layer->config->layerNorm->propLossQ;
     case QUANTIZATION:
         return layer->config->quantization->backwardQ;
     case FLATTEN:

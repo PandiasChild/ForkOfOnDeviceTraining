@@ -4,13 +4,16 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
+#include "ArithmeticType.h"
 #include "Kernel.h"
 #include "Layer.h"
 #include "Tensor.h"
 
 typedef struct avgPool1dConfig {
     kernel_t *kernel;
-    quantization_t *forwardQ;
+    arithmetic_t forwardMath;
+    arithmetic_t propLossMath;
+    quantization_t *outputQ;
     quantization_t *propLossQ;
     bool ownsQuantizations;
 } avgPool1dConfig_t;

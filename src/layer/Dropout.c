@@ -5,6 +5,7 @@
 
 #include "Dropout.h"
 
+#include "ArithmeticType.h"
 #include "Bernoulli.h"
 #include "Common.h"
 #include "Layer.h"
@@ -28,8 +29,10 @@ void initDropoutConfig(dropoutConfig_t *cfg, float p, tensor_t *mask, quantizati
     cfg->p = p;
     cfg->training = false;
     cfg->mask = mask;
-    cfg->forwardQ = forwardQ;
-    cfg->backwardQ = backwardQ;
+    cfg->forwardMath = arithmeticFromQuantizationOrDefault(forwardQ);
+    cfg->propLossMath = arithmeticFromQuantizationOrDefault(backwardQ);
+    cfg->outputQ = forwardQ;
+    cfg->propLossQ = backwardQ;
     cfg->ownsQuantizations = false;
 }
 
@@ -86,11 +89,11 @@ void dropoutForward(layer_t *dropoutLayer, tensor_t *input, tensor_t *output) {
         }
         bernoulliFillMask(cfg->mask, 1.0f - cfg->p); // §6.0.5: fill once before dtype apply
     }
-    switch (cfg->forwardQ->type) {
-    case FLOAT32:
+    switch (cfg->forwardMath.type) {
+    case ARITH_FLOAT32:
         dropoutForwardFloat(cfg, input, output);
         break;
-    case SYM_INT32:
+    case ARITH_SYM_INT32:
         dropoutForwardSymInt32(cfg, input, output);
         break;
     default:
@@ -136,11 +139,11 @@ void dropoutBackward(layer_t *dropoutLayer, tensor_t *forwardInput, tensor_t *lo
                     maskElements, lossElements);
         exit(1);
     }
-    switch (cfg->backwardQ->type) {
-    case FLOAT32:
+    switch (cfg->propLossMath.type) {
+    case ARITH_FLOAT32:
         dropoutBackwardFloat(cfg, loss, propLoss);
         break;
-    case SYM_INT32:
+    case ARITH_SYM_INT32:
         dropoutBackwardSymInt32(cfg, loss, propLoss);
         break;
     default:

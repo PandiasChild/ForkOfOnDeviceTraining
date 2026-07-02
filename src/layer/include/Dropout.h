@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 
+#include "ArithmeticType.h"
 #include "Tensor.h"
 
 typedef struct layer layer_t;
@@ -11,8 +12,10 @@ typedef struct dropoutConfig {
     float p;        // drop probability, must be in [0, 1)
     bool training;  // false = identity (eval); set true by the training loop
     tensor_t *mask; // BOOL, shape == input/output; pre-allocated by caller
-    quantization_t *forwardQ;
-    quantization_t *backwardQ;
+    arithmetic_t forwardMath;
+    arithmetic_t propLossMath;
+    quantization_t *outputQ;
+    quantization_t *propLossQ;
     bool ownsQuantizations;
 } dropoutConfig_t;
 

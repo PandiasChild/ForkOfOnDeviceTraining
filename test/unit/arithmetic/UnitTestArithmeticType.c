@@ -59,6 +59,24 @@ static void testStorageOnlyDtypesDeriveFloatArithmetic(void) {
     TEST_ASSERT_EQUAL(HALF_AWAY, b.roundingMode); /* no qConfig -> default HALF_AWAY */
 }
 
+static void testOrDefaultReturnsFloat32HalfAwayForNull(void) {
+    arithmetic_t a = arithmeticFromQuantizationOrDefault(NULL);
+    TEST_ASSERT_EQUAL(ARITH_FLOAT32, a.type);
+    TEST_ASSERT_EQUAL(HALF_AWAY, a.roundingMode);
+}
+
+static void testOrDefaultMatchesArithmeticFromQuantizationForNonNull(void) {
+    symInt32QConfig_t qc;
+    initSymInt32QConfig(SR_HALF_AWAY, &qc);
+    quantization_t q;
+    initSymInt32Quantization(&qc, &q);
+
+    arithmetic_t expected = arithmeticFromQuantization(&q);
+    arithmetic_t actual = arithmeticFromQuantizationOrDefault(&q);
+    TEST_ASSERT_EQUAL(expected.type, actual.type);
+    TEST_ASSERT_EQUAL(expected.roundingMode, actual.roundingMode);
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -68,6 +86,8 @@ int main(void) {
     RUN_TEST(testInt32QuantizationDerivesFloatArithmeticWithHalfAway);
     RUN_TEST(testSymInt32QuantizationDerivesSymArithmeticWithItsRoundingMode);
     RUN_TEST(testStorageOnlyDtypesDeriveFloatArithmetic);
+    RUN_TEST(testOrDefaultReturnsFloat32HalfAwayForNull);
+    RUN_TEST(testOrDefaultMatchesArithmeticFromQuantizationForNonNull);
 
     return UNITY_END();
 }

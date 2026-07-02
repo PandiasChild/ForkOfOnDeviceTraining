@@ -4,6 +4,7 @@ target_link_libraries(Conv1d PRIVATE
         DTypes
         Tensor
         Arithmetic
+        ArithmeticType
         Add
         Mul
         Quantization
@@ -22,6 +23,7 @@ target_link_libraries(Conv1dTransposed PRIVATE
         DTypes
         Tensor
         Arithmetic
+        ArithmeticType
         Add
         Mul
         Quantization
@@ -40,6 +42,7 @@ target_link_libraries(MaxPool1d PRIVATE
         DTypes
         Tensor
         Arithmetic
+        ArithmeticType
         Common
         Kernel
         SlidingWindow1d
@@ -51,6 +54,7 @@ target_link_libraries(AvgPool1d PRIVATE
         DTypes
         Tensor
         Arithmetic
+        ArithmeticType
         Common
         Kernel
         SlidingWindow1d
@@ -61,6 +65,7 @@ target_include_directories(AdaptiveAvgPool1d PUBLIC include)
 target_link_libraries(AdaptiveAvgPool1d PRIVATE
         DTypes
         Tensor
+        ArithmeticType
         Common
         AdaptiveWindow1d
 )
@@ -71,6 +76,7 @@ target_link_libraries(Dropout PRIVATE
         DTypes
         Tensor
         Layer
+        ArithmeticType
         Common
         Bernoulli
         Rounding
@@ -143,6 +149,7 @@ target_link_libraries(Relu PRIVATE
         DTypes
         Tensor
         Arithmetic
+        ArithmeticType
         Comparison
         Layer
         Common
@@ -154,6 +161,7 @@ target_link_libraries(Softmax PRIVATE
         DTypes
         Tensor
         Arithmetic
+        ArithmeticType
         Layer
         Common
 )

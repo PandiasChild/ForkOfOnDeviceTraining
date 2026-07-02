@@ -7,14 +7,17 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "ArithmeticType.h"
 #include "Common.h"
 #include "Softmax.h"
 #include "TensorConversion.h"
 
 void softmaxInitConfig(softmaxConfig_t *softmaxConfig, quantization_t *forwardQ,
                        quantization_t *backwardQ) {
-    softmaxConfig->forwardQ = forwardQ;
-    softmaxConfig->backwardQ = backwardQ;
+    softmaxConfig->forwardMath = arithmeticFromQuantizationOrDefault(forwardQ);
+    softmaxConfig->propLossMath = arithmeticFromQuantizationOrDefault(backwardQ);
+    softmaxConfig->outputQ = forwardQ;
+    softmaxConfig->propLossQ = backwardQ;
 }
 
 void softmaxInitLayer(layerConfig_t *softmaxConfig, layer_t *softmaxLayer) {
@@ -99,11 +102,11 @@ static void softmaxForwardSymInt32(tensor_t *input, tensor_t *output) {
 }
 
 void softmaxForward(layer_t *softmaxLayer, tensor_t *input, tensor_t *output) {
-    switch (softmaxLayer->config->softmax->forwardQ->type) {
-    case FLOAT32:
+    switch (softmaxLayer->config->softmax->forwardMath.type) {
+    case ARITH_FLOAT32:
         softmaxForwardFloat(input, output);
         break;
-    case SYM_INT32:
+    case ARITH_SYM_INT32:
         softmaxForwardSymInt32(input, output);
         break;
     default:
@@ -170,11 +173,11 @@ static void softmaxBackwardSymInt32(tensor_t *input, tensor_t *loss, tensor_t *p
 }
 
 void softmaxBackward(layer_t *softmaxLayer, tensor_t *input, tensor_t *loss, tensor_t *propLoss) {
-    switch (softmaxLayer->config->softmax->backwardQ->type) {
-    case FLOAT32:
+    switch (softmaxLayer->config->softmax->propLossMath.type) {
+    case ARITH_FLOAT32:
         softmaxBackwardFloat(input, loss, propLoss);
         break;
-    case SYM_INT32:
+    case ARITH_SYM_INT32:
         softmaxBackwardSymInt32(input, loss, propLoss);
         break;
     default:

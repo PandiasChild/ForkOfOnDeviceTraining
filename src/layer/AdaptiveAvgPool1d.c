@@ -3,6 +3,7 @@
 #include "AdaptiveAvgPool1d.h"
 
 #include "AdaptiveWindow1d.h"
+#include "ArithmeticType.h"
 #include "Common.h"
 #include "Layer.h"
 #include "Tensor.h"
@@ -14,7 +15,9 @@ void initAdaptiveAvgPool1dConfig(adaptiveAvgPool1dConfig_t *cfg, size_t outputSi
         exit(1);
     }
     cfg->outputSize = outputSize;
-    cfg->forwardQ = forwardQ;
+    cfg->forwardMath = arithmeticFromQuantizationOrDefault(forwardQ);
+    cfg->propLossMath = arithmeticFromQuantizationOrDefault(propLossQ);
+    cfg->outputQ = forwardQ;
     cfg->propLossQ = propLossQ;
 }
 
@@ -55,8 +58,8 @@ void adaptiveAvgPool1dForwardFloat(layer_t *layer, tensor_t *input, tensor_t *ou
 
 void adaptiveAvgPool1dForward(layer_t *layer, tensor_t *input, tensor_t *output) {
     adaptiveAvgPool1dConfig_t *cfg = layer->config->adaptiveAvgPool1d;
-    switch (cfg->forwardQ->type) {
-    case FLOAT32:
+    switch (cfg->forwardMath.type) {
+    case ARITH_FLOAT32:
         adaptiveAvgPool1dForwardFloat(layer, input, output);
         break;
     default:
@@ -105,8 +108,8 @@ void adaptiveAvgPool1dBackwardFloat(layer_t *layer, tensor_t *forwardInput, tens
 void adaptiveAvgPool1dBackward(layer_t *layer, tensor_t *forwardInput, tensor_t *lossGrad,
                                tensor_t *propLoss) {
     adaptiveAvgPool1dConfig_t *cfg = layer->config->adaptiveAvgPool1d;
-    switch (cfg->propLossQ->type) {
-    case FLOAT32:
+    switch (cfg->propLossMath.type) {
+    case ARITH_FLOAT32:
         adaptiveAvgPool1dBackwardFloat(layer, forwardInput, lossGrad, propLoss);
         break;
     default:
