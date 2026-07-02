@@ -37,8 +37,12 @@ FLOAT kernels with identical loop nest + `SlidingWindow1d` geometry:
   Conv1dTransposed's forward in PR3.
 
 Both emit **raw accumulator-range int32 mantissas** at output scale `s_in·s_w`
-(NOT range-restored). An explicitly-chained Quantization layer (#192) restores
-the operand width downstream — the same contract as Linear/LayerNorm. Per-output-
+(NOT range-restored). As of PR1b the `executeOp` epilogue restores operand width at the
+**producer** on the migrated paths (the dx wire; Linear/LayerNorm backward; the Quantization
+layer itself — `OUT_WRITE` routes SYM→SYM through the conversionMatrix diagonal). SYM
+**forward** chains are not yet funnel-routed: an explicitly-chained Quantization layer after
+each SYM producer remains REQUIRED (enforced by `validateModelQuantization`) until the forward
+migration (PR1b.2), after which it becomes an optional storage node. Per-output-
 channel bias is refolded into the product scale via `rescaleIntoAccumulatorScale`
 (the #189 guarded helper); never raw-added.
 
@@ -107,10 +111,11 @@ only the quantization configs change; the int32 accumulator (no int64) is kept.
   knob override (e.g. `-DODT_SYM_OPERAND_QMAXBITS=8`) diverges from those gold
   fixtures, which is expected and intentional.
 
-The training loop (`CalculateGradsSequential.c`) allocates grad/activation
-tensors from the **forward** qConfig, not the backward qConfigs — so a full-SYM
-chain needs each layer's `propLossQ` to agree with the forward-derived grad dtype
-(else the #187 guard fires), exactly as for Linear. The Conv→Quant→…→MSE chain
+The training loop (`CalculateGradsSequential.c`) allocates each dx-wire buffer
+from the **producing layer's declared backward config** (`backwardWireQ`:
+`propLossQ` for Linear/Conv/pools, `backwardQ` for Relu/Softmax/Dropout/LayerNorm/
+Quantization; Flatten and the loss seed pass through the upstream dtype) — #221.
+Uniform chains behave exactly as before. The Conv→Quant→…→MSE chain
 wiring + FLOAT32-twin convergence check is PR3.
 
 ### Conv1dTransposed SYM_INT32 (PR3)
@@ -143,10 +148,13 @@ layer (or sit in the last position).
 
 ### SYM training chains
 
-The training loop allocates every grad/activation tensor from the FORWARD output
-qConfig (`initGradTensor`), so a uniformly-SYM chain (every `forwardQ` SYM_INT32)
-makes every grad tensor SYM_INT32 and every layer's `propLossQ` match — the #187
-guard passes. SYM-trainable conv layers are built via the low-level
+The training loop allocates each dx-wire buffer from the **producing layer's
+declared backward config** (`backwardWireQ`: `propLossQ` for Linear/Conv/pools,
+`backwardQ` for Relu/Softmax/Dropout/LayerNorm/Quantization; Flatten and the
+loss seed pass through the upstream dtype) — #221. Uniform chains behave exactly
+as before: a uniformly-SYM chain (every `forwardQ` SYM_INT32) makes every grad
+tensor SYM_INT32 and every layer's `propLossQ` match — the #187 guard passes.
+SYM-trainable conv layers are built via the low-level
 `initConv1dTransposedConfigWithWeightsAndBias` with SYM `parameter_t`s (the
 high-level factory keeps grads FLOAT32, matching the Linear KAIMING factory).
 `Conv1dTransposed → Quant → MSE` trains under
@@ -155,12 +163,13 @@ high-level factory keeps grads FLOAT32, matching the Linear KAIMING factory).
 ## Quantized gradient accumulation — known precision Open Problem
 
 As of the quantized-gradient prerequisite (`gradInit`, 2026-06-05) a trainable
-layer's parameter gradient can be stored in the dtype its `backwardMath`
-declares. For SYM_INT32 grads, the per-microbatch accumulation reuses the
-existing `addSymInt32TensorsInplace` ("strategy A", dynamic-rescale): it
-dequantizes both the running grad and the new microbatch grad to float, adds,
-and re-quantizes the running sum to a new absmax-derived scale **on every
-microbatch**.
+layer's parameter gradient can be stored in `param->grad->quantization`'s dtype
+(grad-storage axis); `backwardMath` is the declared backward *arithmetic*.
+Accumulation is the `OUT_ACC_DYNAMIC_RESCALE` epilogue mode of `executeOp` (no
+longer inside kernels). For SYM_INT32 grads, the per-microbatch accumulation
+delegates to the funnel's rescaling epilogue, which dequantizes both the running
+grad and the new microbatch grad to float, adds, and re-quantizes the running sum
+to a new absmax-derived scale **on every microbatch**.
 
 This is functionally correct end-to-end today, but **not** numerically ideal:
 
@@ -197,6 +206,11 @@ quantized training know this is a known, expected limitation rather than a bug.
   grad's EXISTING scale and added in integer arithmetic; the scale is never
   re-derived during accumulation. The coarser resolution (LSB pinned by the
   running scale, which inits to 1.0) is inherent to the scheme.
+
+The two schemes are now the named funnel epilogue modes chosen per call in layer
+code: `OUT_ACC_DYNAMIC_RESCALE` (Strategy A) and `OUT_ACC_FIXED_SCALE` (Linear
+SYM bias). On FLOAT32 targets, both collapse to the exact float add (no
+quantization).
 
   **Attribution note:** this fixed-scale integer bias-GRADIENT accumulation is
   ODT's own construction and is NOT prescribed by Deutel et al.

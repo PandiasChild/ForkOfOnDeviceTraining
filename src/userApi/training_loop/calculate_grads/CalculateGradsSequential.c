@@ -70,7 +70,7 @@ static trainingStats_t *calculateGradsImpl(layer_t **model, size_t modelSize,
     }
 
     tensor_t gradNext;
-    initGradTensor(&gradNext, layerOutputs[modelSize]);
+    initGradTensor(&gradNext, layerOutputs[modelSize], NULL);
     lossFns.backward(layerOutputs[modelSize], label, &gradNext);
     if (sink != NULL) {
         sink(sinkCtx, modelSize, model[modelSize - 1]->type, "lossgrad", &gradNext);
@@ -84,7 +84,7 @@ static trainingStats_t *calculateGradsImpl(layer_t **model, size_t modelSize,
             sink(sinkCtx, (size_t)i, layerType, "agrad", &gradNext);
         }
         tensor_t gradCurr;
-        initGradTensor(&gradCurr, layerOutputs[i]);
+        initGradTensor(&gradCurr, layerOutputs[i], backwardWireQ(model[i]));
         backwardFn_t backward = layerFunctions[layerType].backward;
         backward(model[i], layerOutputs[i], &gradNext, &gradCurr);
         deInitGradTensor(&gradNext);
@@ -275,9 +275,45 @@ static void deInitLayerOutputs(tensor_t **layerOutputs, size_t modelSize) {
     }
 }
 
-static void initGradTensor(tensor_t *grad, tensor_t *layerOutput) {
+/* Producer's declared backward config for the dx wire it emits (design spec
+ * 2026-07-02 §5, #221). NULL = no declared config (Flatten) -> passthrough of
+ * the upstream dtype. The loss-grad seed also passes NULL (lossConfig_t has
+ * no quantization field -> model-output dtype, as before). */
+static quantization_t *backwardWireQ(layer_t *layer) {
+    switch (layer->type) {
+    case LINEAR:
+        return layer->config->linear->propLossQ;
+    case CONV1D:
+        return layer->config->conv1d->propLossQ;
+    case CONV1D_TRANSPOSED:
+        return layer->config->conv1dTransposed->propLossQ;
+    case MAXPOOL1D:
+        return layer->config->maxPool1d->propLossQ;
+    case AVGPOOL1D:
+        return layer->config->avgPool1d->propLossQ;
+    case ADAPTIVE_AVGPOOL1D:
+        return layer->config->adaptiveAvgPool1d->propLossQ;
+    case RELU:
+        return layer->config->relu->backwardQ;
+    case SOFTMAX:
+        return layer->config->softmax->backwardQ;
+    case DROPOUT:
+        return layer->config->dropout->backwardQ;
+    case LAYERNORM:
+        return layer->config->layerNorm->backwardQ;
+    case QUANTIZATION:
+        return layer->config->quantization->backwardQ;
+    case FLATTEN:
+        return NULL;
+    default:
+        PRINT_ERROR("Unknown Layer Type!");
+        exit(1);
+    }
+}
+
+static void initGradTensor(tensor_t *grad, tensor_t *layerOutput, quantization_t *wireQ) {
     shape_t *currentShape = layerOutput->shape;
-    quantization_t *currentQ = layerOutput->quantization;
+    quantization_t *currentQ = (wireQ != NULL) ? wireQ : layerOutput->quantization;
 
     size_t *dims = reserveMemory(currentShape->numberOfDimensions * sizeof(size_t));
     size_t *order = reserveMemory(currentShape->numberOfDimensions * sizeof(size_t));

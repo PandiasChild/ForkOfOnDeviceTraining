@@ -42,9 +42,11 @@ static void writeOut(tensor_t *intermediate, tensor_t *target) {
 /* Phase 4, ACC modes. The SYM->SYM add is Strategy A via
  * addSymInt32TensorsInplace (bit-identical to Linear.c's weight-grad
  * accumulate); the FLOAT32-intermediate -> SYM arm first quantizes the
- * increment to operand width with the TARGET's roundingMode (bit-identical
- * to LayerNorm's layerNormAccumulateGradSymInt32). Fixed-scale reproduces
- * linearCalcBiasGradsSymInt32: raw roundf, no clamp, scale never re-derived. */
+ * increment to operand width with the TARGET's roundingMode (reproduces the
+ * former LayerNorm helper layerNormAccumulateGradSymInt32, deleted in PR1b;
+ * semantics live here now). Fixed-scale reproduces the former
+ * linearCalcBiasGradsSymInt32 behavior: raw roundf, no clamp, scale
+ * never re-derived. */
 static void accumulateOut(tensor_t *intermediate, tensor_t *target, outputMode_t mode) {
     size_t n = calcNumberOfElementsByTensor(target);
 

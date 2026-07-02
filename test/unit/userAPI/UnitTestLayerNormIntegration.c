@@ -142,12 +142,11 @@ void testLinearLayerNormLinearOneTrainingStep(void) {
 
 /* Full-SYM single-LayerNorm training step through the public training APIs:
  * calculateGradsSequential (MSE — the only SYM-capable loss backward) + SGD-M
- * step on SYM gamma/beta with SYM grads. Single-layer BY DESIGN: direct SYM
- * Linear->LayerNorm chaining is not intended to work (Linear SYM outputs are
- * accumulator-range mantissas, violating LayerNorm's int16-range input
- * contract); the designed composition inserts explicit Quantization (requant)
- * layers — Linear -> Quant -> LayerNorm -> Quant -> Linear — a follow-up
- * feature (#192; the accumulator-range contract itself is #137).
+ * step on SYM gamma/beta with SYM grads. Explicit Quantization (requant) layers
+ * between SYM producers are still REQUIRED: the forward wire carries raw
+ * accumulator mantissas until the forward migration (PR1b.2); as of PR1b only
+ * the backward/dx side is funnel-restored at the producer (OUT_WRITE epilogue).
+ * Test behavior unchanged: validates the full SYM end-to-end path.
  * A FLOAT32 twin trained on the same data is the reference; 5e-3 absolute
  * dequant tolerance absorbs input quantization + strategy-A grad noise
  * (PR-0 E2E precedent tolerance). */

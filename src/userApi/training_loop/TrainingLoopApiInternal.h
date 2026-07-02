@@ -11,7 +11,9 @@ static void initLayerOutputs(tensor_t **layerOutputs, layer_t **model, size_t si
 
 static void deInitLayerOutputs(tensor_t **layerOutputs, size_t modelSize);
 
-static void initGradTensor(tensor_t *grad, tensor_t *layerOutput);
+static quantization_t *backwardWireQ(layer_t *layer);
+
+static void initGradTensor(tensor_t *grad, tensor_t *layerOutput, quantization_t *wireQ);
 
 static void deInitGradTensor(tensor_t *tensor);
 

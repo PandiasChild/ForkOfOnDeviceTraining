@@ -215,7 +215,7 @@ void conv1dCalcWeightGradsSymInt32(conv1dConfig_t *cfg, tensor_t *forwardInput,
     initSymInt32Quantization(&interQC, &interQ);
     tensor_t intermediate;
     /* intermediate borrows weightGrad->shape read-only (addSymInt32TensorsInplace
-     * only reads shapes); mirrors Linear.c backwardSymInt32. */
+     * only reads shapes); mirrors the pre-funnel Linear SYM backward. */
     setTensorValues(&intermediate, (uint8_t *)interData, weightGrad->shape, &interQ, NULL);
 
     int32_t const *xArr = (int32_t const *)forwardInput->data;

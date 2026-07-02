@@ -40,8 +40,9 @@ import torch.nn.functional as F
 #   OPERAND width (int12, qMaxBits=12) — default-initialized tensors:
 #     forwardInput / gamma / dy, the propLoss (dx) requant (propLoss is built via
 #     quantizationInitSymInt32 -> int12), AND the per-call grad INCREMENT
-#     quantization (layerNormAccumulateGradSymInt32's incSym uses the int12
-#     default initSymInt32QConfig).
+#     quantization (the executeOp epilogue's float-increment arm (formerly
+#     layerNormAccumulateGradSymInt32, deleted in PR1b) uses the int12 default
+#     initSymInt32QConfig).
 #   GRAD-ACCUMULATOR width (int16, qMaxBits=16) — gradInitSymInt32 tensors:
 #     ONLY the running-sum requant of dgamma/dbeta back into the grad tensor
 #     (addSymInt32TensorsInplace -> convertTensor into the int16 grad).

@@ -9,12 +9,9 @@ typedef struct layer layer_t;
 
 typedef struct quantizationConfig {
     quantization_t *forwardQ;  /* forward output target: dtype + qConfig for the layer output */
-    quantization_t *backwardQ; /* Intended backward propLoss target (dtype + qConfig for dy
-                                * requant). NOTE: the training loop currently derives the propLoss
-                                * dtype and roundingMode from the upstream layer's forward output
-                                * (initGradTensor), so backwardQ is only honored when it matches
-                                * that — true for uniform- quantization configs. A per-layer
-                                * backward-dtype override is tracked in #221. */
+    quantization_t *backwardQ; /* Declared backward propLoss target (dtype + qConfig for the
+                                * dy requant). The training loop allocates this layer's dx-wire
+                                * buffer from it (initGradTensor via backwardWireQ, #221). */
     bool ownsQuantizations;    /* true → freeQuantLayer tears down forwardQ/backwardQ (Owning
                                 * factory); false → caller owns them (Borrowing). */
 } quantizationConfig_t;
