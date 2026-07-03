@@ -1,6 +1,5 @@
 #define SOURCE_FILE "EXECUTE-OP"
 
-#include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,14 +8,18 @@
 #include "Common.h"
 #include "ExecuteOp.h"
 #include "Quantization.h"
+#include "Rounding.h"
 #include "Tensor.h"
 #include "TensorConversion.h"
 
 /* Maximum operands any in-tree op passes (matmul: 2). Bump deliberately. */
 #define EXECUTE_OP_MAX_INPUTS 2
 
-void executeOpIdentityKernel(tensor_t **operands, size_t nOperands, tensor_t *rawOut) {
+void executeOpIdentityKernel(tensor_t **operands, size_t nOperands, tensor_t *rawOut,
+                             tensor_t *auxOut, const void *ctx) {
     (void)nOperands;
+    (void)auxOut;
+    (void)ctx;
     tensor_t *src = operands[0];
     size_t n = calcNumberOfElementsByTensor(src);
     size_t bytes = calcNumberOfBytesForData(src->quantization, n);
@@ -49,8 +52,9 @@ void executeConvert(tensor_t *input, tensor_t *target) {
  * increment to operand width with the TARGET's roundingMode (reproduces the
  * former LayerNorm helper layerNormAccumulateGradSymInt32, deleted in PR1b;
  * semantics live here now). Fixed-scale reproduces the former
- * linearCalcBiasGradsSymInt32 behavior: raw roundf, no clamp, scale
- * never re-derived. */
+ * linearCalcBiasGradsSymInt32 behavior: rescale into the target's EXISTING
+ * scale via rescaleIntoAccumulatorScale (spec D4 — honors the TARGET's
+ * roundingMode; Conv1d.c:288 precedent), no clamp, scale never re-derived. */
 static void accumulateOut(tensor_t *intermediate, tensor_t *target, outputMode_t mode) {
     size_t n = calcNumberOfElementsByTensor(target);
 
@@ -89,7 +93,8 @@ static void accumulateOut(tensor_t *intermediate, tensor_t *target, outputMode_t
             int32_t *tg = (int32_t *)target->data;
             int32_t *in = (int32_t *)intermediate->data;
             for (size_t i = 0; i < n; i++) {
-                tg[i] += (int32_t)roundf((float)in[i] * intermScale / targetScale);
+                tg[i] += rescaleIntoAccumulatorScale(in[i], intermScale, targetScale,
+                                                     targetQC->roundingMode);
             }
             return;
         }
@@ -119,8 +124,11 @@ static void accumulateOut(tensor_t *intermediate, tensor_t *target, outputMode_t
     }
 }
 
-void executeOp(opKernelFn_t kernel, tensor_t **inputs, size_t nInputs, arithmetic_t arithmetic,
-               tensor_t *target, outputMode_t mode) {
+void executeOp(const opSpec_t *spec, tensor_t *target) {
+    tensor_t **inputs = spec->inputs;
+    size_t nInputs = spec->nInputs;
+    arithmetic_t arithmetic = spec->arithmetic;
+
     if (nInputs > EXECUTE_OP_MAX_INPUTS) {
         PRINT_ERROR("executeOp: %u inputs exceeds EXECUTE_OP_MAX_INPUTS (%u)", (unsigned)nInputs,
                     (unsigned)EXECUTE_OP_MAX_INPUTS);
@@ -192,17 +200,18 @@ void executeOp(opKernelFn_t kernel, tensor_t **inputs, size_t nInputs, arithmeti
     }
     setTensorValues(&raw, rawData, target->shape, &rawQ, target->sparsity);
 
-    /* Phase 3 — kernel emits raw. */
-    kernel(ops, nInputs, &raw);
+    /* Phase 3 — kernel emits raw; auxOut/ctx pass through untouched by the
+     * funnel (auxOut is NEVER funnel-converted). */
+    spec->kernel(ops, nInputs, &raw, spec->auxOut, spec->ctx);
 
-    /* Phase 4 — epilogue. */
-    switch (mode) {
+    /* Phase 4 — epilogue (target only; auxOut already final). */
+    switch (spec->mode) {
     case OUT_WRITE:
         writeOut(&raw, target);
         break;
     case OUT_ACC_DYNAMIC_RESCALE:
     case OUT_ACC_FIXED_SCALE:
-        accumulateOut(&raw, target, mode);
+        accumulateOut(&raw, target, spec->mode);
         break;
     }
 }

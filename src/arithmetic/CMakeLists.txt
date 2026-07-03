@@ -178,5 +178,6 @@ target_link_libraries(ExecuteOp PRIVATE
         ArithmeticType
         TensorConversion
         Add
+        Rounding
         Common
 )

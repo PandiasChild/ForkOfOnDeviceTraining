@@ -502,12 +502,24 @@ static void layerNormBackwardSymInt32(layerNormConfig_t *cfg, tensor_t *forwardI
     tensor_t dbetaT;
     setTensorValues(&dbetaT, (uint8_t *)dbetaInc, cfg->beta->grad->shape, &incQ,
                     cfg->beta->grad->sparsity);
-    executeOp(executeOpIdentityKernel, (tensor_t *[]){&dgammaT}, 1,
-              (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY}, cfg->gamma->grad,
-              OUT_ACC_DYNAMIC_RESCALE);
-    executeOp(executeOpIdentityKernel, (tensor_t *[]){&dbetaT}, 1,
-              (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY}, cfg->beta->grad,
-              OUT_ACC_DYNAMIC_RESCALE);
+    executeOp(
+        &(opSpec_t){
+            .kernel = executeOpIdentityKernel,
+            .inputs = (tensor_t *[]){&dgammaT},
+            .nInputs = 1,
+            .arithmetic = (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY},
+            .mode = OUT_ACC_DYNAMIC_RESCALE,
+        },
+        cfg->gamma->grad);
+    executeOp(
+        &(opSpec_t){
+            .kernel = executeOpIdentityKernel,
+            .inputs = (tensor_t *[]){&dbetaT},
+            .nInputs = 1,
+            .arithmetic = (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY},
+            .mode = OUT_ACC_DYNAMIC_RESCALE,
+        },
+        cfg->beta->grad);
 
     /* dx requant: convertFloatTensorToSymInt32Tensor idiom (whole-tensor
      * absmax -> scale -> round-clamp). NO integer dy==0 pre-check is needed

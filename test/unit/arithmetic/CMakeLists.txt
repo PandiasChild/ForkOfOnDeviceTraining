@@ -178,6 +178,7 @@ add_elastic_ai_unit_test(
         Arithmetic
         ArithmeticType
         Rounding
+        RNG
         StorageApi
         Common
         odt_test_death

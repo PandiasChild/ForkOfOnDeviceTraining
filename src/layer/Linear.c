@@ -119,29 +119,47 @@ void linearCalcPropLossSymInt32(tensor_t *weights, tensor_t *loss, tensor_t *pro
 }
 
 /* executeOp kernel adapters — ops convention: weight-grad {loss, fwdIn},
- * bias-grad {loss}, propLoss {loss, weightsParam}. */
-static void weightGradKernelFloat(tensor_t **ops, size_t n, tensor_t *rawOut) {
+ * bias-grad {loss}, propLoss {loss, weightsParam}. auxOut/ctx unused here. */
+static void weightGradKernelFloat(tensor_t **ops, size_t n, tensor_t *rawOut, tensor_t *auxOut,
+                                  const void *ctx) {
     (void)n;
+    (void)auxOut;
+    (void)ctx;
     linearCalcWeightGradsFloat32(ops[1], ops[0], rawOut);
 }
-static void weightGradKernelSym(tensor_t **ops, size_t n, tensor_t *rawOut) {
+static void weightGradKernelSym(tensor_t **ops, size_t n, tensor_t *rawOut, tensor_t *auxOut,
+                                const void *ctx) {
     (void)n;
+    (void)auxOut;
+    (void)ctx;
     linearCalcWeightGradsSymInt32(ops[0], ops[1], rawOut);
 }
-static void biasGradKernelFloat(tensor_t **ops, size_t n, tensor_t *rawOut) {
+static void biasGradKernelFloat(tensor_t **ops, size_t n, tensor_t *rawOut, tensor_t *auxOut,
+                                const void *ctx) {
     (void)n;
+    (void)auxOut;
+    (void)ctx;
     linearCalcBiasGradsFloat32(ops[0], rawOut);
 }
-static void biasGradKernelSym(tensor_t **ops, size_t n, tensor_t *rawOut) {
+static void biasGradKernelSym(tensor_t **ops, size_t n, tensor_t *rawOut, tensor_t *auxOut,
+                              const void *ctx) {
     (void)n;
+    (void)auxOut;
+    (void)ctx;
     linearCalcBiasGradsSymInt32(rawOut, ops[0]);
 }
-static void propLossKernelFloat(tensor_t **ops, size_t n, tensor_t *rawOut) {
+static void propLossKernelFloat(tensor_t **ops, size_t n, tensor_t *rawOut, tensor_t *auxOut,
+                                const void *ctx) {
     (void)n;
+    (void)auxOut;
+    (void)ctx;
     linearCalcPropLossFloat32(ops[0], ops[1], rawOut);
 }
-static void propLossKernelSym(tensor_t **ops, size_t n, tensor_t *rawOut) {
+static void propLossKernelSym(tensor_t **ops, size_t n, tensor_t *rawOut, tensor_t *auxOut,
+                              const void *ctx) {
     (void)n;
+    (void)auxOut;
+    (void)ctx;
     linearCalcPropLossSymInt32(ops[1], ops[0], rawOut);
 }
 
@@ -149,21 +167,40 @@ void linearBackward(layer_t *linearLayer, tensor_t *forwardInput, tensor_t *loss
                     tensor_t *propLoss) {
     linearConfig_t *cfg = linearLayer->config->linear;
 
-    executeOp(cfg->weightGradMath.type == ARITH_SYM_INT32 ? weightGradKernelSym
-                                                          : weightGradKernelFloat,
-              (tensor_t *[]){loss, forwardInput}, 2, cfg->weightGradMath,
-              getGradFromParameter(cfg->weights), OUT_ACC_DYNAMIC_RESCALE);
+    executeOp(
+        &(opSpec_t){
+            .kernel = cfg->weightGradMath.type == ARITH_SYM_INT32 ? weightGradKernelSym
+                                                                  : weightGradKernelFloat,
+            .inputs = (tensor_t *[]){loss, forwardInput},
+            .nInputs = 2,
+            .arithmetic = cfg->weightGradMath,
+            .mode = OUT_ACC_DYNAMIC_RESCALE,
+        },
+        getGradFromParameter(cfg->weights));
 
     if (cfg->bias != NULL) {
-        executeOp(cfg->biasGradMath.type == ARITH_SYM_INT32 ? biasGradKernelSym
-                                                            : biasGradKernelFloat,
-                  (tensor_t *[]){loss}, 1, cfg->biasGradMath, getGradFromParameter(cfg->bias),
-                  OUT_ACC_FIXED_SCALE);
+        executeOp(
+            &(opSpec_t){
+                .kernel = cfg->biasGradMath.type == ARITH_SYM_INT32 ? biasGradKernelSym
+                                                                    : biasGradKernelFloat,
+                .inputs = (tensor_t *[]){loss},
+                .nInputs = 1,
+                .arithmetic = cfg->biasGradMath,
+                .mode = OUT_ACC_FIXED_SCALE,
+            },
+            getGradFromParameter(cfg->bias));
     }
 
-    executeOp(cfg->propLossMath.type == ARITH_SYM_INT32 ? propLossKernelSym : propLossKernelFloat,
-              (tensor_t *[]){loss, getParamFromParameter(cfg->weights)}, 2, cfg->propLossMath,
-              propLoss, OUT_WRITE);
+    executeOp(
+        &(opSpec_t){
+            .kernel =
+                cfg->propLossMath.type == ARITH_SYM_INT32 ? propLossKernelSym : propLossKernelFloat,
+            .inputs = (tensor_t *[]){loss, getParamFromParameter(cfg->weights)},
+            .nInputs = 2,
+            .arithmetic = cfg->propLossMath,
+            .mode = OUT_WRITE,
+        },
+        propLoss);
 }
 
 void linearCalcOutputShape(layer_t *linearLayer, shape_t *inputShape, shape_t *outputShape) {
