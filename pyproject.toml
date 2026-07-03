@@ -5,6 +5,7 @@ description = "ODT Python pipeline: providers, ir2c, resource estimation for on-
 requires-python = ">=3.12"
 dependencies = [
     "elasticai-creator @ git+https://github.com/es-ude/elastic-ai.creator.git@training-implementation-provider",
+    "kaleido>=1.3.0",
     "matplotlib>=3.10.9",
     "optuna>=4.9.0",
     "torch>=2.9.1",

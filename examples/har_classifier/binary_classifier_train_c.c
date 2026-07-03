@@ -55,6 +55,9 @@
 
 typedef enum deltaStatus { WITH_DELTAS, WITHOUT_DELTAS } deltaStatus_t;
 
+
+/// es wurde geändert optuna, plot und hier in diesem dokument das print. es wurde noch delta status und trial_number hinzugefügt
+
 // har_classifier: FINAL test_loss=0.3498 test_acc=0.9046
 
 /* ------------------------------------------------------------------------- */
@@ -371,7 +374,6 @@ static void buildModel(layer_t **model, uint8_t delta_reduction, roundingMode_t 
 
     // Linear 1152->64
     model[2] = linearLayerInitLegacy(weight0, bias0, q0, q1, q2, q3);
-    printf("buildModel: done linearLayerInitLegacy\n");
 
     // ReLU
     model[3] = reluLayerInitLegacy(q4, q5);
@@ -463,15 +465,16 @@ int runExperiment(dataLoader_t *trainLoader, dataLoader_t *valLoader, dataLoader
         fprintf(stderr, "ERROR: cannot open log file for writing\n");
         return 1;
     }
+
     fprintf(g_log_file,
             "{\n"
             "  \"impl\": \"c\",\n"
             "  \"example\": \"bin_classifier_trial_number%d\",\n"
             "  \"config\": {\"epochs\": %d, \"batch\": %d, \"lr\": %.6f, "
-            "\"momentum\": %.6f, \"seed\": %d, \"shuffle_seed\": %d, \"rounding_mode\": %d},\n"
+            "\"momentum\": %.6f, \"seed\": %d, \"shuffle_seed\": %d, \"rounding_mode\": %d, \"delta_status\": %d, \"trial_number\": %d},\n"
             "  \"epochs\": [\n",
             trial_number, epochs, batch, (double)learning_rate, (double)momentum, SEED,
-            SHUFFLE_SEED, rounding_mode);
+            SHUFFLE_SEED, rounding_mode, deltaStatus, trial_number);
     fflush(g_log_file);
 
     clock_gettime(CLOCK_MONOTONIC, &g_epoch_t0);

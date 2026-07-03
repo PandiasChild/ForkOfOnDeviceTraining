@@ -4,6 +4,8 @@ import optuna
 from pathlib import Path
 import json
 
+
+# you need to uv add kaleido and uv add optuna
 HERE = Path(__file__).resolve().parent
 LOGS = HERE / "logs"
 OPTUNA_LOGS = LOGS/ "optuna_logs"
@@ -16,8 +18,6 @@ def objective(trial) -> int| float:
     rounding_mode = 0 # HALF_AWAY
     epochs = 20
     batch = 64
-
-
 
     result = subprocess.run(
         [
@@ -33,13 +33,20 @@ def objective(trial) -> int| float:
         capture_output=True,
         text=True
     )
-    prefix = 'examples/har_classifier/logs/trial'
+    #with or without is missing!
+    prefix = 'examples/har_classifier/logs/trial_'
     with open(prefix + trial_number + '.json', 'r') as f:
         data = json.load(f)
         yield data
 
+    test_duration = 0
+
+    for epochs in data["epochs"]:
+        test_duration += epochs.get("wall_s")
+
     test_loss = data.get("final", {}).get("test_loss")
     test_acc = data.get("final", {}).get("test_acc")
+
 
     #test_loss = data["final"]["test_loss"]
     #test_acc = data["final"]["test_acc"]
@@ -52,8 +59,6 @@ def objective(trial) -> int| float:
     #}
     #data["items"].insert(3, neues_element)
 
-
-
     trial.set_user_attr("delta_reduction", delta_reduction)
     trial.set_user_attr("lr", learning_rate)
     trial.set_user_attr("momentum", momentum)
@@ -61,6 +66,7 @@ def objective(trial) -> int| float:
 
     trial.set_user_attr("test_loss", test_loss)
     trial.set_user_attr("test_acc", test_acc)
+    trial.set_user_attr("test_duration", test_duration)
 
     trial.set_user_attr("epochs", epochs)
     trial.set_user_attr("batch", batch)
@@ -83,6 +89,29 @@ def main():
 
     study.optimize(objective, n_trials=30)
     space = intersection_search_space(study.get_trials())
+
+    fig = plot_optimization_history(study)
+    fig.write_html("optimization_history.html")
+    fig.write_image("optimization_history.png")
+
+    # Optimierungsverlauf
+    plot_optimization_history(study).show()
+
+    # Wichtigkeit der Hyperparameter
+    plot_param_importances(study).show()
+
+    # Parallel Coordinates
+    plot_parallel_coordinate(study).show()
+
+    # Slice Plot
+    plot_slice(study).show()
+
+    # Konturdiagramm
+    plot_contour(study).show()
+
+    # Empirical Distribution Function
+    plot_edf(study).show()
+
     print(f"Intersection Search Space Of Trials : {space}")
 
     print(f"Best Trial Number : {study.best_trial.number}")
