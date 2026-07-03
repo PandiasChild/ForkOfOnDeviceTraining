@@ -516,23 +516,42 @@ conversionFunction_t conversionMatrix[6][6] = {
 
 static void convertTensorsWithSameType(tensor_t *inputTensor, tensor_t *outputTensor,
                                        qtype_t qType) {
+    size_t inputBits = calcBitsPerElement(inputTensor->quantization);
+    size_t outputBits = calcBitsPerElement(outputTensor->quantization);
+    if (inputBits != outputBits) {
+        /* Same-type conversion is a verbatim packed-byte copy; differing widths
+         * would reinterpret the packing (and overflow the output for wider inputs).
+         * Width-changing SYM/ASYM rewrites are real conversions (repack policy:
+         * PR3, #261). */
+        PRINT_ERROR("Same-type conversion requires equal element widths (%zu vs %zu bits)",
+                    inputBits, outputBits);
+        exit(1);
+    }
     size_t numberOfElements = calcNumberOfElementsByTensor(inputTensor);
     size_t numberOfBytes = calcNumberOfBytesForData(inputTensor->quantization, numberOfElements);
 
     memmove(outputTensor->data, inputTensor->data, numberOfBytes);
 
     switch (qType) {
-    case SYM_INT32:
+    case SYM_INT32: {
         symInt32QConfig_t *inputSymIntQC = inputTensor->quantization->qConfig;
         symInt32QConfig_t *outputSymIntQC = outputTensor->quantization->qConfig;
         outputSymIntQC->scale = inputSymIntQC->scale;
         break;
-    case ASYM:
+    }
+    case SYM: {
+        symQConfig_t *inputSymQC = inputTensor->quantization->qConfig;
+        symQConfig_t *outputSymQC = outputTensor->quantization->qConfig;
+        outputSymQC->scale = inputSymQC->scale;
+        break;
+    }
+    case ASYM: {
         asymQConfig_t *inputAsymQC = inputTensor->quantization->qConfig;
         asymQConfig_t *outputAsymQC = outputTensor->quantization->qConfig;
         outputAsymQC->scale = inputAsymQC->scale;
         outputAsymQC->zeroPoint = inputAsymQC->zeroPoint;
         break;
+    }
     default:
         break;
     }

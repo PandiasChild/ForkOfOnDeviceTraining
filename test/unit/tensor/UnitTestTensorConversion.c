@@ -583,6 +583,93 @@ void testConversionSymInt32SameTypeCopyPropagatesScale() {
     TEST_ASSERT_EQUAL_FLOAT(0.03125f, outQC.scale);
 }
 
+void testConversionSymSameTypeCopyPropagatesScale() {
+    /* SYM -> SYM same width is a verbatim packed copy; the output's stale default
+     * scale (1.f) must be replaced by the input's, or every later dequant is wrong.
+     * Mutation guard: dropping the new `case SYM:` leaves scale == 1.f -> RED. */
+    int32_t mantissas[] = {3, -3, 31, -32};
+    size_t dims[] = {1, 4};
+    size_t order[] = {0, 1};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 2, .orderOfDimensions = order};
+
+    symQConfig_t inQC = {.scale = 0.25f, .qBits = 6, .roundingMode = HALF_AWAY};
+    quantization_t inQ;
+    initSymQuantization(&inQC, &inQ);
+    uint8_t inData[3];
+    byteConversion((uint8_t *)mantissas, 32, inData, 6, 4);
+    tensor_t in;
+    setTensorValues(&in, inData, &shape, &inQ, NULL);
+
+    symQConfig_t outQC = {.scale = 1.f, .qBits = 6, .roundingMode = HALF_AWAY};
+    quantization_t outQ;
+    initSymQuantization(&outQC, &outQ);
+    uint8_t outData[4];
+    memset(outData, 0xAA,
+           sizeof(outData)); /* canary in byte 3: only 3 packed bytes may be written */
+    tensor_t out;
+    setTensorValues(&out, outData, &shape, &outQ, NULL);
+
+    convertTensor(&in, &out);
+
+    TEST_ASSERT_EQUAL_FLOAT(0.25f, outQC.scale);
+    TEST_ASSERT_EQUAL_UINT8(6, outQC.qBits);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(inData, outData, 3);
+    TEST_ASSERT_EQUAL_UINT8(0xAA, outData[3]);
+}
+
+void testConversionSymSameTypeWidthMismatchDies() {
+    /* qBits 6 -> 4: a verbatim byte copy would reinterpret the packing (and for
+     * wider inputs overflow the output buffer). Width-changing SYM rewrites are
+     * real conversions (repack policy: PR3). Mutation guard: removing the width
+     * guard lets the child exit 0 -> RED. */
+    int32_t mantissas[] = {3, -3};
+    size_t dims[] = {1, 2};
+    size_t order[] = {0, 1};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 2, .orderOfDimensions = order};
+
+    symQConfig_t inQC = {.scale = 0.25f, .qBits = 6, .roundingMode = HALF_AWAY};
+    quantization_t inQ;
+    initSymQuantization(&inQC, &inQ);
+    uint8_t inData[2];
+    byteConversion((uint8_t *)mantissas, 32, inData, 6, 2);
+    tensor_t in;
+    setTensorValues(&in, inData, &shape, &inQ, NULL);
+
+    symQConfig_t outQC = {.scale = 1.f, .qBits = 4, .roundingMode = HALF_AWAY};
+    quantization_t outQ;
+    initSymQuantization(&outQC, &outQ);
+    uint8_t outData[1] = {0};
+    tensor_t out;
+    setTensorValues(&out, outData, &shape, &outQ, NULL);
+
+    ASSERT_EXITS_WITH_FAILURE(convertTensor(&in, &out));
+}
+
+void testConversionAsymSameTypeWidthMismatchDies() {
+    /* ASYM variant of the width guard (qBits 5 -> 3). */
+    int32_t codes[] = {0, 10};
+    size_t dims[] = {1, 2};
+    size_t order[] = {0, 1};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 2, .orderOfDimensions = order};
+
+    asymQConfig_t inQC = {.scale = 0.5f, .zeroPoint = -7, .qBits = 5, .roundingMode = HALF_AWAY};
+    quantization_t inQ;
+    initAsymQuantization(&inQC, &inQ);
+    uint8_t inData[2];
+    byteConversion((uint8_t *)codes, 32, inData, 5, 2);
+    tensor_t in;
+    setTensorValues(&in, inData, &shape, &inQ, NULL);
+
+    asymQConfig_t outQC = {.scale = 1.f, .zeroPoint = 0, .qBits = 3, .roundingMode = HALF_AWAY};
+    quantization_t outQ;
+    initAsymQuantization(&outQC, &outQ);
+    uint8_t outData[1] = {0};
+    tensor_t out;
+    setTensorValues(&out, outData, &shape, &outQ, NULL);
+
+    ASSERT_EXITS_WITH_FAILURE(convertTensor(&in, &out));
+}
+
 void testRequantDynamicAccumulatorRangeMatchesGold() {
     size_t dims[] = {input_requant_f1AccumRange_len};
     size_t orderOfDims[] = {0};
@@ -1540,6 +1627,9 @@ int main(void) {
     RUN_TEST(testRequantToScaleSharedBufferAliasMatchesGold);
     RUN_TEST(testConversionBoolBoolCopiesOnlyPackedBytes);
     RUN_TEST(testConversionSymInt32SameTypeCopyPropagatesScale);
+    RUN_TEST(testConversionSymSameTypeCopyPropagatesScale);
+    RUN_TEST(testConversionSymSameTypeWidthMismatchDies);
+    RUN_TEST(testConversionAsymSameTypeWidthMismatchDies);
     RUN_TEST(testQuantTypeToStringBool);
     RUN_TEST(testConversionSymSymInt32SignExtends);
     RUN_TEST(testConversionSymFloat32Dequantizes);
