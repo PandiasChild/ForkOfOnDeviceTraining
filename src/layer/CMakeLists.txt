@@ -5,11 +5,9 @@ target_link_libraries(Conv1d PRIVATE
         Tensor
         Arithmetic
         ArithmeticType
-        Add
+        ExecuteOp
         Mul
         Quantization
-        Rounding
-        StorageApi
         Common
         Kernel
         SlidingWindow1d
@@ -24,11 +22,9 @@ target_link_libraries(Conv1dTransposed PRIVATE
         Tensor
         Arithmetic
         ArithmeticType
-        Add
+        ExecuteOp
         Mul
         Quantization
-        Rounding
-        StorageApi
         Common
         Kernel
         SlidingWindow1d

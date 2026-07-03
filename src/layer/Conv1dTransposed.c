@@ -2,16 +2,16 @@
 
 #include "Conv1dTransposed.h"
 
-#include "Add.h"
+#include <string.h>
+
 #include "Common.h"
 #include "Conv1dKernel.h"
 #include "ConvTranspose1dKernel.h"
+#include "ExecuteOp.h"
 #include "Layer.h"
 #include "Mul.h"
 #include "Quantization.h"
-#include "Rounding.h"
 #include "SlidingWindow1d.h"
-#include "StorageApi.h"
 #include "Tensor.h"
 
 void initConv1dTransposedConfigWithWeightsAndBias(
@@ -85,8 +85,22 @@ void conv1dTransposedForward(layer_t *layer, tensor_t *input, tensor_t *output) 
     }
 }
 
-static void conv1dTransposedCalcWeightGradsFloat32(conv1dTransposedConfig_t *cfg,
-                                                   tensor_t *forwardInput, tensor_t *lossGrad) {
+/* executeOp kernel adapters (ctx = conv1dTransposedConfig_t*, for
+ * kernel_t/groups geometry — mirrors Conv1d.c). Weight-grad kernels `+=`
+ * across many (b, inPos) iterations, so they memset rawOut first; bias-grad
+ * kernels write each output-channel index exactly once. SYM weight-grad
+ * sets the raw intermediate's scale itself (s_in*s_loss); SYM bias-grad
+ * emits the raw per-channel sum at the loss scale, letting the
+ * OUT_ACC_FIXED_SCALE epilogue's rescaleIntoAccumulatorScale (target
+ * roundingMode, spec D4) do the rescale that used to happen inline here. */
+static void weightGradKernelFloat(tensor_t **ops, size_t n, tensor_t *rawOut, tensor_t *auxOut,
+                                  const void *ctx) {
+    (void)n;
+    (void)auxOut;
+    const conv1dTransposedConfig_t *cfg = ctx;
+    tensor_t *forwardInput = ops[0];
+    tensor_t *lossGrad = ops[1];
+
     size_t batch = forwardInput->shape->dimensions[0];
     size_t inChannels = forwardInput->shape->dimensions[1];
     size_t inputLength = forwardInput->shape->dimensions[2];
@@ -128,7 +142,9 @@ static void conv1dTransposedCalcWeightGradsFloat32(conv1dTransposedConfig_t *cfg
 
     float const *xArr = (float const *)forwardInput->data;
     float const *gyArr = (float const *)lossGrad->data;
-    float *gwArr = (float *)cfg->weights->grad->data;
+    float *gwArr = (float *)rawOut->data;
+    memset(gwArr, 0,
+           calcNumberOfBytesForData(rawOut->quantization, calcNumberOfElementsByTensor(rawOut)));
 
     for (size_t b = 0; b < batch; b++) {
         for (size_t g = 0; g < groups; g++) {
@@ -159,8 +175,27 @@ static void conv1dTransposedCalcWeightGradsFloat32(conv1dTransposedConfig_t *cfg
     }
 }
 
-static void conv1dTransposedCalcBiasGradsFloat32(conv1dTransposedConfig_t *cfg,
-                                                 tensor_t *lossGrad) {
+static void conv1dTransposedCalcWeightGradsFloat32(conv1dTransposedConfig_t *cfg,
+                                                   tensor_t *forwardInput, tensor_t *lossGrad) {
+    executeOp(
+        &(opSpec_t){
+            .kernel = weightGradKernelFloat,
+            .ctx = cfg,
+            .inputs = (tensor_t *[]){forwardInput, lossGrad},
+            .nInputs = 2,
+            .arithmetic = cfg->weightGradMath,
+            .mode = OUT_ACC_DYNAMIC_RESCALE,
+        },
+        cfg->weights->grad);
+}
+
+static void biasGradKernelFloat(tensor_t **ops, size_t n, tensor_t *rawOut, tensor_t *auxOut,
+                                const void *ctx) {
+    (void)n;
+    (void)auxOut;
+    const conv1dTransposedConfig_t *cfg = ctx;
+    tensor_t *lossGrad = ops[0];
+
     size_t batch = lossGrad->shape->dimensions[0];
     size_t outChannels = lossGrad->shape->dimensions[1];
     size_t outputLength = lossGrad->shape->dimensions[2];
@@ -174,7 +209,7 @@ static void conv1dTransposedCalcBiasGradsFloat32(conv1dTransposedConfig_t *cfg,
     }
 
     float const *gyArr = (float const *)lossGrad->data;
-    float *gbArr = (float *)cfg->bias->grad->data;
+    float *rawArr = (float *)rawOut->data;
 
     for (size_t oc = 0; oc < outChannels; oc++) {
         float sum = 0.0f;
@@ -183,12 +218,32 @@ static void conv1dTransposedCalcBiasGradsFloat32(conv1dTransposedConfig_t *cfg,
                 sum += gyArr[(b * outChannels + oc) * outputLength + outPos];
             }
         }
-        gbArr[oc] += sum;
+        rawArr[oc] = sum;
     }
 }
 
-void conv1dTransposedCalcWeightGradsSymInt32(conv1dTransposedConfig_t *cfg, tensor_t *forwardInput,
-                                             tensor_t *lossGrad) {
+static void conv1dTransposedCalcBiasGradsFloat32(conv1dTransposedConfig_t *cfg,
+                                                 tensor_t *lossGrad) {
+    executeOp(
+        &(opSpec_t){
+            .kernel = biasGradKernelFloat,
+            .ctx = cfg,
+            .inputs = (tensor_t *[]){lossGrad},
+            .nInputs = 1,
+            .arithmetic = cfg->biasGradMath,
+            .mode = OUT_ACC_FIXED_SCALE,
+        },
+        cfg->bias->grad);
+}
+
+static void weightGradKernelSym(tensor_t **ops, size_t n, tensor_t *rawOut, tensor_t *auxOut,
+                                const void *ctx) {
+    (void)n;
+    (void)auxOut;
+    const conv1dTransposedConfig_t *cfg = ctx;
+    tensor_t *forwardInput = ops[0];
+    tensor_t *lossGrad = ops[1];
+
     size_t batch = forwardInput->shape->dimensions[0];
     size_t inChannels = forwardInput->shape->dimensions[1];
     size_t inputLength = forwardInput->shape->dimensions[2];
@@ -227,21 +282,10 @@ void conv1dTransposedCalcWeightGradsSymInt32(conv1dTransposedConfig_t *cfg, tens
     float inScale = ((symInt32QConfig_t *)forwardInput->quantization->qConfig)->scale;
     float lossScale = ((symInt32QConfig_t *)lossGrad->quantization->qConfig)->scale;
 
-    tensor_t *weightGrad = cfg->weights->grad;
-    size_t numberOfWeights = calcNumberOfElementsByTensor(weightGrad);
-
-    /* Fresh int32 intermediate at scale s_in*s_loss, allocated via reserveMemory
-     * (allocation-locality rule — NOT a stack VLA). reserveMemory zero-inits. */
-    int32_t *interData = reserveMemory(numberOfWeights * sizeof(int32_t));
-
-    symInt32QConfig_t interQC;
-    initSymInt32QConfig(((symInt32QConfig_t *)weightGrad->quantization->qConfig)->roundingMode,
-                        &interQC);
-    interQC.scale = inScale * lossScale;
-    quantization_t interQ;
-    initSymInt32Quantization(&interQC, &interQ);
-    tensor_t intermediate;
-    setTensorValues(&intermediate, (uint8_t *)interData, weightGrad->shape, &interQ, NULL);
+    int32_t *interData = (int32_t *)rawOut->data;
+    memset(interData, 0,
+           calcNumberOfBytesForData(rawOut->quantization, calcNumberOfElementsByTensor(rawOut)));
+    ((symInt32QConfig_t *)rawOut->quantization->qConfig)->scale = inScale * lossScale;
 
     int32_t const *xArr = (int32_t const *)forwardInput->data;
     int32_t const *gyArr = (int32_t const *)lossGrad->data;
@@ -278,12 +322,29 @@ void conv1dTransposedCalcWeightGradsSymInt32(conv1dTransposedConfig_t *cfg, tens
             }
         }
     }
-
-    addSymInt32TensorsInplace(weightGrad, &intermediate);
-    freeReservedMemory(interData);
 }
 
-void conv1dTransposedCalcBiasGradsSymInt32(conv1dTransposedConfig_t *cfg, tensor_t *lossGrad) {
+void conv1dTransposedCalcWeightGradsSymInt32(conv1dTransposedConfig_t *cfg, tensor_t *forwardInput,
+                                             tensor_t *lossGrad) {
+    executeOp(
+        &(opSpec_t){
+            .kernel = weightGradKernelSym,
+            .ctx = cfg,
+            .inputs = (tensor_t *[]){forwardInput, lossGrad},
+            .nInputs = 2,
+            .arithmetic = cfg->weightGradMath,
+            .mode = OUT_ACC_DYNAMIC_RESCALE,
+        },
+        cfg->weights->grad);
+}
+
+static void biasGradKernelSym(tensor_t **ops, size_t n, tensor_t *rawOut, tensor_t *auxOut,
+                              const void *ctx) {
+    (void)n;
+    (void)auxOut;
+    const conv1dTransposedConfig_t *cfg = ctx;
+    tensor_t *lossGrad = ops[0];
+
     size_t batch = lossGrad->shape->dimensions[0];
     size_t outChannels = lossGrad->shape->dimensions[1];
     size_t outputLength = lossGrad->shape->dimensions[2];
@@ -297,12 +358,8 @@ void conv1dTransposedCalcBiasGradsSymInt32(conv1dTransposedConfig_t *cfg, tensor
     }
 
     int32_t const *gyArr = (int32_t const *)lossGrad->data;
-    tensor_t *biasGrad = cfg->bias->grad;
-    int32_t *gbArr = (int32_t *)biasGrad->data;
-
+    int32_t *rawArr = (int32_t *)rawOut->data;
     float lossScale = ((symInt32QConfig_t *)lossGrad->quantization->qConfig)->scale;
-    symInt32QConfig_t *bgQC = (symInt32QConfig_t *)biasGrad->quantization->qConfig;
-    float bgScale = bgQC->scale;
 
     for (size_t oc = 0; oc < outChannels; oc++) {
         /* int32 accumulator (NO int64): loss mantissas are int12-range per the
@@ -314,24 +371,41 @@ void conv1dTransposedCalcBiasGradsSymInt32(conv1dTransposedConfig_t *cfg, tensor
                 sum += gyArr[(b * outChannels + oc) * outputLength + outPos];
             }
         }
-        gbArr[oc] += rescaleIntoAccumulatorScale(sum, lossScale, bgScale, bgQC->roundingMode);
+        rawArr[oc] = sum;
     }
+    ((symInt32QConfig_t *)rawOut->quantization->qConfig)->scale = lossScale;
 }
 
-void conv1dTransposedBackwardFloat(layer_t *layer, tensor_t *forwardInput, tensor_t *lossGrad,
-                                   tensor_t *propLoss) {
-    conv1dTransposedConfig_t *cfg = layer->config->conv1dTransposed;
+void conv1dTransposedCalcBiasGradsSymInt32(conv1dTransposedConfig_t *cfg, tensor_t *lossGrad) {
+    executeOp(
+        &(opSpec_t){
+            .kernel = biasGradKernelSym,
+            .ctx = cfg,
+            .inputs = (tensor_t *[]){lossGrad},
+            .nInputs = 1,
+            .arithmetic = cfg->biasGradMath,
+            .mode = OUT_ACC_FIXED_SCALE,
+        },
+        cfg->bias->grad);
+}
 
-    conv1dTransposedCalcWeightGradsFloat32(cfg, forwardInput, lossGrad);
+/* dL/dx via the adjoint: conv1d-correlation of lossGrad with weight. The
+ * kernel here uses VALID (Phase-1 contract); conv1dKernelFloat32/SymInt32
+ * accept the same weight tensor (no flip needed, per spec §5.2). */
+static void propLossKernelFloat(tensor_t **ops, size_t n, tensor_t *rawOut, tensor_t *auxOut,
+                                const void *ctx) {
+    (void)n;
+    (void)auxOut;
+    const conv1dTransposedConfig_t *cfg = ctx;
+    conv1dKernelFloat32(ops[0], ops[1], NULL, cfg->kernel, cfg->groups, rawOut);
+}
 
-    if (cfg->bias) {
-        conv1dTransposedCalcBiasGradsFloat32(cfg, lossGrad);
-    }
-
-    // dL/dx via the adjoint: conv1d-correlation of lossGrad with weight.
-    // The kernel here uses VALID (Phase-1 contract). conv1dKernelFloat32
-    // accepts the same weight tensor (no flip needed, per spec §5.2).
-    conv1dKernelFloat32(lossGrad, cfg->weights->param, NULL, cfg->kernel, cfg->groups, propLoss);
+static void propLossKernelSym(tensor_t **ops, size_t n, tensor_t *rawOut, tensor_t *auxOut,
+                              const void *ctx) {
+    (void)n;
+    (void)auxOut;
+    const conv1dTransposedConfig_t *cfg = ctx;
+    conv1dKernelSymInt32(ops[0], ops[1], NULL, cfg->kernel, cfg->groups, rawOut);
 }
 
 void conv1dTransposedBackward(layer_t *layer, tensor_t *forwardInput, tensor_t *lossGrad,
@@ -366,20 +440,36 @@ void conv1dTransposedBackward(layer_t *layer, tensor_t *forwardInput, tensor_t *
         exit(1);
     }
 
+    /* propLoss (dx wire): OUT_WRITE. For a SYM_INT32 target this now requants
+     * through the conversionMatrix diagonal (width-restored at the producer,
+     * design D3) instead of the old direct kernel write of raw, unrestored
+     * accumulator-range mantissas — the #187 dtype guard is superseded by the
+     * funnel's own prologue/epilogue and is deleted (recon-conv-backward §4:
+     * zero test coverage, confirmed tautology post-#221). */
     switch (cfg->propLossMath.type) {
     case ARITH_FLOAT32:
-        // dL/dx via the adjoint: conv1d-correlation of lossGrad with weight (VALID, Phase-1).
-        conv1dKernelFloat32(lossGrad, cfg->weights->param, NULL, cfg->kernel, cfg->groups,
-                            propLoss);
+        executeOp(
+            &(opSpec_t){
+                .kernel = propLossKernelFloat,
+                .ctx = cfg,
+                .inputs = (tensor_t *[]){lossGrad, cfg->weights->param},
+                .nInputs = 2,
+                .arithmetic = cfg->propLossMath,
+                .mode = OUT_WRITE,
+            },
+            propLoss);
         break;
     case ARITH_SYM_INT32:
-        if (propLoss->quantization->type != SYM_INT32) {
-            PRINT_ERROR("Conv1dTransposed backward: propLossQ is SYM_INT32 but the propLoss "
-                        "tensor is not (#187)");
-            exit(1);
-        }
-        conv1dKernelSymInt32(lossGrad, cfg->weights->param, NULL, cfg->kernel, cfg->groups,
-                             propLoss);
+        executeOp(
+            &(opSpec_t){
+                .kernel = propLossKernelSym,
+                .ctx = cfg,
+                .inputs = (tensor_t *[]){lossGrad, cfg->weights->param},
+                .nInputs = 2,
+                .arithmetic = cfg->propLossMath,
+                .mode = OUT_WRITE,
+            },
+            propLoss);
         break;
     default:
         PRINT_ERROR("Conv1dTransposed backward (propLoss): quantization type not implemented");

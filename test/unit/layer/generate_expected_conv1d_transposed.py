@@ -239,6 +239,22 @@ def _requant_absmax_f32(mac_int: torch.Tensor, in_scale: float):
     return q.to(torch.int32), scale.item()
 
 
+def _requant_absmax_i12_f32(mac_int: torch.Tensor, in_scale: float):
+    """PR1b.2 (design D3): propLoss now routes through executeOp's OUT_WRITE
+    epilogue; for a SYM_INT32 target this hits the conversionMatrix diagonal
+    (requantSymInt32Tensor, TensorConversion.c) instead of a raw direct write.
+    Mirrors _requant_absmax_f32 above but at propLossQ's declared qMaxBits=12
+    (int12) instead of the grad contract's 16 — same dequant(f32) -> absmax(f32)
+    -> scale=absmax/2047(f32) -> round_half_away(clamp(...)) sequence."""
+    deq = mac_int.to(torch.float32) * torch.tensor(in_scale, dtype=torch.float32)
+    absmax = deq.abs().max().to(torch.float32)
+    if absmax.item() == 0.0:
+        return torch.zeros_like(mac_int, dtype=torch.int32), 1.0
+    scale = (absmax / QMAX_I12)
+    q = round_half_away(torch.clamp(deq / scale, QMIN_I12, QMAX_I12))
+    return q.to(torch.int32), scale.item()
+
+
 def _autograd_ref_f64(q, p):
     """float64 torch-autograd on the EXACT dequantized inputs (q*s in f64) — the true grads."""
     x64 = (q["xq"].to(torch.float64) * q["s_in"]).requires_grad_(True)
@@ -263,7 +279,7 @@ def emulate_sym_convT(fx):
     q = _quant_inputs(fx)
     fwd_mac, dw_mac, dx_mac = _int_mac(q, p)
     out_scale = f32_mul(q["s_in"], q["s_w"])          # forward output scale
-    dx_scale = f32_mul(q["s_loss"], q["s_w"])         # propLoss scale = s_loss * s_w
+    dx_scale_raw = f32_mul(q["s_loss"], q["s_w"])     # propLoss RAW gather-adjoint scale (pre-PR1b.2)
     inter_scale = f32_mul(q["s_loss"], q["s_in"])     # weightGrad intermediate scale
 
     # forward: int MAC + per-channel bias seed (float32 refold)
@@ -279,8 +295,13 @@ def emulate_sym_convT(fx):
         fwd_mtol = 0
     fwd_deq = fwd_q.to(torch.float32) * torch.tensor(out_scale, dtype=torch.float32)
 
-    # dx (propLoss): raw gather adjoint, no requant, no bias
-    dx_q = dx_mac.to(torch.int32)
+    # dx (propLoss): PR1b.2 (design D3) routes propLoss through executeOp's
+    # OUT_WRITE epilogue; for a SYM_INT32 target this requants through the
+    # conversionMatrix diagonal (requantSymInt32Tensor) instead of writing the
+    # raw, unrestored accumulator-range gather-adjoint directly (pre-PR1b.2
+    # behavior). Mirrors weightGrad's Strategy-A requant (_requant_absmax_f32)
+    # but at propLossQ's declared qMaxBits=12 (int12), not the grad qMaxBits=16.
+    dx_q, dx_scale = _requant_absmax_i12_f32(dx_mac, dx_scale_raw)
     dx_deq = dx_q.to(torch.float32) * torch.tensor(dx_scale, dtype=torch.float32)
 
     # weightGrad: strategy A requant of the int scatter-gather from a zero grad

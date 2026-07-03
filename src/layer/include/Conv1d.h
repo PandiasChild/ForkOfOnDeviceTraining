@@ -37,8 +37,6 @@ void conv1dForwardFloat(layer_t *layer, tensor_t *input, tensor_t *output);
 void conv1dForwardSymInt32(layer_t *layer, tensor_t *input, tensor_t *output);
 
 void conv1dBackward(layer_t *layer, tensor_t *forwardInput, tensor_t *lossGrad, tensor_t *propLoss);
-void conv1dBackwardFloat(layer_t *layer, tensor_t *forwardInput, tensor_t *lossGrad,
-                         tensor_t *propLoss);
 
 void conv1dCalcWeightGradsSymInt32(conv1dConfig_t *cfg, tensor_t *forwardInput, tensor_t *lossGrad);
 void conv1dCalcBiasGradsSymInt32(conv1dConfig_t *cfg, tensor_t *lossGrad);

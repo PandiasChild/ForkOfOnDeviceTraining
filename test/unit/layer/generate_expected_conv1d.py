@@ -393,6 +393,22 @@ def _requant_absmax_f32(mac_int: torch.Tensor, in_scale: float):
     return q.to(torch.int32), scale.item()
 
 
+def _requant_absmax_i12_f32(mac_int: torch.Tensor, in_scale: float):
+    """PR1b.2 (design D3): propLoss now routes through executeOp's OUT_WRITE
+    epilogue; for a SYM_INT32 target this hits the conversionMatrix diagonal
+    (requantSymInt32Tensor, TensorConversion.c) instead of a raw direct write.
+    Mirrors _requant_absmax_f32 above but at propLossQ's declared qMaxBits=12
+    (int12) instead of the grad contract's 16 — same dequant(f32) -> absmax(f32)
+    -> scale=absmax/2047(f32) -> round_half_away(clamp(...)) sequence."""
+    deq = mac_int.to(torch.float32) * torch.tensor(in_scale, dtype=torch.float32)
+    absmax = deq.abs().max().to(torch.float32)
+    if absmax.item() == 0.0:
+        return torch.zeros_like(mac_int, dtype=torch.int32), 1.0
+    scale = (absmax / QMAX_I12)
+    q = round_half_away(torch.clamp(deq / scale, QMIN_I12, QMAX_I12))
+    return q.to(torch.int32), scale.item()
+
+
 def _autograd_ref_f64(q, p):
     """float64 torch-autograd on the EXACT dequantized inputs (q*s in f64) — the true
     grads the SYM dequants must track within analytic bounds."""
@@ -421,7 +437,7 @@ def emulate_sym_conv(fx):
     q = _quant_inputs(fx)
     fwd_mac, dw_mac, dx_mac = _int_mac(q, p)
     out_scale = f32_mul(q["s_in"], q["s_w"])          # forward output scale
-    dx_scale = f32_mul(q["s_loss"], q["s_w"])         # propLoss scale = s_loss * s_w
+    dx_scale_raw = f32_mul(q["s_loss"], q["s_w"])     # propLoss RAW scatter scale (pre-PR1b.2)
     inter_scale = f32_mul(q["s_loss"], q["s_in"])     # weightGrad intermediate scale
 
     # forward: int MAC + per-channel bias seed (float32 refold)
@@ -437,8 +453,19 @@ def emulate_sym_conv(fx):
         fwd_mtol = 0
     fwd_deq = fwd_q.to(torch.float32) * torch.tensor(out_scale, dtype=torch.float32)
 
-    # dx (propLoss): raw scatter, no requant, no bias
-    dx_q = dx_mac.to(torch.int32)
+    # dx (propLoss): PR1b.2 (design D3) routes propLoss through executeOp's
+    # OUT_WRITE epilogue; for a SYM_INT32 target this requants through the
+    # conversionMatrix diagonal (requantSymInt32Tensor) instead of writing the
+    # raw, unrestored accumulator-range scatter directly (pre-PR1b.2 behavior).
+    # Mirrors weightGrad's existing Strategy-A requant (_requant_absmax_f32)
+    # but at propLossQ's declared qMaxBits=12 (int12), not the grad qMaxBits=16.
+    # dx_raw_* keeps the pre-restoration values: testConv1dKernelSymScatterStrideDilation
+    # calls convTranspose1dKernelSymInt32 directly (the low-level scatter
+    # kernel, not conv1dBackward), so it must keep pinning the kernel's own
+    # raw, unrestored output.
+    dx_raw_q = dx_mac.to(torch.int32)
+    dx_raw_deq = dx_raw_q.to(torch.float32) * torch.tensor(dx_scale_raw, dtype=torch.float32)
+    dx_q, dx_scale = _requant_absmax_i12_f32(dx_mac, dx_scale_raw)
     dx_deq = dx_q.to(torch.float32) * torch.tensor(dx_scale, dtype=torch.float32)
 
     # weightGrad: strategy A requant of the int gather from a zero grad
@@ -466,6 +493,7 @@ def emulate_sym_conv(fx):
     _eps32 = float(torch.finfo(torch.float32).eps)
     fwd_f32_prec = fwd_q.abs().max().item() * out_scale * _eps32
     dx_f32_prec = dx_q.abs().max().item() * dx_scale * _eps32
+    dx_raw_f32_prec = dx_raw_q.abs().max().item() * dx_scale_raw * _eps32
 
     # forward dequant tracks the true (quantized-input) conv within quantization noise + f32 ULP
     fwd_err = (fwd_deq.to(torch.float64) - ref_y).abs().max().item()
@@ -475,6 +503,11 @@ def emulate_sym_conv(fx):
     dx_err = (dx_deq.to(torch.float64) - ref_dx).abs().max().item()
     dx_tol = 8.0 * dx_scale + dx_f32_prec + 1e-9
     assert dx_err <= dx_tol, f"{fx['name']}: dx emulation err {dx_err} > tol {dx_tol}"
+    # dx_raw (pre-restoration, direct-kernel characterization) tracks the same autograd dx
+    dx_raw_err = (dx_raw_deq.to(torch.float64) - ref_dx).abs().max().item()
+    dx_raw_tol = 8.0 * dx_scale_raw + dx_raw_f32_prec + 1e-9
+    assert dx_raw_err <= dx_raw_tol, \
+        f"{fx['name']}: dx_raw emulation err {dx_raw_err} > tol {dx_raw_tol}"
     # weightGrad dequant tracks autograd dw (increment-quant + requant + drift)
     dw_err = (dw_q.to(torch.float64) * dw_scale - ref_dw.reshape(-1).reshape(dw_q.shape)
               ).abs().max().item()
@@ -492,6 +525,8 @@ def emulate_sym_conv(fx):
         fwd_mtol=fwd_mtol, fwd_dtol=8.0 * out_scale + fwd_f32_prec + 1e-6,
         dx_q=dx_q, dx_scale=dx_scale, dx_deq=ref_dx.to(torch.float32),
         dx_mtol=0, dx_dtol=8.0 * dx_scale + dx_f32_prec + 1e-6,
+        dx_raw_q=dx_raw_q, dx_raw_scale=dx_scale_raw, dx_raw_deq=ref_dx.to(torch.float32),
+        dx_raw_mtol=0, dx_raw_dtol=8.0 * dx_scale_raw + dx_raw_f32_prec + 1e-6,
         dw_q=dw_q, dw_scale=dw_scale, dw_deq=ref_dw.to(torch.float32),
         dw_mtol=2, dw_dtol=(0.5 * inter_scale + 2.5 * dw_scale) * 1.5 + 1e-6,
         db_q=db_q, db_scale=db_scale,
@@ -530,12 +565,22 @@ def emit_sym_fixture(parts, fx):
     parts.append(emit_int32_scalar(f"forwardMantissaTol_{pre}", g["fwd_mtol"]))
     parts.append(emit_float_array(f"expectedForwardDequant_{pre}", g["fwd_deq"]))
     parts.append(emit_float_scalar(f"forwardDequantTol_{pre}", g["fwd_dtol"]))
-    # dx / propLoss
+    # dx / propLoss (width-restored, as conv1dBackward now writes it — design D3)
     parts.append(emit_int32_array(f"expectedPropLoss_{pre}", g["dx_q"]))
     parts.append(emit_float_scalar(f"expectedPropLossScale_{pre}", g["dx_scale"]))
     parts.append(emit_int32_scalar(f"propLossMantissaTol_{pre}", g["dx_mtol"]))
     parts.append(emit_float_array(f"expectedPropLossDequant_{pre}", g["dx_deq"]))
     parts.append(emit_float_scalar(f"propLossDequantTol_{pre}", g["dx_dtol"]))
+    # dx / propLoss RAW (pre-restoration): for tests that call
+    # convTranspose1dKernelSymInt32/conv1dKernelSymInt32 directly, bypassing
+    # conv1dBackward's executeOp funnel entirely (e.g.
+    # testConv1dKernelSymScatterStrideDilation) — these still characterize the
+    # low-level kernel's own raw, unrestored output.
+    parts.append(emit_int32_array(f"expectedPropLossRawKernel_{pre}", g["dx_raw_q"]))
+    parts.append(emit_float_scalar(f"expectedPropLossRawKernelScale_{pre}", g["dx_raw_scale"]))
+    parts.append(emit_int32_scalar(f"propLossRawKernelMantissaTol_{pre}", g["dx_raw_mtol"]))
+    parts.append(emit_float_array(f"expectedPropLossRawKernelDequant_{pre}", g["dx_raw_deq"]))
+    parts.append(emit_float_scalar(f"propLossRawKernelDequantTol_{pre}", g["dx_raw_dtol"]))
     # weightGrad
     parts.append(emit_int32_array(f"expectedWeightGrad_{pre}", g["dw_q"]))
     parts.append(emit_float_scalar(f"expectedWeightGradScale_{pre}", g["dw_scale"]))

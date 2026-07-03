@@ -970,19 +970,24 @@ void testConv1dKernelSymScatterStrideDilation() {
     kernel_t kernel;
     initKernel(&kernel, 2, VALID, 2, 3); /* size=2, VALID, dilation=2, stride=3 */
 
+    /* Direct low-level kernel call — bypasses conv1dBackward's executeOp
+     * funnel entirely, so this characterizes convTranspose1dKernelSymInt32's
+     * own raw, unrestored output (the RawKernel fixtures), not the
+     * funnel-restored propLoss wire conv1dBackward now produces (design D3;
+     * see testConv1dBackwardSymStrideDilation for that). */
     convTranspose1dKernelSymInt32(lossGrad, weight, NULL, &kernel, 1, 0, propLoss);
 
     int32_t *m = (int32_t *)propLoss->data;
-    for (size_t i = 0; i < expectedPropLoss_conv1dSym_strideDilationSym_len; i++) {
-        TEST_ASSERT_INT_WITHIN(propLossMantissaTol_conv1dSym_strideDilationSym,
-                               expectedPropLoss_conv1dSym_strideDilationSym[i], m[i]);
+    for (size_t i = 0; i < expectedPropLossRawKernel_conv1dSym_strideDilationSym_len; i++) {
+        TEST_ASSERT_INT_WITHIN(propLossRawKernelMantissaTol_conv1dSym_strideDilationSym,
+                               expectedPropLossRawKernel_conv1dSym_strideDilationSym[i], m[i]);
     }
     float scale = symScaleOf(propLoss);
-    TEST_ASSERT_FLOAT_WITHIN(expectedPropLossScale_conv1dSym_strideDilationSym * 1e-4f,
-                             expectedPropLossScale_conv1dSym_strideDilationSym, scale);
-    for (size_t i = 0; i < expectedPropLossDequant_conv1dSym_strideDilationSym_len; i++) {
-        TEST_ASSERT_FLOAT_WITHIN(propLossDequantTol_conv1dSym_strideDilationSym,
-                                 expectedPropLossDequant_conv1dSym_strideDilationSym[i],
+    TEST_ASSERT_FLOAT_WITHIN(expectedPropLossRawKernelScale_conv1dSym_strideDilationSym * 1e-4f,
+                             expectedPropLossRawKernelScale_conv1dSym_strideDilationSym, scale);
+    for (size_t i = 0; i < expectedPropLossRawKernelDequant_conv1dSym_strideDilationSym_len; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(propLossRawKernelDequantTol_conv1dSym_strideDilationSym,
+                                 expectedPropLossRawKernelDequant_conv1dSym_strideDilationSym[i],
                                  (float)m[i] * scale);
     }
 }
