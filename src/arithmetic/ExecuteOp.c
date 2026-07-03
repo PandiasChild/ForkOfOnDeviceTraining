@@ -119,7 +119,8 @@ static void accumulateOut(tensor_t *intermediate, tensor_t *target, outputMode_t
     }
     default:
         PRINT_ERROR("executeOp: accumulate target dtype %d not supported "
-                    "(FLOAT32/SYM_INT32; sub-byte arms land in PR3, #261)",
+                    "(accepted: FLOAT32, SYM_INT32; INT32/SYM/ASYM/BOOL arms "
+                    "land in PR3, #261)",
                     (int)target->quantization->type);
         exit(1);
     }

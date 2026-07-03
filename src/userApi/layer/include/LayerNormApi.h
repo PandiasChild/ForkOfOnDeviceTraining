@@ -18,8 +18,9 @@ typedef struct layerNormInit {
  *  into the config (ownsQuantizations=false; caller retains ownership of the
  *  storage quantizations). Allocates gamma (init 1) and beta (init 0) parameter_t
  *  (storage dtype = lq->weightStorage / lq->biasStorage) and their grads via
- *  gradInit(param, lq->weightGradStorage ?: lq->propLossQ, NULL) (resp.
- *  biasGradStorage for beta). Copies normalizedShape into factory-owned
+ *  gradInit(param, lq->weightGradStorage ?: FLOAT32, NULL) (resp.
+ *  biasGradStorage for beta) — PR1c: the NULL-knob default is a hard-pinned
+ *  FLOAT32, not lq->propLossQ. Copies normalizedShape into factory-owned
  *  memory.
  *  Use when: outputQ/propLossQ are shared/long-lived (e.g. reused across
  *  several layers) and the caller manages their lifetime — they must

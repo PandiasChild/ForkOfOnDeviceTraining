@@ -208,14 +208,18 @@ every layer type — Linear/Conv/pools/Relu/Softmax/Dropout/LayerNorm/Quantizati
 all resolve through the same field; Flatten and the loss seed pass through the
 upstream dtype) — #221. Uniform chains behave exactly as before: a
 uniformly-SYM chain (every layer's `forwardMath` declaring `ARITH_SYM_INT32`)
-makes every grad tensor SYM_INT32 and every layer's `propLossQ` match — each
-producer's `OUT_WRITE` epilogue (above) width-restores its own dx wire
-independently, so the chain stays consistent without the retired #187
-cross-layer guard. SYM-trainable conv layers are built via the low-level
+keeps every layer's `propLossQ` match consistent — each producer's
+`OUT_WRITE` epilogue (above) width-restores its own dx wire independently,
+so the chain stays consistent without the retired #187 cross-layer guard.
+As of PR1c, grad *tensor* dtype is decoupled from this: the factory's
+grad-storage default is `FLOAT32` regardless of how uniformly SYM the
+chain's forward/propLoss path is; a uniform-SYM chain only gets `SYM_INT32`
+parameter grads if each layer's `weightGradStorage`/`biasGradStorage` knob is
+set explicitly. SYM-trainable conv layers are built via the low-level
 `initConv1dTransposedConfigWithWeightsAndBias` with SYM `parameter_t`s (the
 high-level factory's KAIMING/uniform init still requires FLOAT32-native
-weight/bias storage; grad storage itself now follows `propLossQ`/the
-grad-storage knob like Linear, #261).
+weight/bias storage; grad storage there is a hard-pinned FLOAT32 default too,
+overridable by the same knob, #261).
 `Conv1dTransposed → Quant → MSE` trains under
 `calculateGradsSequential` + `sgdStepM(SYM_INT32)`.
 

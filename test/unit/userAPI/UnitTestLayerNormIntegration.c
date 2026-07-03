@@ -156,6 +156,9 @@ void testLayerNormSymInt32SingleLayerTrainingStep(void) {
     size_t normShape[] = {4};
 
     /* ---- SYM model (under test) ---- */
+    /* PR1c: default grads are FLOAT32; SYM via knob. weightGradStorage/
+     * biasGradStorage opt gamma/beta grads back into SYM_INT32 so this test
+     * keeps exercising the full SYM training step it's named for. */
     layerNormInit_t initSym = {.normalizedShape = normShape, .numNormDims = 1, .eps = 1e-5f};
     quantization_t *symQ = quantizationInitSymInt32(HALF_AWAY);
     layerQuant_t lqSym = {.forwardMath = arithmeticFromQuantization(symQ),
@@ -163,7 +166,9 @@ void testLayerNormSymInt32SingleLayerTrainingStep(void) {
                           .outputQ = symQ,
                           .propLossQ = symQ,
                           .weightStorage = symQ,
-                          .biasStorage = symQ};
+                          .biasStorage = symQ,
+                          .weightGradStorage = symQ,
+                          .biasGradStorage = symQ};
     layer_t *lnSym = layerNormLayerInit(&initSym, &lqSym);
     layer_t *modelSym[1] = {lnSym};
 
@@ -227,7 +232,8 @@ void testLayerNormSymInt32SingleLayerTrainingStep(void) {
 
     TEST_ASSERT_TRUE(symStatsNotNull);
     TEST_ASSERT_TRUE_MESSAGE(isfinite(symLoss), "SYM loss must be finite");
-    TEST_ASSERT_TRUE_MESSAGE(gradSymDtype, "factory must produce SYM_INT32 grads");
+    TEST_ASSERT_TRUE_MESSAGE(
+        gradSymDtype, "explicit weightGradStorage/biasGradStorage knob must yield SYM_INT32 grads");
     for (size_t i = 0; i < 4; i++) {
         /* gamma init 1.0 / beta init 0.0: both twins must move, and the SYM
          * twin must land near the float twin. */

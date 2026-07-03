@@ -167,15 +167,18 @@ static layer_t *layerNormLayerInitCommon(layerNormInit_t *init, layerQuant_t *lq
     layerCfg->layerNorm = cfg;
     layer->config = layerCfg;
 
-    /* Grad storage knob (#261): NULL falls back to lq->propLossQ (bit-identical
-     * to the pre-split lq->backwardMath source in every in-tree profile). */
-    quantization_t *gammaGradQ =
-        lq->weightGradStorage != NULL ? lq->weightGradStorage : lq->propLossQ;
-    quantization_t *betaGradQ = lq->biasGradStorage != NULL ? lq->biasGradStorage : lq->propLossQ;
+    /* Grad storage knob (#261, PR1c): NULL falls back to a hard-pinned FLOAT32
+     * default (parameter grads are persistent state — SYM_INT32 is a compute
+     * format, not storage); a non-NULL weightGradStorage/biasGradStorage
+     * overrides it explicitly to opt back into SYM_INT32 (or another dtype). */
+    quantization_t *floatGradQ = quantizationInitFloat();
+    quantization_t *gammaGradQ = lq->weightGradStorage != NULL ? lq->weightGradStorage : floatGradQ;
+    quantization_t *betaGradQ = lq->biasGradStorage != NULL ? lq->biasGradStorage : floatGradQ;
     parameter_t *gamma = allocateLayerNormGamma(init->normalizedShape, init->numNormDims,
                                                 lq->weightStorage, gammaGradQ);
     parameter_t *beta =
         allocateLayerNormBeta(init->normalizedShape, init->numNormDims, lq->biasStorage, betaGradQ);
+    freeQuantization(floatGradQ);
 
     /* Factory-owned copy of normalizedShape (caller may free its own array). */
     size_t *normShapeCopy = reserveMemory(init->numNormDims * sizeof(size_t));

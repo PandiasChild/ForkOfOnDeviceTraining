@@ -128,16 +128,20 @@ layer_t *linearLayerInit(linearInit_t *init, layerQuant_t *lq) {
     layerCfg->linear = cfg;
     layer->config = layerCfg;
 
-    /* Grad storage knob (#261): NULL falls back to lq->propLossQ (bit-identical
-     * to the pre-split lq->backwardMath source in every in-tree profile). */
+    /* Grad storage knob (#261, PR1c): NULL falls back to a hard-pinned FLOAT32
+     * default (parameter grads are persistent state — SYM_INT32 is a compute
+     * format, not storage); a non-NULL weightGradStorage/biasGradStorage
+     * overrides it explicitly to opt back into SYM_INT32 (or another dtype). */
+    quantization_t *floatGradQ = quantizationInitFloat();
     quantization_t *weightGradQ =
-        lq->weightGradStorage != NULL ? lq->weightGradStorage : lq->propLossQ;
-    quantization_t *biasGradQ = lq->biasGradStorage != NULL ? lq->biasGradStorage : lq->propLossQ;
+        lq->weightGradStorage != NULL ? lq->weightGradStorage : floatGradQ;
+    quantization_t *biasGradQ = lq->biasGradStorage != NULL ? lq->biasGradStorage : floatGradQ;
     cfg->weights = allocateLinearWeights(init->inFeatures, init->outFeatures, init->weightInit,
                                          lq->weightStorage, weightGradQ);
     cfg->bias = hasBias ? allocateLinearBias(init->outFeatures, init->inFeatures, lq->biasStorage,
                                              biasGradQ)
                         : NULL;
+    freeQuantization(floatGradQ);
 
     /* Borrowing: store the forward-wire/dx-wire storage configs verbatim, no copy.
      * Arithmetic slots are plain by-value copies of the profile's declared math. */
@@ -169,15 +173,21 @@ layer_t *linearLayerInitOwning(linearInit_t *init, layerQuant_t *lq) {
      * SOURCE of the tensor's owned quantization.  The allocator helpers (from
      * T12) internally clone via getQLike, so the parameter tensors hold their
      * own quantization_t copies — the caller can immediately drop the lq's
-     * weightStorage/biasStorage pointers without breaking the parameters. */
+     * weightStorage/biasStorage pointers without breaking the parameters.
+     * Grad storage knob (#261, PR1c): NULL falls back to a hard-pinned FLOAT32
+     * default (parameter grads are persistent state — SYM_INT32 is a compute
+     * format, not storage); a non-NULL weightGradStorage/biasGradStorage
+     * overrides it explicitly to opt back into SYM_INT32 (or another dtype). */
+    quantization_t *floatGradQ = quantizationInitFloat();
     quantization_t *weightGradQ =
-        lq->weightGradStorage != NULL ? lq->weightGradStorage : lq->propLossQ;
-    quantization_t *biasGradQ = lq->biasGradStorage != NULL ? lq->biasGradStorage : lq->propLossQ;
+        lq->weightGradStorage != NULL ? lq->weightGradStorage : floatGradQ;
+    quantization_t *biasGradQ = lq->biasGradStorage != NULL ? lq->biasGradStorage : floatGradQ;
     cfg->weights = allocateLinearWeights(init->inFeatures, init->outFeatures, init->weightInit,
                                          lq->weightStorage, weightGradQ);
     cfg->bias = hasBias ? allocateLinearBias(init->outFeatures, init->inFeatures, lq->biasStorage,
                                              biasGradQ)
                         : NULL;
+    freeQuantization(floatGradQ);
 
     /* Owning: same arithmetic as Borrowing; deep-copy the two storage configs
      * (outputQ, propLossQ) into fresh allocations — 2 allocs, not 3. */

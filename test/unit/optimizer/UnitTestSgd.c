@@ -371,6 +371,9 @@ void testSGDZeroGrad() {
 }
 
 void testSgdZeroGradOnSymInt32GradZeroesMantissasAndResetsScale(void) {
+    /* PR1c: default grads are FLOAT32; SYM via knob. weightGradStorage/
+     * biasGradStorage opt this layer's grads back into SYM_INT32 so this test
+     * keeps exercising the SYM zero+scale-reset path it's named for. */
     quantization_t *fwd = quantizationInitFloat();
     quantization_t *bwd = quantizationInitSymInt32(HALF_AWAY);
     layerQuant_t lq = {.forwardMath = arithmeticFromQuantization(fwd),
@@ -380,7 +383,9 @@ void testSgdZeroGradOnSymInt32GradZeroesMantissasAndResetsScale(void) {
                        .outputQ = fwd,
                        .propLossQ = bwd,
                        .weightStorage = fwd,
-                       .biasStorage = fwd};
+                       .biasStorage = fwd,
+                       .weightGradStorage = bwd,
+                       .biasGradStorage = bwd};
     layer_t *layer =
         linearLayerInit(&(linearInit_t){.inFeatures = 3, .outFeatures = 2, .bias = BIAS_TRUE}, &lq);
 

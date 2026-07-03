@@ -1856,12 +1856,11 @@ void testSymBackwardDivergentLayoutsBitIdentical(void) {
     }
 }
 
-/* Full-SYM profile (forwardMath = backwardMath = storage = SYM_INT32) through
- * the Borrowing factory: gradInit must yield SYM_INT32 grads (PR-0 plumbing),
- * and a vtable backward on factory-built params must accumulate into them.
- * (The new validation rules are death paths — liveness-checked in this task's
- * inversion step, not Unity-testable.) */
-void testFactoryFullSymProfileTrainsSymGrads(void) {
+/* PR1c: default grads are FLOAT32; SYM via knob. A full-SYM profile
+ * (forwardMath = propLossMath = storage = SYM_INT32) with the grad-storage
+ * knob left NULL must no longer fall back to SYM_INT32 gamma/beta grads — the
+ * factory default is now a hard-pinned FLOAT32, independent of propLossQ. */
+void testFactoryDefaultGradStorageIsFloat32DespiteFullSymProfile(void) {
     size_t normShape[] = {4};
     layerNormInit_t init = {.normalizedShape = normShape, .numNormDims = 1, .eps = 1e-5f};
 
@@ -1872,6 +1871,41 @@ void testFactoryFullSymProfileTrainsSymGrads(void) {
                        .propLossQ = symQ,
                        .weightStorage = symQ,
                        .biasStorage = symQ};
+    layer_t *layer = layerNormLayerInit(&init, &lq);
+    layerNormConfig_t *cfg = layer->config->layerNorm;
+
+    int gammaGradType = cfg->gamma->grad->quantization->type;
+    int betaGradType = cfg->beta->grad->quantization->type;
+
+    freeLayerNormLayer(layer);
+    freeQuantization(symQ);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(FLOAT32, gammaGradType,
+                                  "PR1c: default (NULL knob) gamma grad storage must be FLOAT32");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(FLOAT32, betaGradType,
+                                  "PR1c: default (NULL knob) beta grad storage must be FLOAT32");
+}
+
+/* Full-SYM profile (forwardMath = backwardMath = storage = SYM_INT32) through
+ * the Borrowing factory with the grad-storage knob explicitly set: gradInit
+ * must yield SYM_INT32 grads when the caller opts in (PR1c: this is no longer
+ * the factory default — see testFactoryDefaultGradStorageIsFloat32DespiteFullSymProfile
+ * above), and a vtable backward on factory-built params must accumulate into
+ * them. (The new validation rules are death paths — liveness-checked in this
+ * task's inversion step, not Unity-testable.) */
+void testFactoryFullSymProfileTrainsSymGrads(void) {
+    size_t normShape[] = {4};
+    layerNormInit_t init = {.normalizedShape = normShape, .numNormDims = 1, .eps = 1e-5f};
+
+    quantization_t *symQ = quantizationInitSymInt32(HALF_AWAY);
+    layerQuant_t lq = {.forwardMath = arithmeticFromQuantization(symQ),
+                       .propLossMath = arithmeticFromQuantization(symQ),
+                       .outputQ = symQ,
+                       .propLossQ = symQ,
+                       .weightStorage = symQ,
+                       .biasStorage = symQ,
+                       .weightGradStorage = symQ,
+                       .biasGradStorage = symQ};
     layer_t *layer = layerNormLayerInit(&init, &lq);
     layerNormConfig_t *cfg = layer->config->layerNorm;
 
@@ -1900,8 +1934,10 @@ void testFactoryFullSymProfileTrainsSymGrads(void) {
     freeLayerNormLayer(layer);
     freeQuantization(symQ);
 
-    TEST_ASSERT_TRUE(gradsSym);
-    TEST_ASSERT_TRUE_MESSAGE(dbSum > 0, "backward must accumulate into the factory SYM grads");
+    TEST_ASSERT_TRUE_MESSAGE(
+        gradsSym, "explicit weightGradStorage/biasGradStorage knob must yield SYM_INT32 grads");
+    TEST_ASSERT_TRUE_MESSAGE(dbSum > 0,
+                             "backward must accumulate into the explicit-knob SYM grads");
     TEST_ASSERT_TRUE(dxScale > 0.0f && dxScale != 1.0f);
 }
 
@@ -1988,6 +2024,7 @@ int main(void) {
     RUN_TEST(testSymBackwardGradsAccumulateAcrossCalls);
     RUN_TEST(testSymBackwardVarNearEpsGold);
     RUN_TEST(testSymBackwardDivergentLayoutsBitIdentical);
+    RUN_TEST(testFactoryDefaultGradStorageIsFloat32DespiteFullSymProfile);
     RUN_TEST(testFactoryFullSymProfileTrainsSymGrads);
     RUN_TEST(testLayerNormSymRejectsOperandWiderThanInt12);
     return UNITY_END();

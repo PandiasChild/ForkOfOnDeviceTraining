@@ -1035,9 +1035,10 @@ void testLinearLayerInitBorrowingBiasFalseLeavesBiasNull(void) {
     freeLinearLayer(layer);
 }
 
-void testLinearLayerInitSymInt32BackwardMathYieldsSymInt32Grad(void) {
-    /* Regression for the "config lies" bug: a Linear built with a SYM_INT32
-     * backwardMath must store SYM_INT32 parameter gradients, not FLOAT32. */
+void testLinearLayerInitDefaultGradStorageIsFloat32DespiteSymPropLossQ(void) {
+    /* PR1c: default grads are FLOAT32; SYM via knob. A SYM propLossQ with the
+     * grad-storage knob left NULL must NOT fall back to SYM_INT32 anymore —
+     * the factory default is a hard-pinned FLOAT32, independent of propLossQ. */
     quantization_t *fwd = quantizationInitFloat();             /* FLOAT32 forward + storage */
     quantization_t *bwd = quantizationInitSymInt32(HALF_AWAY); /* SYM_INT32 backward */
     layerQuant_t lq = {
@@ -1049,6 +1050,50 @@ void testLinearLayerInitSymInt32BackwardMathYieldsSymInt32Grad(void) {
         .propLossQ = bwd,
         .weightStorage = fwd, /* KAIMING init requires FLOAT32 weight storage */
         .biasStorage = fwd,
+        /* weightGradStorage / biasGradStorage deliberately left NULL. */
+    };
+
+    layer_t *layer = linearLayerInit(
+        &(linearInit_t){
+            .inFeatures = 3,
+            .outFeatures = 2,
+            .bias = BIAS_TRUE,
+        },
+        &lq);
+
+    linearConfig_t *cfg = layer->config->linear;
+    int weightGradType = cfg->weights->grad->quantization->type;
+    int biasGradType = cfg->bias->grad->quantization->type;
+
+    freeLinearLayer(layer);
+    freeQuantization(bwd);
+    freeQuantization(fwd);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(FLOAT32, weightGradType,
+                                  "PR1c: default (NULL knob) weight grad storage must be FLOAT32");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(FLOAT32, biasGradType,
+                                  "PR1c: default (NULL knob) bias grad storage must be FLOAT32");
+}
+
+void testLinearLayerInitSymInt32BackwardMathYieldsSymInt32Grad(void) {
+    /* Regression for the "config lies" bug: a Linear built with a SYM_INT32
+     * backwardMath must store SYM_INT32 parameter gradients when the caller
+     * opts in via the grad-storage knob. PR1c: default grads are FLOAT32; SYM
+     * via knob — the explicit weightGradStorage/biasGradStorage below is what
+     * keeps this test exercising the SYM path post-flip. */
+    quantization_t *fwd = quantizationInitFloat();             /* FLOAT32 forward + storage */
+    quantization_t *bwd = quantizationInitSymInt32(HALF_AWAY); /* SYM_INT32 backward */
+    layerQuant_t lq = {
+        .forwardMath = arithmeticFromQuantization(fwd),
+        .weightGradMath = arithmeticFromQuantization(bwd),
+        .biasGradMath = arithmeticFromQuantization(bwd),
+        .propLossMath = arithmeticFromQuantization(bwd),
+        .outputQ = fwd,
+        .propLossQ = bwd,
+        .weightStorage = fwd, /* KAIMING init requires FLOAT32 weight storage */
+        .biasStorage = fwd,
+        .weightGradStorage = bwd,
+        .biasGradStorage = bwd,
     };
 
     layer_t *layer = linearLayerInit(
@@ -1132,9 +1177,11 @@ void testLinearLayerInitOwningFreesAllAllocationsWithoutLeak(void) {
  * ========================================================================== */
 
 void testLinearLayerInitOwningWeightGradStorageKnobOverridesPropLossQDefault(void) {
-    /* Default (knob == NULL) grad storage derives from propLossQ; a non-NULL
-     * weightGradStorage config must override that default end-to-end, through
-     * the same getQLike path gradInit already uses. */
+    /* PR1c: default (knob == NULL) grad storage is a hard-pinned FLOAT32; a
+     * non-NULL weightGradStorage config must override that default end-to-end,
+     * through the same getQLike path gradInit already uses. (This test's own
+     * propLossQ is already FLOAT32, so the flip doesn't change its outcome —
+     * only the comment's claim about what NULL falls back to.) */
     quantization_t *q = quantizationInitFloat();
     layerQuant_t lq;
     layerQuantInitUniform(&lq, q);
@@ -1238,7 +1285,10 @@ static tensor_t *e2eMakeSym1x3(void) {
 
 void testLinearSymInt32GradAccumulatesOverTwoMicrobatchesAndSteps(void) {
     /* outFeatures=2, inFeatures=3. forward input [1,2,3], loss [0.5, -0.25].
-     * Two identical microbatches => accumulated weight grad ~= 2 * (loss^T @ input). */
+     * Two identical microbatches => accumulated weight grad ~= 2 * (loss^T @ input).
+     * PR1c: default grads are FLOAT32; SYM via knob — weightGradStorage/
+     * biasGradStorage below opt this layer back into the SYM_INT32 grad path
+     * so the test keeps exercising SYM accumulation parity, not float-vs-float. */
     const float inputVals[3] = {1.0f, 2.0f, 3.0f};
     const float lossVals[2] = {0.5f, -0.25f};
 
@@ -1252,7 +1302,9 @@ void testLinearSymInt32GradAccumulatesOverTwoMicrobatchesAndSteps(void) {
                           .outputQ = fwd,
                           .propLossQ = bwd,
                           .weightStorage = fwd,
-                          .biasStorage = fwd};
+                          .biasStorage = fwd,
+                          .weightGradStorage = bwd,
+                          .biasGradStorage = bwd};
     layer_t *symLayer = linearLayerInit(
         &(linearInit_t){.inFeatures = 3, .outFeatures = 2, .bias = BIAS_TRUE}, &lqSym);
 
@@ -1533,6 +1585,7 @@ int main(void) {
     RUN_TEST(testLinearLayerInitBorrowingZeroInChannelsAbortsViaPrintError);
     RUN_TEST(testLinearLayerInitBorrowingBiasDefaultResolvesToTrue);
     RUN_TEST(testLinearLayerInitBorrowingBiasFalseLeavesBiasNull);
+    RUN_TEST(testLinearLayerInitDefaultGradStorageIsFloat32DespiteSymPropLossQ);
     RUN_TEST(testLinearLayerInitSymInt32BackwardMathYieldsSymInt32Grad);
     RUN_TEST(testLinearSymInt32GradAccumulatesOverTwoMicrobatchesAndSteps);
 

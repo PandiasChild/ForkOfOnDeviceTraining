@@ -18,9 +18,13 @@ This bites hardest for **gradients**. Persistent parameter grads should be store
 `FLOAT32` (fidelity, same size) or `SYM`/`ASYM` (real compression); the integer
 step stays transient `SYM_INT32`. The only legitimate `SYM_INT32` grads are the
 transient dx/agrad operand-wires during backprop (int12, freed after the pass).
-That today's parameter grads are stored `SYM_INT32` (`gradInitSymInt32`, and the
-SGD SYM path that dequantizes → steps in float → requantizes for no gain) is a
-known conceptual gap under redesign — #261 (subsumes #203).
+
+As of PR1c, the factory default for parameter grads (Linear/LayerNorm/Conv1d/
+Conv1dTransposed) IS `FLOAT32` — the NULL-knob fallback that used to derive from
+`propLossQ` (silently landing on `SYM_INT32` for a uniform-SYM profile) is now a
+hard-pinned `FLOAT32`, closing the gap described above by default. `SYM_INT32`
+parameter grads remain available and legitimate only via the explicit
+`weightGradStorage`/`biasGradStorage` knob on `layerQuant_t` (#261).
 
 ## SYM ↔ * conversion bridge (#227)
 
