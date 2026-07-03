@@ -230,6 +230,13 @@ jobs:
         # (#235) and the legacy v1 trainers silently rot — nothing built them.
         run: cmake --build --preset examples
 
+      - name: Run mixed_width_mlp acceptance example (per-op arithmetic + declared-width storage)
+        # Does NOT join bit-parity: mixed SYM_INT32/FLOAT32 wires have no PyTorch
+        # twin (SYM divergence is by design). The binary's own in-process hard
+        # gates (storage/wire dtypes + a loss-decrease sanity check) are the
+        # acceptance criteria; a non-zero exit fails this step.
+        run: build/examples/examples/mixed_width_mlp/train_c_mixed_width_mlp
+
       - name: Run HAR in BIT_PARITY mode
         run: BIT_PARITY=1 build/examples/examples/har_classifier/train_c_har_classifier
 
