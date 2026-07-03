@@ -3,14 +3,11 @@
 #include <stdbool.h>
 
 #include "ArithmeticType.h"
-#include "Conv1d.h"
-#include "Conv1dTransposed.h"
 #include "Layer.h"
 #include "LayerNorm.h"
 #include "Linear.h"
 #include "ModelValidationApi.h"
 #include "QuantizationApi.h"
-#include "QuantizationLayer.h"
 #include "Rounding.h"
 #include "StorageApi.h"
 #include "Tensor.h"
@@ -20,10 +17,11 @@
 void setUp(void) {}
 void tearDown(void) {}
 
-/* The validator reads ONLY layer->type + layerForwardMath(layer) (which reads
- * config->...->forwardMath), so a parameter-free stub suffices — same shape
- * as buildConv1dStub/buildLayerNormStub below (the deleted linearLayerInitLegacy
- * used to store forwardMath without dereferencing weights/bias). */
+/* The validator only walks layer->type + array shape now (the SYM-producer
+ * rule below buildLayerNormStub was retired, PR1b.2/spec D3), so a
+ * parameter-free stub suffices — same shape as buildLayerNormStub below (the
+ * deleted linearLayerInitLegacy used to store forwardMath without
+ * dereferencing weights/bias). */
 static layer_t *buildLinearStub(quantization_t *fq) {
     linearConfig_t *cfg = reserveMemory(sizeof(linearConfig_t));
     cfg->weights = NULL;
@@ -67,79 +65,8 @@ static layer_t *buildLayerNormStub(quantization_t *fq) {
     return layer;
 }
 
-static layer_t *buildQuantStub(quantization_t *fq) {
-    quantizationConfig_t *cfg = reserveMemory(sizeof(quantizationConfig_t));
-    cfg->outputQ = fq;
-    cfg->propLossQ = fq;
-    cfg->ownsQuantizations = false;
-    layerConfig_t *lc = reserveMemory(sizeof(layerConfig_t));
-    lc->quantization = cfg;
-    layer_t *layer = reserveMemory(sizeof(layer_t));
-    initLayer(layer, QUANTIZATION, lc);
-    return layer;
-}
-
 static void freeLayerNormStub(layer_t *layer) {
     freeReservedMemory(layer->config->layerNorm);
-    freeReservedMemory(layer->config);
-    freeReservedMemory(layer);
-}
-
-static layer_t *buildConv1dStub(quantization_t *fq) {
-    conv1dConfig_t *cfg = reserveMemory(sizeof(conv1dConfig_t));
-    cfg->kernel = NULL;
-    cfg->weights = NULL;
-    cfg->bias = NULL;
-    cfg->groups = 1;
-    cfg->forwardMath = arithmeticFromQuantization(fq);
-    cfg->weightGradMath = arithmeticFromQuantization(fq);
-    cfg->biasGradMath = arithmeticFromQuantization(fq);
-    cfg->propLossMath = arithmeticFromQuantization(fq);
-    cfg->outputQ = fq;
-    cfg->propLossQ = fq;
-    cfg->ownsQuantizations = false;
-    layerConfig_t *lc = reserveMemory(sizeof(layerConfig_t));
-    lc->conv1d = cfg;
-    layer_t *layer = reserveMemory(sizeof(layer_t));
-    initLayer(layer, CONV1D, lc);
-    return layer;
-}
-
-static void freeConv1dStub(layer_t *layer) {
-    freeReservedMemory(layer->config->conv1d);
-    freeReservedMemory(layer->config);
-    freeReservedMemory(layer);
-}
-
-static layer_t *buildConv1dTransposedStub(quantization_t *fq) {
-    conv1dTransposedConfig_t *cfg = reserveMemory(sizeof(conv1dTransposedConfig_t));
-    cfg->kernel = NULL;
-    cfg->weights = NULL;
-    cfg->bias = NULL;
-    cfg->groups = 1;
-    cfg->outputPadding = 0;
-    cfg->forwardMath = arithmeticFromQuantization(fq);
-    cfg->weightGradMath = arithmeticFromQuantization(fq);
-    cfg->biasGradMath = arithmeticFromQuantization(fq);
-    cfg->propLossMath = arithmeticFromQuantization(fq);
-    cfg->outputQ = fq;
-    cfg->propLossQ = fq;
-    cfg->ownsQuantizations = false;
-    layerConfig_t *lc = reserveMemory(sizeof(layerConfig_t));
-    lc->conv1dTransposed = cfg;
-    layer_t *layer = reserveMemory(sizeof(layer_t));
-    initLayer(layer, CONV1D_TRANSPOSED, lc);
-    return layer;
-}
-
-static void freeConv1dTransposedStub(layer_t *layer) {
-    freeReservedMemory(layer->config->conv1dTransposed);
-    freeReservedMemory(layer->config);
-    freeReservedMemory(layer);
-}
-
-static void freeQuantStub(layer_t *layer) {
-    freeReservedMemory(layer->config->quantization);
     freeReservedMemory(layer->config);
     freeReservedMemory(layer);
 }
@@ -172,7 +99,14 @@ void testValidatorRejectsNullElementMidArray(void) {
     TEST_ASSERT_FALSE_MESSAGE(valid, "NULL element in model array should be rejected");
 }
 
-void testValidatorRejectsSymProducerFollowedByNonQuantLayer(void) {
+/* Documents the retired rule's replacement contract (PR1b.2, spec D3): a SYM
+ * accumulator-range producer (Linear) feeding a non-QUANTIZATION layer
+ * (LayerNorm) used to be REJECTED (no chained Quant layer restoring width);
+ * the forward funnel now restores width at the producer's own wire, so this
+ * is a perfectly ordinary, ACCEPTED chain — a Quant layer here would just be
+ * a redundant identical-config requant (the double-requant anti-pattern
+ * `docs/conventions/arithmetic-sym.md` warns about), not a requirement. */
+void testValidatorAcceptsSymProducerFollowedByNonQuantLayer(void) {
     quantization_t *symQ = quantizationInitSymInt32(HALF_AWAY);
     layer_t *linear = buildLinearStub(symQ);
     layer_t *norm = buildLayerNormStub(symQ);
@@ -184,42 +118,9 @@ void testValidatorRejectsSymProducerFollowedByNonQuantLayer(void) {
     freeLinearStub(linear);
     freeQuantization(symQ);
 
-    TEST_ASSERT_FALSE_MESSAGE(valid, "Linear-SYM feeding LayerNorm-SYM without a Quant layer "
-                                     "violates the int16 inter-layer contract");
-}
-
-void testValidatorAcceptsChainWithQuantLayersBetweenProducers(void) {
-    quantization_t *symQ = quantizationInitSymInt32(HALF_AWAY);
-    layer_t *linear0 = buildLinearStub(symQ);
-    layer_t *quant1 = buildQuantStub(symQ);
-    layer_t *norm = buildLayerNormStub(symQ);
-    layer_t *quant2 = buildQuantStub(symQ);
-    layer_t *linear1 = buildLinearStub(symQ); /* producer in last position: allowed */
-    layer_t *model[5] = {linear0, quant1, norm, quant2, linear1};
-
-    bool valid = validateModelQuantization(model, 5);
-
-    freeLinearStub(linear1);
-    freeQuantStub(quant2);
-    freeLayerNormStub(norm);
-    freeQuantStub(quant1);
-    freeLinearStub(linear0);
-    freeQuantization(symQ);
-
-    TEST_ASSERT_TRUE(valid);
-}
-
-void testValidatorAcceptsSymProducerInLastPosition(void) {
-    quantization_t *symQ = quantizationInitSymInt32(HALF_AWAY);
-    layer_t *linear = buildLinearStub(symQ);
-    layer_t *model[1] = {linear};
-
-    bool valid = validateModelQuantization(model, 1);
-
-    freeLinearStub(linear);
-    freeQuantization(symQ);
-
-    TEST_ASSERT_TRUE_MESSAGE(valid, "producer at the loss boundary is allowed");
+    TEST_ASSERT_TRUE_MESSAGE(valid, "Linear-SYM feeding LayerNorm-SYM directly is accepted: "
+                                    "the forward funnel already restored width at the wire, "
+                                    "a Quant layer here is optional, not required");
 }
 
 void testValidatorAcceptsFloatOnlyModel(void) {
@@ -237,62 +138,12 @@ void testValidatorAcceptsFloatOnlyModel(void) {
     TEST_ASSERT_TRUE(valid);
 }
 
-void testValidatorRejectsConv1dSymProducerFollowedByNonQuantLayer(void) {
-    quantization_t *symQ = quantizationInitSymInt32(HALF_AWAY);
-    layer_t *conv = buildConv1dStub(symQ);
-    layer_t *norm = buildLayerNormStub(symQ);
-    layer_t *model[2] = {conv, norm};
-
-    bool valid = validateModelQuantization(model, 2);
-
-    freeLayerNormStub(norm);
-    freeConv1dStub(conv);
-    freeQuantization(symQ);
-
-    TEST_ASSERT_FALSE_MESSAGE(valid, "Conv1d-SYM feeding a non-Quant layer violates the "
-                                     "int16 inter-layer contract");
-}
-
-void testValidatorAcceptsConv1dTransposedSymProducerInLastPosition(void) {
-    quantization_t *symQ = quantizationInitSymInt32(HALF_AWAY);
-    layer_t *convT = buildConv1dTransposedStub(symQ);
-    layer_t *model[1] = {convT};
-
-    bool valid = validateModelQuantization(model, 1);
-
-    freeConv1dTransposedStub(convT);
-    freeQuantization(symQ);
-
-    TEST_ASSERT_TRUE_MESSAGE(valid, "a SYM producer in the last position is allowed");
-}
-
-void testValidatorRejectsConv1dTransposedSymProducerFollowedByNonQuantLayer(void) {
-    quantization_t *symQ = quantizationInitSymInt32(HALF_AWAY);
-    layer_t *convT = buildConv1dTransposedStub(symQ);
-    layer_t *norm = buildLayerNormStub(symQ);
-    layer_t *model[2] = {convT, norm};
-
-    bool valid = validateModelQuantization(model, 2);
-
-    freeLayerNormStub(norm);
-    freeConv1dTransposedStub(convT);
-    freeQuantization(symQ);
-
-    TEST_ASSERT_FALSE_MESSAGE(valid, "Conv1dTransposed-SYM feeding a non-Quant layer violates "
-                                     "the int16 inter-layer contract");
-}
-
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testValidatorAcceptsEmptyModel);
     RUN_TEST(testValidatorRejectsNullModel);
     RUN_TEST(testValidatorRejectsNullElementMidArray);
-    RUN_TEST(testValidatorRejectsSymProducerFollowedByNonQuantLayer);
-    RUN_TEST(testValidatorAcceptsChainWithQuantLayersBetweenProducers);
-    RUN_TEST(testValidatorAcceptsSymProducerInLastPosition);
+    RUN_TEST(testValidatorAcceptsSymProducerFollowedByNonQuantLayer);
     RUN_TEST(testValidatorAcceptsFloatOnlyModel);
-    RUN_TEST(testValidatorRejectsConv1dSymProducerFollowedByNonQuantLayer);
-    RUN_TEST(testValidatorAcceptsConv1dTransposedSymProducerInLastPosition);
-    RUN_TEST(testValidatorRejectsConv1dTransposedSymProducerFollowedByNonQuantLayer);
     return UNITY_END();
 }

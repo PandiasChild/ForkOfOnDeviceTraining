@@ -1,7 +1,5 @@
 #define SOURCE_FILE "SOFTMAX"
 
-#define EULER_APPROX = 2.71828
-
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>

@@ -142,10 +142,10 @@ void testLinearLayerNormLinearOneTrainingStep(void) {
 
 /* Full-SYM single-LayerNorm training step through the public training APIs:
  * calculateGradsSequential (MSE — the only SYM-capable loss backward) + SGD-M
- * step on SYM gamma/beta with SYM grads. Explicit Quantization (requant) layers
- * between SYM producers are still REQUIRED: the forward wire carries raw
- * accumulator mantissas until the forward migration (PR1b.2); as of PR1b only
- * the backward/dx side is funnel-restored at the producer (OUT_WRITE epilogue).
+ * step on SYM gamma/beta with SYM grads. Single-layer model: LayerNorm sits at
+ * the loss boundary, so there's no downstream layer to feed regardless of
+ * whether its forward wire is producer-restored (PR1b.2) or not — a chained
+ * Quantization layer was never required here even before that migration.
  * Test behavior unchanged: validates the full SYM end-to-end path.
  * A FLOAT32 twin trained on the same data is the reference; 5e-3 absolute
  * dequant tolerance absorbs input quantization + strategy-A grad noise

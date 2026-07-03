@@ -37,26 +37,56 @@ FLOAT kernels with identical loop nest + `SlidingWindow1d` geometry:
   Conv1dTransposed's forward in PR3.
 
 Both emit **raw accumulator-range int32 mantissas** at output scale `s_in·s_w`
-(NOT range-restored). As of PR1b the `executeOp` epilogue restores operand width at the
-**producer** on the migrated paths (the dx wire; Linear/LayerNorm backward; the Quantization
-layer itself — `OUT_WRITE` routes SYM→SYM through the conversionMatrix diagonal). SYM
-**forward** chains are not yet funnel-routed: an explicitly-chained Quantization layer after
-each SYM producer remains REQUIRED (enforced by `validateModelQuantization`) until the forward
-migration (PR1b.2), after which it becomes an optional storage node. Per-output-
+(NOT range-restored) — that's the *kernel's* contract. The `executeOp` epilogue
+restores operand width at the **producer**, on every migrated path (forward
+AND backward: Linear/Conv1d/Conv1dTransposed/LayerNorm forward; the dx wire;
+the Quantization layer itself — `OUT_WRITE` routes SYM→SYM through the
+conversionMatrix diagonal). A chained Quantization layer after a SYM producer
+is therefore **optional**, not required (`validateModelQuantization`'s old
+"next layer must be QUANTIZATION" rule is retired, PR1b.2/spec D3) — but
+"optional" does not mean "harmless to add anyway". The precise anti-pattern:
+**a Quant node with an IDENTICAL config directly consuming a funnel-restored
+producer wire** repeats the exact restoration the producer epilogue just
+did — under HALF_AWAY this is a redundant no-op computation; under SR it
+re-draws stochastic jitter, i.e. pure noise. Three uses of a following
+Quant/requant node stay legitimate single-requants, not double-requants:
+(a) **width change** `@W1 -> @W2` — though when the target width is known at
+the producer, prefer declaring it directly in `outputQ` and letting the
+`OUT_WRITE` epilogue requant straight to `@W2`, skipping the Quant node
+entirely; (b) **same-width re-normalization after a scale-transparent
+segment** (Relu/Dropout/Flatten forward are NOT funnel-routed by design —
+element-wise scale-transparent ops that copy/fold the input's scale rather
+than deriving a fresh one, `2026-07-03-pr1b2-forward-funnel-design.md` D2 —
+so they can leave a tensor underfilled, e.g. Relu zeroing the absmax element;
+a Quant node there is the *first* requant of that value, not a second one);
+(c) **dtype changes** (SYM -> FLOAT32 etc.). There is no runtime "was this wire already
+restored?" check — raw vs. restored isn't reliably detectable from the tensor
+alone, and requant legitimately re-normalizes underfilled tensors, so this is
+a design discipline for model authors, not an enforced invariant. Per-output-
 channel bias is refolded into the product scale via `rescaleIntoAccumulatorScale`
 (the #189 guarded helper); never raw-added.
 
 Conv1d backward declares **per-op arithmetic** (`weightGradMath`, `biasGradMath`,
-`propLossMath`, by-value `arithmetic_t`), like `linearBackward`:
+`propLossMath`, by-value `arithmetic_t`), like `linearBackward`, and — like
+forward (above) — routes all three through the `executeOp` funnel:
 
-- **weightGrad (SYM)** = strategy A: integer gather into a fresh `reserveMemory`
-  intermediate at scale `s_loss·s_in`, then `addSymInt32TensorsInplace` into the
-  SYM grad accumulator (fresh absmax scale).
+- **weightGrad (SYM)** = strategy A: integer gather into the funnel's Phase-2
+  intermediate (a stack-allocated, data-sized VLA scratch inside `executeOp` —
+  no `reserveMemory`) at scale `s_loss·s_in`, then the `OUT_ACC_DYNAMIC_RESCALE`
+  epilogue's `addSymInt32TensorsInplace` into the SYM grad accumulator (fresh
+  absmax scale).
 - **biasGrad (SYM)** = an int32 `(batch × outputLength)` accumulator per output
-  channel, then `rescaleIntoAccumulatorScale(sum, s_loss, s_bg, mode)` at the
-  bias-grad's fixed scale (the #218 scheme).
-- **dx / propLoss (SYM)** = `convTranspose1dKernelSymInt32(lossGrad, weights)`,
-  scale `s_loss·s_w`, guarded by the #187 fail-fast (produced propLoss tensor must be SYM).
+  channel, then the `OUT_ACC_FIXED_SCALE` epilogue's
+  `rescaleIntoAccumulatorScale(sum, s_loss, s_bg, mode)` at the bias-grad's
+  fixed scale (the #218 scheme).
+- **dx / propLoss (SYM)** = `convTranspose1dKernelSymInt32(lossGrad, weights)`
+  emits the raw `s_loss·s_w` mantissa into the funnel intermediate; the
+  `OUT_WRITE` epilogue then width-restores it at the producer through the
+  conversionMatrix diagonal — the dx wire gets the same treatment as every
+  other producer wire (above). The old #187 dtype fail-fast (produced propLoss
+  tensor must be SYM) is retired: superseded by the funnel's own
+  prologue/epilogue and a confirmed tautology post-#221 (zero test coverage
+  exercised it).
 
 ### Operand bit-width: int12, not int16 (int32-accumulator soundness)
 
@@ -126,11 +156,14 @@ cores — no new kernels:
 
 - **forward** = `convTranspose1dKernelSymInt32` (the scatter core; its internal
   per-channel bias-seed refold gives ConvT bias for free). Pass `outputPadding`.
-- **dx / propLoss** = `conv1dKernelSymInt32` (the gather core, the VALID adjoint),
-  guarded by the #187 fail-fast (produced propLoss tensor must be SYM).
+- **dx / propLoss** = `conv1dKernelSymInt32` (the gather core, the VALID adjoint);
+  the `OUT_WRITE` epilogue width-restores the raw mantissa at the producer,
+  same as Conv1d's dx wire above — the old #187 dtype fail-fast is retired
+  (superseded by the funnel, PR1b.2).
 - **weightGrad** = strategy A: a scatter-style integer gather (ConvT weight layout
-  `[Cin, Cout/groups, K]`, index `(ic·outChPerGroup + ocOffset)·K + k`) into a fresh
-  `reserveMemory` int32 intermediate at scale `s_in·s_loss`, then
+  `[Cin, Cout/groups, K]`, index `(ic·outChPerGroup + ocOffset)·K + k`) into the
+  funnel's Phase-2 stack-VLA intermediate (no `reserveMemory`) at scale
+  `s_in·s_loss`, then the `OUT_ACC_DYNAMIC_RESCALE` epilogue's
   `addSymInt32TensorsInplace` into the SYM grad accumulator.
 - **biasGrad** = the same fixed-scale refold as Conv1d (`rescaleIntoAccumulatorScale`
   over the `batch × outputLength` int32 sum).
@@ -156,12 +189,16 @@ paths (ASYM, BOOL, SYM width-restore), unifying the Quantization layer into a pu
 conversion node (#266). This separation keeps arithmetic orthogonal to storage,
 enabling per-op compute-dtype divergence (#218 knobs) without ownership complexity.
 
-### Validator (PR3)
+### Validator retirement (PR1b.2)
 
-`isAccumulatorRangeSymProducer` (`ModelValidationApi.c`) now recognizes CONV1D and
-CONV1D_TRANSPOSED whose declared `layerForwardMath(layer).type` is `ARITH_SYM_INT32`,
-bringing SYM-producing conv layers under the int16 inter-layer contract: a SYM conv
-producer must be followed by a Quantization layer (or sit in the last position).
+`ModelValidationApi.c`'s `isAccumulatorRangeSymProducer` + `validateModelQuantization`'s
+"a SYM accumulator-range producer (LINEAR/LAYERNORM/CONV1D/CONV1D_TRANSPOSED) not in
+the last position must be followed by a QUANTIZATION layer" rule is **retired**: once
+every producer's forward restores width at its own wire (above), there is nothing left
+for that rule to catch — a following Quant layer is optional, and forcing one directly
+after a producer is the double-requant anti-pattern, not a requirement. `validateModelQuantization`
+stays as the model-wide validation entry point for future rules; today it only guards
+the model array shape (non-NULL model/elements).
 
 ### SYM training chains
 
@@ -171,8 +208,10 @@ every layer type — Linear/Conv/pools/Relu/Softmax/Dropout/LayerNorm/Quantizati
 all resolve through the same field; Flatten and the loss seed pass through the
 upstream dtype) — #221. Uniform chains behave exactly as before: a
 uniformly-SYM chain (every layer's `forwardMath` declaring `ARITH_SYM_INT32`)
-makes every grad tensor SYM_INT32 and every layer's `propLossQ` match — the #187
-guard passes. SYM-trainable conv layers are built via the low-level
+makes every grad tensor SYM_INT32 and every layer's `propLossQ` match — each
+producer's `OUT_WRITE` epilogue (above) width-restores its own dx wire
+independently, so the chain stays consistent without the retired #187
+cross-layer guard. SYM-trainable conv layers are built via the low-level
 `initConv1dTransposedConfigWithWeightsAndBias` with SYM `parameter_t`s (the
 high-level factory's KAIMING/uniform init still requires FLOAT32-native
 weight/bias storage; grad storage itself now follows `propLossQ`/the

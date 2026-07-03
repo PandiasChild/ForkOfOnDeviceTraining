@@ -11,12 +11,17 @@
  *  literal that dies after the call. outputQ = dtype/qConfig target of the
  *  forward output; propLossQ = dtype/qConfig target of the backward propLoss.
  *  weightStorage/biasStorage are ignored (the Quantization layer has no
- *  parameters). */
+ *  parameters).
+ *  Use when: outputQ/propLossQ are shared/long-lived (e.g. reused across
+ *  several layers) and the caller manages their lifetime — they must
+ *  outlive the layer. */
 layer_t *quantLayerInit(layerQuant_t *lq);
 
 /*! Owning variant — factory deep-copies outputQ and propLossQ.
  *  Caller can free `lq` and both quantization_t* immediately after the
- *  factory returns. freeQuantLayer will tear down the copies. */
+ *  factory returns. freeQuantLayer will tear down the copies.
+ *  Use when: outputQ/propLossQ are stack-locals or one-off configs and you
+ *  want fire-and-forget teardown (freeQuantLayer tears them down too). */
 layer_t *quantLayerInitOwning(layerQuant_t *lq);
 
 /*! Tears down everything the factory allocated (internal config, layer).

@@ -46,15 +46,20 @@
 #define LR 0.01f
 #define MOMENTUM 0.9f
 
-/* Flatten -> Linear0 -> Quant0 -> Relu -> Linear1 -> Quant1 -> Softmax = 7 layers */
-#define MODEL_SIZE 7
+/* Flatten -> Linear0 -> Relu -> Linear1 -> Quant1 -> Softmax = 6 layers.
+ * No Quant0 (spec D3): Linear0's forward funnel already restores width to
+ * SYM_INT32@12 at the wire (Linear0.outputQ), so a follow-up Quant node with
+ * the IDENTICAL @12 config would just repeat that restore for free noise
+ * (the double-requant anti-pattern, docs/conventions/arithmetic-sym.md).
+ * Quant1 stays: it's a genuine SYM_INT32@12 -> FLOAT32 dtype change, the
+ * legitimate single-requant case D3 carves out. */
+#define MODEL_SIZE 6
 #define FLATTEN_IDX 0
 #define LINEAR0_IDX 1
-#define QUANT0_IDX 2
-#define RELU_IDX 3
-#define LINEAR1_IDX 4
-#define QUANT1_IDX 5
-#define SOFTMAX_IDX 6
+#define RELU_IDX 2
+#define LINEAR1_IDX 3
+#define QUANT1_IDX 4
+#define SOFTMAX_IDX 5
 
 /* Pinned widths (spec §7). */
 #define WEIGHT_QMAXBITS 8
@@ -144,13 +149,13 @@ typedef struct mixedWidthQuant {
     quantization_t *weightQ;    /* SYM_INT32 @8  — weightStorage (post-construction fixup) */
     quantization_t *biasQ;      /* SYM_INT32 @16 — biasStorage   (post-construction fixup) */
     quantization_t *gradQ;      /* SYM_INT32 @16 — weightGradStorage/biasGradStorage knob */
-    quantization_t *operandQ;   /* SYM_INT32 @12 — Linear0/Linear1 outputQ (raw producer wire) */
-    quantization_t *wireQ;      /* SYM_INT32 @12 — Quant0/Relu outputQ + every layer's propLossQ */
-    quantization_t *floatQ;     /* FLOAT32 — Quant1/Softmax outputQ */
+    quantization_t *operandQ; /* SYM_INT32 @12 — Linear0/Linear1 outputQ (producer-restored wire) */
+    quantization_t *wireQ;    /* SYM_INT32 @12 — Relu outputQ + every layer's propLossQ */
+    quantization_t *floatQ;   /* FLOAT32 — Quant1/Softmax outputQ */
 } mixedWidthQuant_t;
 
 /* Flatten [1,28,28] -> [1,784] (the channel-1 acts as batch, mnist_mlp convention) -> Linear0
- * -> Quant0 -> Relu -> Linear1 -> Quant1 -> Softmax, CE loss (spec §7 topology). */
+ * -> Relu -> Linear1 -> Quant1 -> Softmax, CE loss (spec §7 topology). */
 static void buildModel(layer_t **model, mixedWidthQuant_t *mq) {
     model[FLATTEN_IDX] = flattenLayerInit();
 
@@ -201,14 +206,6 @@ static void buildModel(layer_t **model, mixedWidthQuant_t *mq) {
     model[LINEAR1_IDX] = linearLayerInit(
         &(linearInit_t){.inFeatures = HIDDEN, .outFeatures = NUM_CLASSES}, &lqLinear);
 
-    /* Quant0: pure conversion node (D4) — width restoration to SYM_INT32@12
-     * on both the forward wire and the dx wire it hands upstream. */
-    layerQuant_t lqQuant0 = {
-        .outputQ = mq->wireQ,
-        .propLossQ = mq->wireQ,
-    };
-    model[QUANT0_IDX] = quantLayerInit(&lqQuant0);
-
     layerQuant_t lqRelu = {
         .forwardMath = (arithmetic_t){ARITH_SYM_INT32, HALF_AWAY},
         .propLossMath = (arithmetic_t){ARITH_SYM_INT32, HALF_AWAY}, /* native on SYM wires */
@@ -245,23 +242,25 @@ typedef struct wireGateCtx {
     bool checked;
 } wireGateCtx_t;
 
-/* Fired via tracedGrads for the first training sample: asserts the
- * post-Quant0 forward wire is SYM_INT32@12. */
-static void quant0WireGateSink(void *ctxVoid, size_t layerIdx, layerType_t layerType,
-                               const char *phase, tensor_t *tensor) {
+/* Fired via tracedGrads for the first training sample: asserts Linear0's own
+ * forward wire is already SYM_INT32@12 (spec D3 — the funnel restores width
+ * at the producer directly; there is no separate Quant0 wire to probe
+ * anymore). */
+static void linear0WireGateSink(void *ctxVoid, size_t layerIdx, layerType_t layerType,
+                                const char *phase, tensor_t *tensor) {
     (void)layerType;
-    if (layerIdx != QUANT0_IDX || strcmp(phase, "fwd") != 0) {
+    if (layerIdx != LINEAR0_IDX || strcmp(phase, "fwd") != 0) {
         return;
     }
     wireGateCtx_t *ctx = ctxVoid;
     if (tensor->quantization->type != SYM_INT32) {
-        PRINT_ERROR("gate: Quant0 forward wire expected SYM_INT32, got qtype %d",
+        PRINT_ERROR("gate: Linear0 forward wire expected SYM_INT32, got qtype %d",
                     (int)tensor->quantization->type);
         exit(1);
     }
     symInt32QConfig_t *qc = tensor->quantization->qConfig;
     if (qc->qMaxBits != WIRE_QMAXBITS) {
-        PRINT_ERROR("gate: Quant0 forward wire expected qMaxBits %d, got %u", WIRE_QMAXBITS,
+        PRINT_ERROR("gate: Linear0 forward wire expected qMaxBits %d, got %u", WIRE_QMAXBITS,
                     (unsigned)qc->qMaxBits);
         exit(1);
     }
@@ -350,9 +349,9 @@ int main(void) {
 
         trainingStats_t *stats;
         if (i == 0) {
-            /* One traced step: also probes the post-Quant0 forward wire. */
+            /* One traced step: also probes Linear0's own forward wire. */
             stats = tracedGrads(model, MODEL_SIZE, lossCfg, REDUCTION_MEAN, smp->item, label,
-                                quant0WireGateSink, &wireCtx);
+                                linear0WireGateSink, &wireCtx);
         } else {
             stats = calculateGradsSequential(model, MODEL_SIZE, lossCfg, REDUCTION_MEAN, smp->item,
                                              label);
@@ -371,7 +370,7 @@ int main(void) {
             /* Hard gates (spec §7): after one training step, storage/wire
              * dtypes must already match the pinned config. */
             if (!wireCtx.checked) {
-                PRINT_ERROR("gate: Quant0 forward-wire probe never fired (layer index wrong?)");
+                PRINT_ERROR("gate: Linear0 forward-wire probe never fired (layer index wrong?)");
                 exit(1);
             }
 
@@ -393,7 +392,7 @@ int main(void) {
 
             fprintf(stdout,
                     "GATES PASS: weight=SYM_INT32@%d bias=SYM_INT32@%d grads=SYM_INT32@%d "
-                    "Quant0-wire=SYM_INT32@%d\n",
+                    "Linear0-wire=SYM_INT32@%d\n",
                     WEIGHT_QMAXBITS, BIAS_QMAXBITS, GRAD_QMAXBITS, WIRE_QMAXBITS);
         }
     }

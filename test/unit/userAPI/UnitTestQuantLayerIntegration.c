@@ -425,6 +425,15 @@ void testFullSymChainTrainingStepMatchesFloatTwin(void) {
     }
 }
 
+/* The Quant layer in this chain (ConvT -> Quant -> MSE) is deliberately
+ * RETAINED, not required: ConvT1d's forward already restores its output wire
+ * to `symQ`'s width at the producer (executeOp's OUT_WRITE epilogue,
+ * PR1b.2), so a same-config Quant node consuming it straight after is the
+ * documented double-requant anti-pattern (docs/conventions/arithmetic-sym.md
+ * — "a Quant node with an IDENTICAL config directly consuming a
+ * funnel-restored producer wire"), i.e. REDUNDANT on this wire post-PR1b.2.
+ * It is kept here to exercise the Quantization layer inside a real training
+ * loop (loop-integration coverage), not as a model an author should copy. */
 void testConv1dTransposedSymChainTrains(void) {
     /* Tiny uniform-SYM chain: ConvT(1->1, K=2) -> Quant -> MSE. int12 operands keep
      * int12*int12 products inside int32; the loop forces int16 grad accumulators.
@@ -491,7 +500,13 @@ void testConv1dTransposedSymChainTrains(void) {
     TEST_ASSERT_TRUE_MESSAGE(decreased, "SYM ConvT chain must train (loss must decrease)");
 }
 
-void testValidatorRejectsChainWithoutQuantLayers(void) {
+/* Retired-rule contract update (PR1b.2, spec D3): a SYM-producer chain with
+ * no Quant layers between producers used to be REJECTED by
+ * validateModelQuantization; the forward funnel now restores width at each
+ * producer's own wire, so this exact chain is a perfectly ordinary, ACCEPTED
+ * model — a Quant layer here would be a redundant identical-config requant,
+ * not a requirement. */
+void testValidatorAcceptsChainWithoutQuantLayers(void) {
     quantization_t *symQ = quantizationInitSymInt32(HALF_AWAY);
     layerQuant_t lqSym;
     layerQuantInitUniform(&lqSym, symQ);
@@ -502,7 +517,8 @@ void testValidatorRejectsChainWithoutQuantLayers(void) {
     layer_t *lin1 = buildTrainableLinear(3, 2, W1_VALS, B1_VALS, symQ, true);
     layer_t *model[3] = {lin0, ln, lin1};
 
-    /* Linear-SYM raw accumulator would feed LayerNorm directly — do NOT train. */
+    /* Linear-SYM's forward already restores width before feeding LayerNorm-SYM
+     * directly — no Quant layer needed between them. */
     bool valid = validateModelQuantization(model, 3);
 
     freeParameter(lin1->config->linear->weights);
@@ -514,7 +530,9 @@ void testValidatorRejectsChainWithoutQuantLayers(void) {
     freeLinearLayerShell(lin0);
     freeQuantization(symQ);
 
-    TEST_ASSERT_FALSE_MESSAGE(valid, "missing Quant layers must be rejected by the validator");
+    TEST_ASSERT_TRUE_MESSAGE(valid, "a SYM-producer chain without Quant layers between "
+                                    "producers is accepted: the forward funnel already "
+                                    "restored width at each producer's wire");
 }
 
 int main(void) {
@@ -523,7 +541,7 @@ int main(void) {
     RUN_TEST(testTrainingStepLinearSymThenQuantRequantsOutputAndFiniteLoss);
     RUN_TEST(testInferenceLinearSymThenQuantOutputsInt16RangeMantissas);
     RUN_TEST(testFullSymChainTrainingStepMatchesFloatTwin);
-    RUN_TEST(testValidatorRejectsChainWithoutQuantLayers);
+    RUN_TEST(testValidatorAcceptsChainWithoutQuantLayers);
     RUN_TEST(testConv1dTransposedSymChainTrains);
     return UNITY_END();
 }

@@ -1482,6 +1482,37 @@ void testLinearBackwardWithoutBiasDoesNotCrash(void) {
     TEST_ASSERT_EQUAL_FLOAT(0.5f, wg00); /* loss[0,0]*fwdIn[0,0] = 0.5*1 */
 }
 
+/* Regression net for the bias-NULL-deref fix bundled into the forward funnel
+ * migration (Task 3 of PR1b.2): pre-migration, linearForward unconditionally
+ * called getParamFromParameter(cfg->bias) even when bias == NULL, crashing on
+ * any bias-disabled layer's forward call — untested until the funnel's
+ * operand-array construction forced the NULL check to be added. Mirrors
+ * testLinearBackwardWithoutBiasDoesNotCrash's fixture shape. */
+void testLinearForwardWithoutBiasDoesNotCrash(void) {
+    quantization_t *q = quantizationInitFloat();
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, q);
+    layer_t *layer = linearLayerInit(
+        &(linearInit_t){.inFeatures = 3, .outFeatures = 2, .bias = BIAS_FALSE}, &lq);
+    layerLoadWeights(layer, (float[]){-1.f, 2.f, -3.f, 4.f, 5.f, -6.f}, NULL);
+
+    tensor_t *input = buildFloatTensor2d(1, 3, (float[]){0.f, 1.f, 2.f});
+    tensor_t *output = buildFloatTensor2d(1, 2, (float[]){0.f, 0.f});
+
+    layerFunctions[LINEAR].forward(layer, input, output);
+
+    bool biasIsNull = (layer->config->linear->bias == NULL);
+    float out0 = ((float *)output->data)[0];
+    float out1 = ((float *)output->data)[1];
+    freeTensor(output);
+    freeTensor(input);
+    freeLinearLayer(layer);
+    freeQuantization(q);
+    TEST_ASSERT_TRUE(biasIsNull);
+    TEST_ASSERT_EQUAL_FLOAT(-4.f, out0); /* -1*0 + 2*1 + -3*2 = -4 */
+    TEST_ASSERT_EQUAL_FLOAT(-7.f, out1); /*  4*0 + 5*1 + -6*2 = -7 */
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testLinearForwardFloat);
@@ -1512,5 +1543,6 @@ int main(void) {
     RUN_TEST(testLinearLayerInitDefaultWeightsWithinPyTorchBound);
     RUN_TEST(testLinearLayerInitXavierUniformOverrideUsesGlorotBound);
     RUN_TEST(testLinearBackwardWithoutBiasDoesNotCrash);
+    RUN_TEST(testLinearForwardWithoutBiasDoesNotCrash);
     return UNITY_END();
 }

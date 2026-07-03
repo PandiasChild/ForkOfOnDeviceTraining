@@ -8,12 +8,12 @@
 
 /*! Opt-in model-quantization validator (NOT wired into the training loop).
  *
- *  Walks the layer array and checks the int16 inter-layer contract: a layer
- *  whose declared forward arithmetic (layerForwardMath(layer).type) is
- *  ARITH_SYM_INT32 and whose type is an accumulator-range producer (LINEAR,
- *  LAYERNORM, CONV1D, CONV1D_TRANSPOSED) must be followed by a QUANTIZATION
- *  layer that requantizes the raw accumulator mantissas. A producer in the
- *  last position is allowed (loss boundary).
+ *  Walks the layer array and validates its shape (non-NULL model, non-NULL
+ *  elements). The int16-inter-layer "SYM producer must be followed by a
+ *  QUANTIZATION layer" rule this once enforced is RETIRED (PR1b.2, spec D3):
+ *  the forward funnel now restores width at the producer's own wire, so a
+ *  following Quant layer is optional, not required. This entry point is kept
+ *  as the place future model-wide rules attach to.
  *
  *  Diagnostics: logs every violation (PRINT_ERROR-style, visible with
  *  DLEVEL >= 1) and returns false if at least one violation was found.

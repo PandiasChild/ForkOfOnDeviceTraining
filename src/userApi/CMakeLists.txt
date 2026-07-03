@@ -88,10 +88,8 @@ target_link_libraries(LayerConfigAccess PRIVATE
 add_library(ModelValidationApi ModelValidationApi.c)
 target_include_directories(ModelValidationApi PUBLIC include)
 target_link_libraries(ModelValidationApi PRIVATE
-        ArithmeticType
         Common
         Layer
-        LayerConfigAccess
         Quantization
         Rounding
         Tensor

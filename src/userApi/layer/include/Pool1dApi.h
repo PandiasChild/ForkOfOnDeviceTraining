@@ -48,12 +48,17 @@ typedef struct avgPool1dInit {
 
 /*! Borrowing variant — allocates kernel and (for MaxPool) the argmax
  *  tensor; stores lq->outputQ in outputQ and lq->propLossQ in
- *  propLossQ verbatim. */
+ *  propLossQ verbatim.
+ *  Use when: outputQ/propLossQ are shared/long-lived (e.g. reused across
+ *  several layers) and the caller manages their lifetime — they must
+ *  outlive the layer. */
 layer_t *maxPool1dLayerInit(maxPool1dInit_t *init, layerQuant_t *lq);
 layer_t *avgPool1dLayerInit(avgPool1dInit_t *init, layerQuant_t *lq);
 
 /*! Owning variant — additionally deep-copies outputQ and
- *  propLossQ via deepCopyQuantization. */
+ *  propLossQ via deepCopyQuantization.
+ *  Use when: outputQ/propLossQ are stack-locals or one-off configs and you
+ *  want fire-and-forget teardown (free*Pool1dLayer tears them down too). */
 layer_t *maxPool1dLayerInitOwning(maxPool1dInit_t *init, layerQuant_t *lq);
 layer_t *avgPool1dLayerInitOwning(avgPool1dInit_t *init, layerQuant_t *lq);
 

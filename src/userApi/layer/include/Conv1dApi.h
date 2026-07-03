@@ -37,12 +37,17 @@ typedef struct conv1dInit {
 /*! Borrowing variant — factory allocates weights/bias/kernel internally
  *  and stores the four math `quantization_t*` from `lq` verbatim. Caller
  *  retains ownership of `lq` and the quantizations; `lq` may be a
- *  compound literal. */
+ *  compound literal.
+ *  Use when: the quantizations are shared/long-lived (e.g. reused across
+ *  several layers) and the caller manages their lifetime — they must
+ *  outlive the layer. */
 layer_t *conv1dLayerInit(conv1dInit_t *init, layerQuant_t *lq);
 
 /*! Owning variant — same as `conv1dLayerInit`, but additionally
  *  `deepCopyQuantization`s each of the four math quantizations. Caller
- *  can drop `lq` and the quantization_t's immediately. */
+ *  can drop `lq` and the quantization_t's immediately.
+ *  Use when: the quantizations are stack-locals or one-off configs and you
+ *  want fire-and-forget teardown (freeConv1dLayer tears them down too). */
 layer_t *conv1dLayerInitOwning(conv1dInit_t *init, layerQuant_t *lq);
 
 /*! Tears down everything the factory allocated. Reads

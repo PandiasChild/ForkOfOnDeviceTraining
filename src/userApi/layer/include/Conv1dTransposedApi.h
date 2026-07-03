@@ -37,11 +37,17 @@ typedef struct conv1dTransposedInit {
 } conv1dTransposedInit_t;
 
 /*! Borrowing variant — allocates kernel, weights, bias; stores the four
- *  lq math quantizations verbatim. Caller retains ownership of lq. */
+ *  lq math quantizations verbatim. Caller retains ownership of lq.
+ *  Use when: the quantizations are shared/long-lived (e.g. reused across
+ *  several layers) and the caller manages their lifetime — they must
+ *  outlive the layer. */
 layer_t *conv1dTransposedLayerInit(conv1dTransposedInit_t *init, layerQuant_t *lq);
 
 /*! Owning variant — additionally deep-copies the four math quantizations
- *  via deepCopyQuantization. */
+ *  via deepCopyQuantization.
+ *  Use when: the quantizations are stack-locals or one-off configs and you
+ *  want fire-and-forget teardown (freeConv1dTransposedLayer tears them down
+ *  too). */
 layer_t *conv1dTransposedLayerInitOwning(conv1dTransposedInit_t *init, layerQuant_t *lq);
 
 /*! Tears down everything the factory allocated. Reads

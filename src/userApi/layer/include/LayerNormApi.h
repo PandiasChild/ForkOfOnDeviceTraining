@@ -20,13 +20,18 @@ typedef struct layerNormInit {
  *  (storage dtype = lq->weightStorage / lq->biasStorage) and their grads via
  *  gradInit(param, lq->weightGradStorage ?: lq->propLossQ, NULL) (resp.
  *  biasGradStorage for beta). Copies normalizedShape into factory-owned
- *  memory. */
+ *  memory.
+ *  Use when: outputQ/propLossQ are shared/long-lived (e.g. reused across
+ *  several layers) and the caller manages their lifetime — they must
+ *  outlive the layer. */
 layer_t *layerNormLayerInit(layerNormInit_t *init, layerQuant_t *lq);
 
 /*! Owning factory — deep-copies lq->outputQ / lq->propLossQ into the
  *  config (ownsQuantizations=true; the caller may drop its outputQ/propLossQ
  *  pointers immediately). Identical gamma/beta allocation + normalizedShape copy
- *  as the Borrowing variant. Mirrors linearLayerInitOwning. */
+ *  as the Borrowing variant. Mirrors linearLayerInitOwning.
+ *  Use when: outputQ/propLossQ are stack-locals or one-off configs and you
+ *  want fire-and-forget teardown (freeLayerNormLayer tears them down too). */
 layer_t *layerNormLayerInitOwning(layerNormInit_t *init, layerQuant_t *lq);
 
 /*! Frees the parameter_t (gamma/beta + grads + shapes), the copied

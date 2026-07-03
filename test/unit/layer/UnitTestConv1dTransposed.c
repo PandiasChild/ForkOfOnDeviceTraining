@@ -693,6 +693,23 @@ void testConv1dTransposedCalcBiasGradsSymMultiChannel() {
     }
 }
 
+/* Re-gold (spec D5): conv1dTransposedBackward's dx wire (propLoss) is a
+ * *produced* wire, not a passthrough — conv1dKernelSymInt32 (the VALID
+ * gather adjoint) emits the raw s_loss*s_w mantissa, and executeOp's
+ * OUT_WRITE epilogue then requants it through the conversionMatrix diagonal
+ * to propLossQ's declared width (int12) before conv1dTransposedBackward
+ * returns it — the same restoration every other producer wire gets (forward
+ * output, weightGrad, biasGrad). The propLoss expectations below are
+ * therefore POST-restoration values, not the kernel's raw output; the old
+ * #187 fail-fast (produced propLoss tensor must be SYM) is retired along
+ * with the raw-wire validator (docs/conventions/arithmetic-sym.md).
+ * Dequant-equivalence: restored mantissa*restoredScale == raw
+ * mantissa*rawScale within representation tolerance — verified by
+ * generate_expected_conv1d_transposed.py's `emulate_sym_convT` dx section
+ * (`_requant_absmax_i12_f32`, dx_err <= dx_tol against the float64
+ * PyTorch-autograd reference, computed on the RESTORED dx_deq/dx_scale).
+ * Same re-gold class as this file's forward pins above. Applies identically
+ * to the 2 other testConv1dTransposedBackwardSym* tests below. */
 void testConv1dTransposedBackwardSymStride2OutputPadding() {
     size_t weightDims[] = {1, 1, 2};
     size_t biasDims[] = {1};

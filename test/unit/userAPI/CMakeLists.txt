@@ -363,7 +363,6 @@ add_elastic_ai_unit_test(
         MORE_LIBS
         ArithmeticType
         CommonLayerLibs
-        QuantizationLayer
         LinearApi
         LayerCommon
         LayerQuant
