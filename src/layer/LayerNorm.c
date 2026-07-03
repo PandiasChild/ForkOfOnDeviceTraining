@@ -31,6 +31,19 @@ void initLayerNormConfig(layerNormConfig_t *cfg, parameter_t *gamma, parameter_t
     cfg->outputQ = forwardQ;
     cfg->propLossQ = backwardQ;
     cfg->ownsQuantizations = false;
+
+    /* Today's hardcode at both dgamma/dbeta executeOp call sites
+     * (layerNormBackwardSymInt32, below) is OUT_ACC_DYNAMIC_RESCALE for BOTH
+     * -- unlike Linear/Conv1d/Conv1dTransposed, LayerNorm's beta grad has
+     * never used the FIXED_SCALE bias scheme (dgamma/dbeta both accumulate
+     * via the identity-kernel + DYNAMIC_RESCALE requant). Carried on the
+     * config so every caller of this init function -- factory-built or
+     * hand-wired directly (test/unit/layer/UnitTestLayerNorm.c) -- gets the
+     * historical behavior without having to know about the PR3 knob. A
+     * layerQuant_t-driven factory overrides these right after this call
+     * (LayerNormApi.c) if the caller opted into a different mode. */
+    cfg->weightGradAccMode = OUT_ACC_DYNAMIC_RESCALE;
+    cfg->biasGradAccMode = OUT_ACC_DYNAMIC_RESCALE;
 }
 
 /* Compute G (groups) and N (per-group element count) from a logical shape:
@@ -531,22 +544,24 @@ static void layerNormBackwardSymInt32(layerNormConfig_t *cfg, tensor_t *forwardI
     tensor_t dbetaT;
     setTensorValues(&dbetaT, (uint8_t *)dbetaInc, cfg->beta->grad->shape, &incQ,
                     cfg->beta->grad->sparsity);
+    executeOpValidateAccMode(cfg->weightGradAccMode, "LayerNorm weightGradAccMode");
     executeOp(
         &(opSpec_t){
             .kernel = executeOpIdentityKernel,
             .inputs = (tensor_t *[]){&dgammaT},
             .nInputs = 1,
             .arithmetic = (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY},
-            .mode = OUT_ACC_DYNAMIC_RESCALE,
+            .mode = cfg->weightGradAccMode,
         },
         cfg->gamma->grad);
+    executeOpValidateAccMode(cfg->biasGradAccMode, "LayerNorm biasGradAccMode");
     executeOp(
         &(opSpec_t){
             .kernel = executeOpIdentityKernel,
             .inputs = (tensor_t *[]){&dbetaT},
             .nInputs = 1,
             .arithmetic = (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY},
-            .mode = OUT_ACC_DYNAMIC_RESCALE,
+            .mode = cfg->biasGradAccMode,
         },
         cfg->beta->grad);
 

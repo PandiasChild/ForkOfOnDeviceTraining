@@ -5,6 +5,7 @@
 #include <stdlib.h>
 
 #include "ArithmeticType.h"
+#include "ExecuteOp.h"
 #include "Kernel.h"
 #include "Layer.h"
 #include "Tensor.h"
@@ -23,6 +24,9 @@ typedef struct conv1dTransposedConfig {
 
     quantization_t *outputQ;   /* produced forward-wire storage config */
     quantization_t *propLossQ; /* storage config of the produced dx-wire buffer */
+
+    outputMode_t weightGradAccMode; /* weight-grad executeOp accumulate mode (PR3 spec D1) */
+    outputMode_t biasGradAccMode;   /* bias-grad executeOp accumulate mode (PR3 spec D1) */
 
     bool ownsQuantizations; /* true -> free* will tear down outputQ/propLossQ and their
                                qConfigs */

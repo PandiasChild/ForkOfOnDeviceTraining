@@ -46,6 +46,7 @@ target_include_directories(LayerQuant PUBLIC include)
 target_link_libraries(LayerQuant PRIVATE
         ArithmeticType
         Common
+        ExecuteOp
         Quantization
         Rounding
         StorageApi

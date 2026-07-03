@@ -103,6 +103,9 @@ target_link_libraries(Layer PRIVATE
         DTypes
         Tensor
         Arithmetic
+        ArithmeticType
+        Common
+        ExecuteOp
         Linear
         Relu
         Conv1d
@@ -194,5 +197,6 @@ target_link_libraries(CommonLayerLibs INTERFACE
         Rounding
         Tensor
         Sgd
+        Common
 )
 

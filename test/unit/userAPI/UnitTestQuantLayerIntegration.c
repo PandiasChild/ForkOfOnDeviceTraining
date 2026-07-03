@@ -134,6 +134,11 @@ static layer_t *buildTrainableLinear(size_t inF, size_t outF, const float *w, co
     cfg->propLossMath = arithmeticFromQuantization(mathQ);
     cfg->outputQ = mathQ;
     cfg->propLossQ = mathQ;
+    /* PR3 spec D1: today's per-callsite hardcodes (linearBackward); hand-wired
+     * here since this helper builds the config directly instead of going
+     * through linearInitConfig/a layerQuant_t factory. */
+    cfg->weightGradAccMode = OUT_ACC_DYNAMIC_RESCALE;
+    cfg->biasGradAccMode = OUT_ACC_FIXED_SCALE;
     cfg->ownsQuantizations = false;
     layerConfig_t *lc = reserveMemory(sizeof(layerConfig_t));
     lc->linear = cfg;

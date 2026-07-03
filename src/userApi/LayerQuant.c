@@ -20,6 +20,14 @@ void layerQuantInitUniform(layerQuant_t *lq, quantization_t *q) {
     lq->biasStorage = q;
     lq->weightGradStorage = NULL;
     lq->biasGradStorage = NULL;
+
+    /* Both DYNAMIC: the only accumulate mode valid for every layer's grad
+     * intermediate (FLOAT32 or SYM_INT32), so this convenience default can
+     * never abort a layer -- e.g. LayerNorm's FLOAT32 beta-grad intermediate,
+     * which OUT_ACC_FIXED_SCALE rejects. Opt a layer into a fixed-scale-integer
+     * bias-grad scheme (Linear/Conv) via biasGradAccMode explicitly. */
+    lq->weightGradAccMode = OUT_ACC_DYNAMIC_RESCALE;
+    lq->biasGradAccMode = OUT_ACC_DYNAMIC_RESCALE;
 }
 
 quantization_t *deepCopyQuantization(quantization_t *src) {

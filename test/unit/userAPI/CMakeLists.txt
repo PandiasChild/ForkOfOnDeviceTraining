@@ -9,6 +9,7 @@ add_elastic_ai_unit_test(
         LayerQuant
         MORE_LIBS
         ArithmeticType
+        Common
         QuantizationApi
         Quantization
         Rounding
@@ -19,6 +20,7 @@ add_elastic_ai_unit_test(
         LIB_UNDER_TEST
         LayerWeightsApi
         MORE_LIBS
+        Common
         LinearApi
         Conv1dApi
         Conv1dTransposedApi
@@ -42,6 +44,7 @@ add_elastic_ai_unit_test(
         LIB_UNDER_TEST
         StateDictApi
         MORE_LIBS
+        Common
         LinearApi
         ReluApi
         LayerNormApi
@@ -105,6 +108,7 @@ add_elastic_ai_unit_test(
         Conv1dApi
         MORE_LIBS
         ArithmeticType
+        Common
         LayerQuant
         LayerCommon
         QuantizationApi
@@ -123,6 +127,7 @@ add_elastic_ai_unit_test(
         Conv1dTransposedApi
         MORE_LIBS
         ArithmeticType
+        Common
         LayerQuant
         LayerCommon
         QuantizationApi
@@ -141,6 +146,7 @@ add_elastic_ai_unit_test(
         Pool1dApi
         MORE_LIBS
         ArithmeticType
+        Common
         LayerQuant
         QuantizationApi
         Quantization
@@ -157,6 +163,7 @@ add_elastic_ai_unit_test(
         AdaptivePool1dApi
         MORE_LIBS
         ArithmeticType
+        Common
         LayerQuant
         QuantizationApi
         Quantization

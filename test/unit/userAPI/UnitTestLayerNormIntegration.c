@@ -168,7 +168,12 @@ void testLayerNormSymInt32SingleLayerTrainingStep(void) {
                           .weightStorage = symQ,
                           .biasStorage = symQ,
                           .weightGradStorage = symQ,
-                          .biasGradStorage = symQ};
+                          .biasGradStorage = symQ,
+                          /* LayerNorm's true hardcode is DYNAMIC_RESCALE for
+                           * BOTH gamma and beta -- see LayerNorm.c
+                           * initLayerNormConfig. */
+                          .weightGradAccMode = OUT_ACC_DYNAMIC_RESCALE,
+                          .biasGradAccMode = OUT_ACC_DYNAMIC_RESCALE};
     layer_t *lnSym = layerNormLayerInit(&initSym, &lqSym);
     layer_t *modelSym[1] = {lnSym};
 

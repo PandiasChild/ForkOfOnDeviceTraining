@@ -26,6 +26,15 @@ void linearInitConfig(linearConfig_t *linearConfig, parameter_t *weights, parame
     linearConfig->propLossMath = arithmeticFromQuantizationOrDefault(backwardMath);
     linearConfig->outputQ = forwardQ;
     linearConfig->propLossQ = propLossQ;
+
+    /* Today's per-callsite hardcodes (linearBackward, below), now carried on
+     * the config so every caller of this init function -- factory-built or
+     * hand-wired directly (test/unit/layer/UnitTestLinear.c) -- gets the
+     * historical behavior without having to know about the PR3 knob. A
+     * layerQuant_t-driven factory overrides these right after this call
+     * (LinearApi.c) if the caller opted into a different mode. */
+    linearConfig->weightGradAccMode = OUT_ACC_DYNAMIC_RESCALE;
+    linearConfig->biasGradAccMode = OUT_ACC_FIXED_SCALE;
 }
 
 void linearForwardFloat(tensor_t *w, tensor_t *b, tensor_t *input, tensor_t *output) {
@@ -185,6 +194,7 @@ void linearBackward(layer_t *linearLayer, tensor_t *forwardInput, tensor_t *loss
                     tensor_t *propLoss) {
     linearConfig_t *cfg = linearLayer->config->linear;
 
+    executeOpValidateAccMode(cfg->weightGradAccMode, "Linear weightGradAccMode");
     executeOp(
         &(opSpec_t){
             .kernel = cfg->weightGradMath.type == ARITH_SYM_INT32 ? weightGradKernelSym
@@ -192,11 +202,12 @@ void linearBackward(layer_t *linearLayer, tensor_t *forwardInput, tensor_t *loss
             .inputs = (tensor_t *[]){loss, forwardInput},
             .nInputs = 2,
             .arithmetic = cfg->weightGradMath,
-            .mode = OUT_ACC_DYNAMIC_RESCALE,
+            .mode = cfg->weightGradAccMode,
         },
         getGradFromParameter(cfg->weights));
 
     if (cfg->bias != NULL) {
+        executeOpValidateAccMode(cfg->biasGradAccMode, "Linear biasGradAccMode");
         executeOp(
             &(opSpec_t){
                 .kernel = cfg->biasGradMath.type == ARITH_SYM_INT32 ? biasGradKernelSym
@@ -204,7 +215,7 @@ void linearBackward(layer_t *linearLayer, tensor_t *forwardInput, tensor_t *loss
                 .inputs = (tensor_t *[]){loss},
                 .nInputs = 1,
                 .arithmetic = cfg->biasGradMath,
-                .mode = OUT_ACC_FIXED_SCALE,
+                .mode = cfg->biasGradAccMode,
             },
             getGradFromParameter(cfg->bias));
     }

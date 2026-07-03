@@ -2,8 +2,10 @@
 #define ENV5_RUNTIME_EXECUTE_OP_H
 
 #include <stddef.h>
+#include <stdlib.h>
 
 #include "ArithmeticType.h"
+#include "Common.h"
 #include "Tensor.h"
 
 /* The one conversion funnel (design spec 2026-07-03 PR1b.2, D1). Every op runs:
@@ -54,6 +56,25 @@ typedef struct opSpec {
 } opSpec_t;
 
 void executeOp(const opSpec_t *spec, tensor_t *target);
+
+/* Fail-fast guard for the OUT_WRITE==0 hazard (PR3 spec D1, per-layer
+ * accumulate-mode knob): weightGradAccMode/biasGradAccMode are by-value
+ * layerQuant_t/config fields with no "unset" sentinel of their own, and
+ * OUT_WRITE happens to be the zero-init value -- a hand-wired config that
+ * forgets to set them would otherwise silently pass OUT_WRITE into a grad
+ * accumulate call. Call at each grad executeOp call site, right before
+ * reading the mode; `context` names the layer and field for the message
+ * (e.g. "Linear weightGradAccMode"). Shared here (not duplicated per layer
+ * file) since every grad-accumulating layer already depends on ExecuteOp for
+ * the funnel call itself -- no new library dependency. */
+static inline void executeOpValidateAccMode(outputMode_t mode, const char *context) {
+    if (mode != OUT_ACC_DYNAMIC_RESCALE && mode != OUT_ACC_FIXED_SCALE) {
+        PRINT_ERROR("%s: not a valid grad accumulate mode (got %d) -- config field never set? "
+                    "(PR3 spec, #261)",
+                    context, (int)mode);
+        exit(1);
+    }
+}
 
 /* Copies operand 0 into rawOut (data + SYM scale if applicable). For ops whose
  * increment is produced inline (LayerNorm dgamma/dbeta only — the Quantization

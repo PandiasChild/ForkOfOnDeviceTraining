@@ -50,6 +50,17 @@ void initConv1dTransposedConfigWithWeightsAndBias(
     cfg->propLossMath = arithmeticFromQuantizationOrDefault(propLossQ);
     cfg->outputQ = forwardQ;
     cfg->propLossQ = propLossQ;
+
+    /* Today's per-callsite hardcodes (conv1dTransposedCalcWeightGradsFloat32/
+     * SymInt32, conv1dTransposedCalcBiasGradsFloat32/SymInt32 below), now
+     * carried on the config so every caller of this init function --
+     * factory-built or hand-wired directly
+     * (test/unit/layer/UnitTestConv1dTransposed.c) -- gets the historical
+     * behavior without having to know about the PR3 knob. A layerQuant_t-
+     * driven factory overrides these right after this call
+     * (Conv1dTransposedApi.c) if the caller opted into a different mode. */
+    cfg->weightGradAccMode = OUT_ACC_DYNAMIC_RESCALE;
+    cfg->biasGradAccMode = OUT_ACC_FIXED_SCALE;
 }
 
 /* executeOp forward kernel adapters — ctx = conv1dTransposedConfig_t* for
@@ -204,6 +215,7 @@ static void weightGradKernelFloat(tensor_t **ops, size_t n, tensor_t *rawOut, te
 
 static void conv1dTransposedCalcWeightGradsFloat32(conv1dTransposedConfig_t *cfg,
                                                    tensor_t *forwardInput, tensor_t *lossGrad) {
+    executeOpValidateAccMode(cfg->weightGradAccMode, "Conv1dTransposed weightGradAccMode");
     executeOp(
         &(opSpec_t){
             .kernel = weightGradKernelFloat,
@@ -211,7 +223,7 @@ static void conv1dTransposedCalcWeightGradsFloat32(conv1dTransposedConfig_t *cfg
             .inputs = (tensor_t *[]){forwardInput, lossGrad},
             .nInputs = 2,
             .arithmetic = cfg->weightGradMath,
-            .mode = OUT_ACC_DYNAMIC_RESCALE,
+            .mode = cfg->weightGradAccMode,
         },
         cfg->weights->grad);
 }
@@ -251,6 +263,7 @@ static void biasGradKernelFloat(tensor_t **ops, size_t n, tensor_t *rawOut, tens
 
 static void conv1dTransposedCalcBiasGradsFloat32(conv1dTransposedConfig_t *cfg,
                                                  tensor_t *lossGrad) {
+    executeOpValidateAccMode(cfg->biasGradAccMode, "Conv1dTransposed biasGradAccMode");
     executeOp(
         &(opSpec_t){
             .kernel = biasGradKernelFloat,
@@ -258,7 +271,7 @@ static void conv1dTransposedCalcBiasGradsFloat32(conv1dTransposedConfig_t *cfg,
             .inputs = (tensor_t *[]){lossGrad},
             .nInputs = 1,
             .arithmetic = cfg->biasGradMath,
-            .mode = OUT_ACC_FIXED_SCALE,
+            .mode = cfg->biasGradAccMode,
         },
         cfg->bias->grad);
 }
@@ -353,6 +366,7 @@ static void weightGradKernelSym(tensor_t **ops, size_t n, tensor_t *rawOut, tens
 
 void conv1dTransposedCalcWeightGradsSymInt32(conv1dTransposedConfig_t *cfg, tensor_t *forwardInput,
                                              tensor_t *lossGrad) {
+    executeOpValidateAccMode(cfg->weightGradAccMode, "Conv1dTransposed weightGradAccMode");
     executeOp(
         &(opSpec_t){
             .kernel = weightGradKernelSym,
@@ -360,7 +374,7 @@ void conv1dTransposedCalcWeightGradsSymInt32(conv1dTransposedConfig_t *cfg, tens
             .inputs = (tensor_t *[]){forwardInput, lossGrad},
             .nInputs = 2,
             .arithmetic = cfg->weightGradMath,
-            .mode = OUT_ACC_DYNAMIC_RESCALE,
+            .mode = cfg->weightGradAccMode,
         },
         cfg->weights->grad);
 }
@@ -404,6 +418,7 @@ static void biasGradKernelSym(tensor_t **ops, size_t n, tensor_t *rawOut, tensor
 }
 
 void conv1dTransposedCalcBiasGradsSymInt32(conv1dTransposedConfig_t *cfg, tensor_t *lossGrad) {
+    executeOpValidateAccMode(cfg->biasGradAccMode, "Conv1dTransposed biasGradAccMode");
     executeOp(
         &(opSpec_t){
             .kernel = biasGradKernelSym,
@@ -411,7 +426,7 @@ void conv1dTransposedCalcBiasGradsSymInt32(conv1dTransposedConfig_t *cfg, tensor
             .inputs = (tensor_t *[]){lossGrad},
             .nInputs = 1,
             .arithmetic = cfg->biasGradMath,
-            .mode = OUT_ACC_FIXED_SCALE,
+            .mode = cfg->biasGradAccMode,
         },
         cfg->bias->grad);
 }

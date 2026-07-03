@@ -37,6 +37,16 @@ void initConv1dConfigWithWeightsAndBias(conv1dConfig_t *conv1dConfig, kernel_t *
     conv1dConfig->propLossMath = arithmeticFromQuantizationOrDefault(propLossQ);
     conv1dConfig->outputQ = forwardQ;
     conv1dConfig->propLossQ = propLossQ;
+
+    /* Today's per-callsite hardcodes (conv1dCalcWeightGradsFloat32/SymInt32,
+     * conv1dCalcBiasGradsFloat32/SymInt32 below), now carried on the config so
+     * every caller of this init function -- factory-built or hand-wired
+     * directly (test/unit/layer/UnitTestConv1d.c) -- gets the historical
+     * behavior without having to know about the PR3 knob. A layerQuant_t-
+     * driven factory overrides these right after this call (Conv1dApi.c) if
+     * the caller opted into a different mode. */
+    conv1dConfig->weightGradAccMode = OUT_ACC_DYNAMIC_RESCALE;
+    conv1dConfig->biasGradAccMode = OUT_ACC_FIXED_SCALE;
 }
 
 /* executeOp forward kernel adapters — ctx = conv1dConfig_t* for kernel_t/
@@ -186,6 +196,7 @@ static void weightGradKernelFloat(tensor_t **ops, size_t n, tensor_t *rawOut, te
 
 static void conv1dCalcWeightGradsFloat32(conv1dConfig_t *cfg, tensor_t *forwardInput,
                                          tensor_t *lossGrad) {
+    executeOpValidateAccMode(cfg->weightGradAccMode, "Conv1d weightGradAccMode");
     executeOp(
         &(opSpec_t){
             .kernel = weightGradKernelFloat,
@@ -193,7 +204,7 @@ static void conv1dCalcWeightGradsFloat32(conv1dConfig_t *cfg, tensor_t *forwardI
             .inputs = (tensor_t *[]){forwardInput, lossGrad},
             .nInputs = 2,
             .arithmetic = cfg->weightGradMath,
-            .mode = OUT_ACC_DYNAMIC_RESCALE,
+            .mode = cfg->weightGradAccMode,
         },
         cfg->weights->grad);
 }
@@ -232,6 +243,7 @@ static void biasGradKernelFloat(tensor_t **ops, size_t n, tensor_t *rawOut, tens
 }
 
 static void conv1dCalcBiasGradsFloat32(conv1dConfig_t *cfg, tensor_t *lossGrad) {
+    executeOpValidateAccMode(cfg->biasGradAccMode, "Conv1d biasGradAccMode");
     executeOp(
         &(opSpec_t){
             .kernel = biasGradKernelFloat,
@@ -239,7 +251,7 @@ static void conv1dCalcBiasGradsFloat32(conv1dConfig_t *cfg, tensor_t *lossGrad) 
             .inputs = (tensor_t *[]){lossGrad},
             .nInputs = 1,
             .arithmetic = cfg->biasGradMath,
-            .mode = OUT_ACC_FIXED_SCALE,
+            .mode = cfg->biasGradAccMode,
         },
         cfg->bias->grad);
 }
@@ -326,6 +338,7 @@ static void weightGradKernelSym(tensor_t **ops, size_t n, tensor_t *rawOut, tens
 
 void conv1dCalcWeightGradsSymInt32(conv1dConfig_t *cfg, tensor_t *forwardInput,
                                    tensor_t *lossGrad) {
+    executeOpValidateAccMode(cfg->weightGradAccMode, "Conv1d weightGradAccMode");
     executeOp(
         &(opSpec_t){
             .kernel = weightGradKernelSym,
@@ -333,7 +346,7 @@ void conv1dCalcWeightGradsSymInt32(conv1dConfig_t *cfg, tensor_t *forwardInput,
             .inputs = (tensor_t *[]){forwardInput, lossGrad},
             .nInputs = 2,
             .arithmetic = cfg->weightGradMath,
-            .mode = OUT_ACC_DYNAMIC_RESCALE,
+            .mode = cfg->weightGradAccMode,
         },
         cfg->weights->grad);
 }
@@ -377,6 +390,7 @@ static void biasGradKernelSym(tensor_t **ops, size_t n, tensor_t *rawOut, tensor
 }
 
 void conv1dCalcBiasGradsSymInt32(conv1dConfig_t *cfg, tensor_t *lossGrad) {
+    executeOpValidateAccMode(cfg->biasGradAccMode, "Conv1d biasGradAccMode");
     executeOp(
         &(opSpec_t){
             .kernel = biasGradKernelSym,
@@ -384,7 +398,7 @@ void conv1dCalcBiasGradsSymInt32(conv1dConfig_t *cfg, tensor_t *lossGrad) {
             .inputs = (tensor_t *[]){lossGrad},
             .nInputs = 1,
             .arithmetic = cfg->biasGradMath,
-            .mode = OUT_ACC_FIXED_SCALE,
+            .mode = cfg->biasGradAccMode,
         },
         cfg->bias->grad);
 }

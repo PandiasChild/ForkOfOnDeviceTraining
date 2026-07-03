@@ -41,6 +41,11 @@ static layer_t *buildBorrowedLinearLayer(parameter_t *weights, parameter_t *bias
     cfg->propLossMath = arithmeticFromQuantization(q);
     cfg->outputQ = q;
     cfg->propLossQ = q;
+    /* PR3 spec D1: today's per-callsite hardcodes (linearBackward); hand-wired
+     * here since this helper builds the config directly instead of going
+     * through linearInitConfig/a layerQuant_t factory. */
+    cfg->weightGradAccMode = OUT_ACC_DYNAMIC_RESCALE;
+    cfg->biasGradAccMode = OUT_ACC_FIXED_SCALE;
     cfg->ownsQuantizations = false;
     layerConfig_t *layerCfg = reserveMemory(sizeof(layerConfig_t));
     layerCfg->linear = cfg;
@@ -733,6 +738,209 @@ void testLinearBackwardSymInt32() {
     }
 }
 
+/* Sign-extends packed SYM mantissas for in-test readback (byteConversion
+ * zero-fills on widen); mirrors UnitTestExecuteOp.c's helper of the same
+ * name. */
+static void symTestUnpackSignExtend(const uint8_t *packed, size_t qBits, int32_t *out, size_t n) {
+    byteConversion((uint8_t *)packed, qBits, (uint8_t *)out, 32, n);
+    const int32_t signBit = (int32_t)1 << (qBits - 1);
+    const int32_t mask = (int32_t)(((uint32_t)1 << qBits) - 1u);
+    for (size_t i = 0; i < n; i++) {
+        int32_t v = out[i] & mask;
+        out[i] = (v ^ signBit) - signBit;
+    }
+}
+
+/* PR3 Task 4 (D1): weightGradAccMode=OUT_ACC_FIXED_SCALE routed to a packed
+ * SYM@8 weight-grad target. The freshly-allocated grad (gradInitSym) starts
+ * all-zero mantissas at scale=1.0 -- one backward call is therefore the
+ * "first store" path (spec 2026-07-03 PR3 §4.1): the grid is derived from the
+ * increment instead of carried. Gate-level asserts only (no pinned floats):
+ * SYM@8, nonzero mantissas, a scale that moved off the untouched-default 1.0. */
+void testLinearBackwardPackedSymWeightGradFixedScaleFirstStore(void) {
+    size_t numberOfWeights = 6;
+
+    size_t *weightDims = reserveMemory(2 * sizeof(size_t));
+    weightDims[0] = 2;
+    weightDims[1] = 3;
+    size_t *weightOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, weightOrder);
+    shape_t *weightShape = reserveMemory(sizeof(shape_t));
+    setShape(weightShape, weightDims, 2, weightOrder);
+    tensor_t *weightsParam = initTensor(weightShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(weightsParam, (float[]){-1.f, 2.f, -3.f, 4.f, 5.f, -6.f}, 6);
+    tensor_t *weightsGrad = gradInitSym(weightsParam, 8, HALF_AWAY, NULL);
+    parameter_t *weights = parameterInit(weightsParam, weightsGrad);
+
+    size_t *biasDims = reserveMemory(1 * sizeof(size_t));
+    biasDims[0] = 2;
+    size_t *biasOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, biasOrder);
+    shape_t *biasShape = reserveMemory(sizeof(shape_t));
+    setShape(biasShape, biasDims, 1, biasOrder);
+    tensor_t *biasParam = initTensor(biasShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(biasParam, (float[]){-1.f, 3.f}, 2);
+    tensor_t *biasGrad = gradInitFloat(biasParam, NULL);
+    parameter_t *bias = parameterInit(biasParam, biasGrad);
+
+    size_t *fwdDims = reserveMemory(2 * sizeof(size_t));
+    fwdDims[0] = 1;
+    fwdDims[1] = 3;
+    size_t *fwdOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, fwdOrder);
+    shape_t *fwdShape = reserveMemory(sizeof(shape_t));
+    setShape(fwdShape, fwdDims, 2, fwdOrder);
+    tensor_t *forwardInput = initTensor(fwdShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(forwardInput, (float[]){0.f, 1.f, 2.f}, 3);
+
+    size_t *lossDims = reserveMemory(2 * sizeof(size_t));
+    lossDims[0] = 1;
+    lossDims[1] = 2;
+    size_t *lossOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, lossOrder);
+    shape_t *lossShape = reserveMemory(sizeof(shape_t));
+    setShape(lossShape, lossDims, 2, lossOrder);
+    tensor_t *loss = initTensor(lossShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(loss, (float[]){-4.f, -3.f}, 2);
+
+    size_t *propLossDims = reserveMemory(2 * sizeof(size_t));
+    propLossDims[0] = 1;
+    propLossDims[1] = 3;
+    size_t *propLossOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, propLossOrder);
+    shape_t *propLossShape = reserveMemory(sizeof(shape_t));
+    setShape(propLossShape, propLossDims, 2, propLossOrder);
+    tensor_t *propLoss = initTensor(propLossShape, quantizationInitFloat(), NULL);
+
+    quantization_t *test = quantizationInitFloat();
+    layer_t *linearLayer = buildBorrowedLinearLayer(weights, bias, test);
+    /* weightGradAccMode/biasGradAccMode deliberately DISTINCT (mutation
+     * check: cross-wiring the weight-grad executeOp call to read
+     * biasGradAccMode instead would go undetected if the two fields held the
+     * same value). */
+    linearLayer->config->linear->weightGradAccMode = OUT_ACC_FIXED_SCALE;
+    linearLayer->config->linear->biasGradAccMode = OUT_ACC_DYNAMIC_RESCALE;
+
+    linearBackward(linearLayer, forwardInput, loss, propLoss);
+
+    symQConfig_t *gradQC = (symQConfig_t *)weightsGrad->quantization->qConfig;
+    bool gradTypeIsSym = (weightsGrad->quantization->type == SYM);
+    uint8_t gradQBits = gradQC->qBits;
+    float scaleAfterCall1 = gradQC->scale;
+
+    int32_t mant1[6];
+    symTestUnpackSignExtend(weightsGrad->data, gradQC->qBits, mant1, numberOfWeights);
+    bool anyNonzeroAfterCall1 = false;
+    for (size_t i = 0; i < numberOfWeights; i++) {
+        if (mant1[i] != 0) {
+            anyNonzeroAfterCall1 = true;
+        }
+    }
+
+    /* Second backward call with the NEGATED loss: FIXED_SCALE must CARRY the
+     * grid established by call 1 (spec D1 -- no re-derivation, no renorm),
+     * and the exactly-opposite increment drives every mantissa back toward
+     * (near-)zero -- safely within the established grid, no overflow risk.
+     * If the weight-grad call site were cross-wired to read biasGradAccMode
+     * (DYNAMIC_RESCALE) instead, the near-zero recomputed values would force
+     * a fresh, much smaller (or absMax==0 -> 1.0) absmax-derived scale --
+     * clearly different from the carried scaleAfterCall1. */
+    tensor_t *loss2 = initTensor(getShapeLike(loss->shape), quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(loss2, (float[]){4.f, 3.f}, 2);
+    linearBackward(linearLayer, forwardInput, loss2, propLoss);
+    float scaleAfterCall2 = gradQC->scale;
+
+    freeTensor(loss2);
+    freeLinearLayer(linearLayer);
+    freeTensor(propLoss);
+    freeTensor(loss);
+    freeTensor(forwardInput);
+    freeQuantization(test);
+
+    TEST_ASSERT_TRUE_MESSAGE(gradTypeIsSym, "weight grad must stay SYM (packed) after backward");
+    TEST_ASSERT_EQUAL_UINT8(8, gradQBits);
+    TEST_ASSERT_TRUE_MESSAGE(anyNonzeroAfterCall1,
+                             "first-store accumulate must write nonzero mantissas");
+    TEST_ASSERT_TRUE_MESSAGE(scaleAfterCall1 > 0.0f, "derived scale must be positive");
+    TEST_ASSERT_TRUE_MESSAGE(scaleAfterCall1 != 1.0f,
+                             "first-store must derive the grid, not keep the untouched scale=1.0");
+    TEST_ASSERT_EQUAL_FLOAT_MESSAGE(
+        scaleAfterCall1, scaleAfterCall2,
+        "FIXED_SCALE must carry the grid across calls (D1) -- a scale change here "
+        "means the weight-grad call site is reading the wrong accMode field");
+}
+
+/* PR3 Task 4 (D1) hazard guard: the same fixture as above, but
+ * weightGradAccMode is (deliberately) left at its zero-init value -- OUT_WRITE
+ * happens to be 0, so a hand-wired config that forgets to set the new field
+ * would otherwise silently overwrite instead of accumulate (spec 2026-07-03
+ * PR3 §3). linearBackward must fail fast instead. */
+void testLinearBackwardZeroInitAccModeDies(void) {
+    size_t *weightDims = reserveMemory(2 * sizeof(size_t));
+    weightDims[0] = 2;
+    weightDims[1] = 3;
+    size_t *weightOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, weightOrder);
+    shape_t *weightShape = reserveMemory(sizeof(shape_t));
+    setShape(weightShape, weightDims, 2, weightOrder);
+    tensor_t *weightsParam = initTensor(weightShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(weightsParam, (float[]){-1.f, 2.f, -3.f, 4.f, 5.f, -6.f}, 6);
+    tensor_t *weightsGrad = gradInitSym(weightsParam, 8, HALF_AWAY, NULL);
+    parameter_t *weights = parameterInit(weightsParam, weightsGrad);
+
+    size_t *biasDims = reserveMemory(1 * sizeof(size_t));
+    biasDims[0] = 2;
+    size_t *biasOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, biasOrder);
+    shape_t *biasShape = reserveMemory(sizeof(shape_t));
+    setShape(biasShape, biasDims, 1, biasOrder);
+    tensor_t *biasParam = initTensor(biasShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(biasParam, (float[]){-1.f, 3.f}, 2);
+    tensor_t *biasGrad = gradInitFloat(biasParam, NULL);
+    parameter_t *bias = parameterInit(biasParam, biasGrad);
+
+    size_t *fwdDims = reserveMemory(2 * sizeof(size_t));
+    fwdDims[0] = 1;
+    fwdDims[1] = 3;
+    size_t *fwdOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, fwdOrder);
+    shape_t *fwdShape = reserveMemory(sizeof(shape_t));
+    setShape(fwdShape, fwdDims, 2, fwdOrder);
+    tensor_t *forwardInput = initTensor(fwdShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(forwardInput, (float[]){0.f, 1.f, 2.f}, 3);
+
+    size_t *lossDims = reserveMemory(2 * sizeof(size_t));
+    lossDims[0] = 1;
+    lossDims[1] = 2;
+    size_t *lossOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, lossOrder);
+    shape_t *lossShape = reserveMemory(sizeof(shape_t));
+    setShape(lossShape, lossDims, 2, lossOrder);
+    tensor_t *loss = initTensor(lossShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(loss, (float[]){-4.f, -3.f}, 2);
+
+    size_t *propLossDims = reserveMemory(2 * sizeof(size_t));
+    propLossDims[0] = 1;
+    propLossDims[1] = 3;
+    size_t *propLossOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, propLossOrder);
+    shape_t *propLossShape = reserveMemory(sizeof(shape_t));
+    setShape(propLossShape, propLossDims, 2, propLossOrder);
+    tensor_t *propLoss = initTensor(propLossShape, quantizationInitFloat(), NULL);
+
+    quantization_t *test = quantizationInitFloat();
+    layer_t *linearLayer = buildBorrowedLinearLayer(weights, bias, test);
+    linearLayer->config->linear->weightGradAccMode = (outputMode_t)0; /* == OUT_WRITE, forgotten knob */
+
+    ASSERT_EXITS_WITH_FAILURE(linearBackward(linearLayer, forwardInput, loss, propLoss));
+
+    freeLinearLayer(linearLayer);
+    freeTensor(propLoss);
+    freeTensor(loss);
+    freeTensor(forwardInput);
+    freeQuantization(test);
+}
+
 void testLinearBackwardFloatWithMismatchedQuantizations() {
     /* Mismatched-quantization variant of testLinearBackwardFloat: the loss
      * arrives in ASYM form, while the layer's parameters and propLoss are
@@ -1305,7 +1513,9 @@ void testLinearSymInt32GradAccumulatesOverTwoMicrobatchesAndSteps(void) {
                           .weightStorage = fwd,
                           .biasStorage = fwd,
                           .weightGradStorage = bwd,
-                          .biasGradStorage = bwd};
+                          .biasGradStorage = bwd,
+                          .weightGradAccMode = OUT_ACC_DYNAMIC_RESCALE,
+                          .biasGradAccMode = OUT_ACC_FIXED_SCALE};
     layer_t *symLayer = linearLayerInit(
         &(linearInit_t){.inFeatures = 3, .outFeatures = 2, .bias = BIAS_TRUE}, &lqSym);
 
@@ -1359,7 +1569,9 @@ void testLinearSymInt32GradAccumulatesOverTwoMicrobatchesAndSteps(void) {
                         .outputQ = fwd2,
                         .propLossQ = bwd2,
                         .weightStorage = fwd2,
-                        .biasStorage = fwd2};
+                        .biasStorage = fwd2,
+                        .weightGradAccMode = OUT_ACC_DYNAMIC_RESCALE,
+                        .biasGradAccMode = OUT_ACC_FIXED_SCALE};
     layer_t *fLayer = linearLayerInit(
         &(linearInit_t){.inFeatures = 3, .outFeatures = 2, .bias = BIAS_TRUE}, &lqF);
     tensor_t *fWGrad = fLayer->config->linear->weights->grad;
@@ -1578,6 +1790,9 @@ int main(void) {
     RUN_TEST(testLinearBackwardSymInt32);
     RUN_TEST(testLinearBackwardSymInt32Rank1Bias);
     RUN_TEST(testLinearLayerInitAndFreeRoundTrip);
+
+    RUN_TEST(testLinearBackwardPackedSymWeightGradFixedScaleFirstStore);
+    RUN_TEST(testLinearBackwardZeroInitAccModeDies);
 
     RUN_TEST(testLinearBackwardFloatWithMismatchedQuantizations);
     RUN_TEST(testLinearLayerInitNonTrainable);

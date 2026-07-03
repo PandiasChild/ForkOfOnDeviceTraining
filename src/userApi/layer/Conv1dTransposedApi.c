@@ -188,6 +188,8 @@ layer_t *conv1dTransposedLayerInit(conv1dTransposedInit_t *init, layerQuant_t *l
     cfg->propLossMath = lq->propLossMath;
     cfg->outputQ = lq->outputQ;
     cfg->propLossQ = lq->propLossQ;
+    cfg->weightGradAccMode = lq->weightGradAccMode;
+    cfg->biasGradAccMode = lq->biasGradAccMode;
     cfg->ownsQuantizations = false;
     return layer;
 }
@@ -210,6 +212,8 @@ layer_t *conv1dTransposedLayerInitOwning(conv1dTransposedInit_t *init, layerQuan
     cfg->propLossMath = lq->propLossMath;
     cfg->outputQ = deepCopyQuantization(lq->outputQ);
     cfg->propLossQ = deepCopyQuantization(lq->propLossQ);
+    cfg->weightGradAccMode = lq->weightGradAccMode;
+    cfg->biasGradAccMode = lq->biasGradAccMode;
     cfg->ownsQuantizations = true;
     return layer;
 }

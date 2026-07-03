@@ -189,6 +189,8 @@ layer_t *conv1dLayerInit(conv1dInit_t *init, layerQuant_t *lq) {
     cfg->propLossMath = lq->propLossMath;
     cfg->outputQ = lq->outputQ;
     cfg->propLossQ = lq->propLossQ;
+    cfg->weightGradAccMode = lq->weightGradAccMode;
+    cfg->biasGradAccMode = lq->biasGradAccMode;
     cfg->ownsQuantizations = false;
 
     return layer;
@@ -237,6 +239,8 @@ layer_t *conv1dLayerInitOwning(conv1dInit_t *init, layerQuant_t *lq) {
     cfg->propLossMath = lq->propLossMath;
     cfg->outputQ = deepCopyQuantization(lq->outputQ);
     cfg->propLossQ = deepCopyQuantization(lq->propLossQ);
+    cfg->weightGradAccMode = lq->weightGradAccMode;
+    cfg->biasGradAccMode = lq->biasGradAccMode;
     cfg->ownsQuantizations = true;
 
     return layer;

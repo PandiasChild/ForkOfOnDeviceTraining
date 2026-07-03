@@ -1905,7 +1905,13 @@ void testFactoryFullSymProfileTrainsSymGrads(void) {
                        .weightStorage = symQ,
                        .biasStorage = symQ,
                        .weightGradStorage = symQ,
-                       .biasGradStorage = symQ};
+                       .biasGradStorage = symQ,
+                       /* LayerNorm's true hardcode is DYNAMIC_RESCALE for BOTH
+                        * gamma and beta (unlike Linear/Conv1d/Conv1dTransposed's
+                        * FIXED_SCALE bias scheme) -- see LayerNorm.c
+                        * initLayerNormConfig. */
+                       .weightGradAccMode = OUT_ACC_DYNAMIC_RESCALE,
+                       .biasGradAccMode = OUT_ACC_DYNAMIC_RESCALE};
     layer_t *layer = layerNormLayerInit(&init, &lq);
     layerNormConfig_t *cfg = layer->config->layerNorm;
 

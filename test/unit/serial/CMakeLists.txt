@@ -27,6 +27,7 @@ add_elastic_ai_unit_test(
         LIB_UNDER_TEST
         Serialize
         MORE_LIBS
+        Common
         Deserialize
         TensorApi
         Tensor
