@@ -4,6 +4,7 @@
 
 #include "ArithmeticType.h"
 #include "Common.h"
+#include "ExecuteOp.h"
 #include "Layer.h"
 #include "SlidingWindow1d.h"
 #include "Tensor.h"
@@ -21,8 +22,19 @@ void initAvgPool1dConfig(avgPool1dConfig_t *cfg, kernel_t *kernel, quantization_
     cfg->propLossQ = propLossQ;
 }
 
-void avgPool1dForwardFloat(layer_t *layer, tensor_t *input, tensor_t *output) {
-    avgPool1dConfig_t *cfg = layer->config->avgPool1d;
+/* executeOp forward kernel adapter — ctx = avgPool1dConfig_t* for kernel_t
+ * geometry (mirrors Conv1d's ctx convention, Conv1d.c); 1 input, no auxOut.
+ * Only a FLOAT32 arm exists (no SYM kernel body), but routing it through the
+ * funnel still gains real capability: the prologue now dequantizes a
+ * mismatched-dtype (e.g. SYM_INT32) input into FLOAT32 scratch first, where
+ * the pre-migration direct cast would have silently reinterpreted the
+ * producer's raw int32 bits as floats. */
+static void avgPool1dForwardKernel(tensor_t **ops, size_t n, tensor_t *rawOut, tensor_t *auxOut,
+                                   const void *ctx) {
+    (void)n;
+    (void)auxOut;
+    const avgPool1dConfig_t *cfg = ctx;
+    tensor_t *input = ops[0];
 
     size_t batch = input->shape->dimensions[0];
     size_t channels = input->shape->dimensions[1];
@@ -31,15 +43,15 @@ void avgPool1dForwardFloat(layer_t *layer, tensor_t *input, tensor_t *output) {
     windowGeometry1d_t geom = windowGeometry1dCalc(inputLength, cfg->kernel);
     size_t outputLength = geom.outputLength;
 
-    if (output->shape->dimensions[2] != outputLength) {
+    if (rawOut->shape->dimensions[2] != outputLength) {
         PRINT_ERROR("AvgPool1d forward: output length (%zu) does not match "
                     "geometry-derived (%zu)",
-                    output->shape->dimensions[2], outputLength);
+                    rawOut->shape->dimensions[2], outputLength);
         exit(1);
     }
 
     float const *xArr = (float const *)input->data;
-    float *yArr = (float *)output->data;
+    float *yArr = (float *)rawOut->data;
     float divisor = (float)cfg->kernel->size; // count_include_pad=true: divisor = K always
 
     for (size_t b = 0; b < batch; b++) {
@@ -64,7 +76,16 @@ void avgPool1dForward(layer_t *layer, tensor_t *input, tensor_t *output) {
     avgPool1dConfig_t *cfg = layer->config->avgPool1d;
     switch (cfg->forwardMath.type) {
     case ARITH_FLOAT32:
-        avgPool1dForwardFloat(layer, input, output);
+        executeOp(
+            &(opSpec_t){
+                .kernel = avgPool1dForwardKernel,
+                .ctx = cfg,
+                .inputs = (tensor_t *[]){input},
+                .nInputs = 1,
+                .arithmetic = cfg->forwardMath,
+                .mode = OUT_WRITE,
+            },
+            output);
         break;
     default:
         PRINT_ERROR("AvgPool1d forward: quantization type not implemented");

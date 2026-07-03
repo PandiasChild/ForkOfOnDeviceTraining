@@ -6,6 +6,7 @@
 
 #include "ArithmeticType.h"
 #include "Common.h"
+#include "ExecuteOp.h"
 #include "Layer.h"
 #include "SlidingWindow1d.h"
 #include "Tensor.h"
@@ -24,8 +25,19 @@ void initMaxPool1dConfig(maxPool1dConfig_t *cfg, kernel_t *kernel, tensor_t *arg
     cfg->propLossQ = propLossQ;
 }
 
-void maxPool1dForwardFloat(layer_t *layer, tensor_t *input, tensor_t *output) {
-    maxPool1dConfig_t *cfg = layer->config->maxPool1d;
+/* executeOp forward kernel adapter — ctx = maxPool1dConfig_t* for kernel_t
+ * geometry (mirrors AvgPool1d/Conv1d's ctx convention). auxOut = the layer's
+ * pre-allocated argmaxIndices tensor (opSpec_t.auxOut, spec D1): the funnel
+ * never converts it (kernel-written verbatim, in ITS OWN storage format,
+ * INT32) — this is exactly the dual-output shape auxOut was added for (D1's
+ * "MaxPool argmaxIndices lives here"). Only a FLOAT32 arm exists (no SYM
+ * kernel body); routing the data output through the funnel still gains real
+ * capability, same as AvgPool1d/AdaptiveAvgPool1d — see those files' comments. */
+static void maxPool1dForwardKernel(tensor_t **ops, size_t n, tensor_t *rawOut, tensor_t *auxOut,
+                                   const void *ctx) {
+    (void)n;
+    const maxPool1dConfig_t *cfg = ctx;
+    tensor_t *input = ops[0];
 
     size_t batch = input->shape->dimensions[0];
     size_t channels = input->shape->dimensions[1];
@@ -34,22 +46,22 @@ void maxPool1dForwardFloat(layer_t *layer, tensor_t *input, tensor_t *output) {
     windowGeometry1d_t geom = windowGeometry1dCalc(inputLength, cfg->kernel);
     size_t outputLength = geom.outputLength;
 
-    if (output->shape->dimensions[2] != outputLength) {
+    if (rawOut->shape->dimensions[2] != outputLength) {
         PRINT_ERROR("MaxPool1d forward: output length (%zu) does not match "
                     "geometry-derived (%zu)",
-                    output->shape->dimensions[2], outputLength);
+                    rawOut->shape->dimensions[2], outputLength);
         exit(1);
     }
-    if (cfg->argmaxIndices->shape->dimensions[2] != outputLength) {
+    if (auxOut->shape->dimensions[2] != outputLength) {
         PRINT_ERROR("MaxPool1d forward: argmaxIndices length (%zu) does not match "
                     "geometry-derived (%zu)",
-                    cfg->argmaxIndices->shape->dimensions[2], outputLength);
+                    auxOut->shape->dimensions[2], outputLength);
         exit(1);
     }
 
     float const *xArr = (float const *)input->data;
-    float *yArr = (float *)output->data;
-    int32_t *argmaxArr = (int32_t *)cfg->argmaxIndices->data;
+    float *yArr = (float *)rawOut->data;
+    int32_t *argmaxArr = (int32_t *)auxOut->data;
 
     for (size_t b = 0; b < batch; b++) {
         for (size_t c = 0; c < channels; c++) {
@@ -88,7 +100,17 @@ void maxPool1dForward(layer_t *layer, tensor_t *input, tensor_t *output) {
     maxPool1dConfig_t *cfg = layer->config->maxPool1d;
     switch (cfg->forwardMath.type) {
     case ARITH_FLOAT32:
-        maxPool1dForwardFloat(layer, input, output);
+        executeOp(
+            &(opSpec_t){
+                .kernel = maxPool1dForwardKernel,
+                .ctx = cfg,
+                .inputs = (tensor_t *[]){input},
+                .nInputs = 1,
+                .arithmetic = cfg->forwardMath,
+                .mode = OUT_WRITE,
+                .auxOut = cfg->argmaxIndices,
+            },
+            output);
         break;
     default:
         PRINT_ERROR("MaxPool1d forward: quantization type not implemented");

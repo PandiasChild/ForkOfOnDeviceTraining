@@ -22,7 +22,6 @@ void initAvgPool1dConfig(avgPool1dConfig_t *cfg, kernel_t *kernel, quantization_
                          quantization_t *propLossQ);
 
 void avgPool1dForward(layer_t *layer, tensor_t *input, tensor_t *output);
-void avgPool1dForwardFloat(layer_t *layer, tensor_t *input, tensor_t *output);
 
 void avgPool1dBackward(layer_t *layer, tensor_t *forwardInput, tensor_t *lossGrad,
                        tensor_t *propLoss);

@@ -262,6 +262,45 @@ void testCalcOutputShapeFixedRegardlessOfInput(void) {
     freeQuantization(q);
 }
 
+// Smoke test for the funnel's new SYM-input capability (spec Testing list) —
+// same rationale as AvgPool1d's twin test (UnitTestAvgPool1d.c): forwardMath
+// stays FLOAT32 (no SYM kernel body), but a SYM_INT32 producer tensor must
+// now be dequantized by the executeOp prologue rather than reinterpreted as
+// raw float bits. absMax(1,2,3,4)=4.0 -> scale=4/2047; per-element error
+// <= 0.5*scale ~ 9.8e-4 -> 5e-3 leaves a >5x margin.
+void testAdaptiveAvgPool1dForwardWithSymInt32Input(void) {
+    size_t inDims[] = {1, 1, 4};
+    size_t outDims[] = {1, 1, 2};
+
+    static adaptiveAvgPool1dConfig_t cfgStore;
+    static layer_t layerStore;
+    static layerConfig_t lcStore;
+
+    quantization_t *floatQ = quantizationInitFloat();
+    initAdaptiveAvgPool1dConfig(&cfgStore, 2, floatQ, floatQ);
+    lcStore.adaptiveAvgPool1d = &cfgStore;
+    layerStore.config = &lcStore;
+
+    size_t *ownedDims = reserveMemory(3 * sizeof(size_t));
+    memcpy(ownedDims, inDims, 3 * sizeof(size_t));
+    size_t *order = reserveMemory(3 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(3, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, ownedDims, 3, order);
+    tensor_t *symInput = initTensor(shape, quantizationInitSymInt32WithBits(HALF_AWAY, 12), NULL);
+    tensorFillFromFloatBuffer(symInput, input_adaptiveAvgPool1d_basic,
+                              calcNumberOfElementsByTensor(symInput));
+
+    tensor_t *output = makeFloatTensor(outDims, 3, NULL);
+
+    adaptiveAvgPool1dForward(&layerStore, symInput, output);
+
+    for (size_t i = 0; i < expectedForward_adaptiveAvgPool1d_basic_len; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(5e-3f, expectedForward_adaptiveAvgPool1d_basic[i],
+                                 ((float *)output->data)[i]);
+    }
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testForwardBasic);
@@ -276,5 +315,6 @@ int main(void) {
     RUN_TEST(testBackwardMultiBatch);
     RUN_TEST(testBackwardGlobal);
     RUN_TEST(testBackwardUpsample);
+    RUN_TEST(testAdaptiveAvgPool1dForwardWithSymInt32Input);
     return UNITY_END();
 }

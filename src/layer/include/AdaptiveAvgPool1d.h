@@ -21,7 +21,6 @@ void initAdaptiveAvgPool1dConfig(adaptiveAvgPool1dConfig_t *cfg, size_t outputSi
                                  quantization_t *forwardQ, quantization_t *propLossQ);
 
 void adaptiveAvgPool1dForward(layer_t *layer, tensor_t *input, tensor_t *output);
-void adaptiveAvgPool1dForwardFloat(layer_t *layer, tensor_t *input, tensor_t *output);
 
 void adaptiveAvgPool1dBackward(layer_t *layer, tensor_t *forwardInput, tensor_t *lossGrad,
                                tensor_t *propLoss);

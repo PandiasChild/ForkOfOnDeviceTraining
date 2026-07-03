@@ -240,6 +240,52 @@ void testAvgPool1dEdgeCases(void) {
     }
 }
 
+// Smoke test for the funnel's new SYM-input capability (spec Testing list):
+// the layer's own forwardMath stays FLOAT32 (no SYM kernel body exists for
+// this op), but a SYM_INT32-typed *producer* tensor feeding it must now be
+// dequantized by the executeOp prologue rather than silently reinterpreted
+// as raw float bits (the pre-migration direct-cast hazard). Tolerance is
+// widened relative to the FLOAT32 fixture tests above: it must cover the
+// SYM_INT32@12 quantization step (qMax=2047) on top of the exact average,
+// not just float rounding noise. absMax(1,4,2,3)=4.0 -> scale=4/2047;
+// per-element error <= 0.5*scale ~ 9.8e-4, unchanged by the K=2 average
+// (linear in the elements) -> 5e-3 leaves a >5x margin, not vacuous.
+void testAvgPool1dForwardWithSymInt32Input(void) {
+    size_t inputDims[] = {1, 1, 4};
+    size_t outputDims[] = {1, 1, 3};
+
+    static kernel_t kernelStore;
+    static avgPool1dConfig_t cfgStore;
+    static layer_t layerStore;
+    static layerConfig_t lcStore;
+
+    initKernel(&kernelStore, 2, VALID, 1, 1);
+    quantization_t *floatQ = quantizationInitFloat();
+    initAvgPool1dConfig(&cfgStore, &kernelStore, floatQ, floatQ);
+    layerStore.type = AVGPOOL1D;
+    lcStore.avgPool1d = &cfgStore;
+    layerStore.config = &lcStore;
+
+    size_t *ownedDims = reserveMemory(3 * sizeof(size_t));
+    memcpy(ownedDims, inputDims, 3 * sizeof(size_t));
+    size_t *order = reserveMemory(3 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(3, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, ownedDims, 3, order);
+    tensor_t *symInput = initTensor(shape, quantizationInitSymInt32WithBits(HALF_AWAY, 12), NULL);
+    tensorFillFromFloatBuffer(symInput, input_avgPool1d_basic,
+                              calcNumberOfElementsByTensor(symInput));
+
+    tensor_t *output = makeFloatTensor(outputDims, 3, NULL);
+
+    avgPool1dForward(&layerStore, symInput, output);
+
+    for (size_t i = 0; i < expectedForward_avgPool1d_basic_len; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(5e-3f, expectedForward_avgPool1d_basic[i],
+                                 ((float *)output->data)[i]);
+    }
+}
+
 void setUp(void) {}
 void tearDown(void) {}
 
@@ -252,5 +298,6 @@ int main(void) {
     RUN_TEST(testAvgPool1dWithStrideAndDilation);
     RUN_TEST(testAvgPool1dWithSamePadding);
     RUN_TEST(testAvgPool1dEdgeCases);
+    RUN_TEST(testAvgPool1dForwardWithSymInt32Input);
     return UNITY_END();
 }

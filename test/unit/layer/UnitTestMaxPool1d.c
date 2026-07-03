@@ -296,6 +296,16 @@ void testMaxPool1dWithStrideAndDilation(void) {
                                  ((float *)r.output->data)[i]);
     }
 
+    // auxOut integration (spec Testing list): argmaxIndices now flows through
+    // opSpec_t.auxOut (kernel-written verbatim, never funnel-converted) —
+    // assert it is byte-identical to this pre-migration, unregenerated
+    // fixture (a non-trivial dilation/stride pattern, unlike the other
+    // argmax-checking tests' simpler geometries).
+    int32_t const *argmaxActual = (int32_t const *)r.argmax->data;
+    for (size_t i = 0; i < expectedArgmax_maxPool1d_withStrideAndDilation_len; i++) {
+        TEST_ASSERT_EQUAL_INT32(expectedArgmax_maxPool1d_withStrideAndDilation[i], argmaxActual[i]);
+    }
+
     // Use the gold-emitted random lossGrad (NOT ones), so positional mutations
     // on the backward path are non-vacuous (codebase_uniform_lossgrad_mutation_vacuity).
     tensor_t *lossGrad = makeFloatTensor(outputDims, 3, lossGrad_maxPool1d_withStrideAndDilation);

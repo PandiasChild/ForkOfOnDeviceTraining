@@ -5,6 +5,7 @@
 #include "AdaptiveWindow1d.h"
 #include "ArithmeticType.h"
 #include "Common.h"
+#include "ExecuteOp.h"
 #include "Layer.h"
 #include "Tensor.h"
 
@@ -21,23 +22,34 @@ void initAdaptiveAvgPool1dConfig(adaptiveAvgPool1dConfig_t *cfg, size_t outputSi
     cfg->propLossQ = propLossQ;
 }
 
-void adaptiveAvgPool1dForwardFloat(layer_t *layer, tensor_t *input, tensor_t *output) {
-    adaptiveAvgPool1dConfig_t *cfg = layer->config->adaptiveAvgPool1d;
+/* executeOp forward kernel adapter — ctx = adaptiveAvgPool1dConfig_t* (outputSize
+ * geometry, mirrors AvgPool1d's ctx convention, AvgPool1d.c); 1 input, no
+ * auxOut. Only a FLOAT32 arm exists (no SYM kernel body), but routing it
+ * through the funnel still gains real capability: the prologue now
+ * dequantizes a mismatched-dtype (e.g. SYM_INT32) input into FLOAT32 scratch
+ * first, where the pre-migration direct cast would have silently
+ * reinterpreted the producer's raw int32 bits as floats. */
+static void adaptiveAvgPool1dForwardKernel(tensor_t **ops, size_t n, tensor_t *rawOut,
+                                           tensor_t *auxOut, const void *ctx) {
+    (void)n;
+    (void)auxOut;
+    const adaptiveAvgPool1dConfig_t *cfg = ctx;
+    tensor_t *input = ops[0];
 
     size_t batch = input->shape->dimensions[0];
     size_t channels = input->shape->dimensions[1];
     size_t inputLength = input->shape->dimensions[2];
     size_t outputLength = cfg->outputSize;
 
-    if (output->shape->dimensions[2] != outputLength) {
+    if (rawOut->shape->dimensions[2] != outputLength) {
         PRINT_ERROR("AdaptiveAvgPool1d forward: output length (%zu) does not match "
                     "configured outputSize (%zu)",
-                    output->shape->dimensions[2], outputLength);
+                    rawOut->shape->dimensions[2], outputLength);
         exit(1);
     }
 
     float const *xArr = (float const *)input->data;
-    float *yArr = (float *)output->data;
+    float *yArr = (float *)rawOut->data;
 
     for (size_t b = 0; b < batch; b++) {
         for (size_t c = 0; c < channels; c++) {
@@ -60,7 +72,16 @@ void adaptiveAvgPool1dForward(layer_t *layer, tensor_t *input, tensor_t *output)
     adaptiveAvgPool1dConfig_t *cfg = layer->config->adaptiveAvgPool1d;
     switch (cfg->forwardMath.type) {
     case ARITH_FLOAT32:
-        adaptiveAvgPool1dForwardFloat(layer, input, output);
+        executeOp(
+            &(opSpec_t){
+                .kernel = adaptiveAvgPool1dForwardKernel,
+                .ctx = cfg,
+                .inputs = (tensor_t *[]){input},
+                .nInputs = 1,
+                .arithmetic = cfg->forwardMath,
+                .mode = OUT_WRITE,
+            },
+            output);
         break;
     default:
         PRINT_ERROR("AdaptiveAvgPool1d forward: quantization type not implemented");

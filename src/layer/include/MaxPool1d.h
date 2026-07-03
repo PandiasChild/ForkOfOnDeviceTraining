@@ -23,7 +23,6 @@ void initMaxPool1dConfig(maxPool1dConfig_t *cfg, kernel_t *kernel, tensor_t *arg
                          quantization_t *forwardQ, quantization_t *propLossQ);
 
 void maxPool1dForward(layer_t *layer, tensor_t *input, tensor_t *output);
-void maxPool1dForwardFloat(layer_t *layer, tensor_t *input, tensor_t *output);
 
 void maxPool1dBackward(layer_t *layer, tensor_t *forwardInput, tensor_t *lossGrad,
                        tensor_t *propLoss);

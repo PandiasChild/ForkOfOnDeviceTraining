@@ -39,6 +39,7 @@ target_link_libraries(MaxPool1d PRIVATE
         Tensor
         Arithmetic
         ArithmeticType
+        ExecuteOp
         Common
         Kernel
         SlidingWindow1d
@@ -51,6 +52,7 @@ target_link_libraries(AvgPool1d PRIVATE
         Tensor
         Arithmetic
         ArithmeticType
+        ExecuteOp
         Common
         Kernel
         SlidingWindow1d
@@ -62,6 +64,7 @@ target_link_libraries(AdaptiveAvgPool1d PRIVATE
         DTypes
         Tensor
         ArithmeticType
+        ExecuteOp
         Common
         AdaptiveWindow1d
 )
