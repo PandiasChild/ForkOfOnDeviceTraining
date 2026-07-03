@@ -3,6 +3,8 @@
 
 #include <stdio.h>
 
+#include "ArithmeticType.h"
+#include "Kernel.h"
 #include "Layer.h"
 #include "Tensor.h"
 
@@ -28,6 +30,22 @@ static void serializeShape(shape_t *shape, FILE *f);
  * \param f: Pointer of file to serialize to
  */
 static void serializeQuantization(quantization_t *q, FILE *f);
+
+/*! Serializes a declared compute representation to given file: u8 type +
+ *  u8 roundingMode.
+ *
+ * \param arithmetic: Pointer to arithmetic_t
+ * \param f: Pointer of file to serialize to
+ */
+static void serializeArithmetic(arithmetic_t *arithmetic, FILE *f);
+
+/*! Serializes kernel geometry (all kernel_t fields) to given file: size_t
+ *  size, u8 paddingType, size_t stride, size_t dilation, size_t padding.
+ *
+ * \param kernel: Pointer to kernel_t
+ * \param f: Pointer of file to serialize to
+ */
+static void serializeKernel(kernel_t *kernel, FILE *f);
 
 /*! Serializes data field of tensor to given file.
  *

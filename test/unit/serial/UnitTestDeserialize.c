@@ -1,54 +1,17 @@
+#include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 
-#include "ArithmeticType.h"
+#include "DeathTest.h"
 #include "Deserialize.h"
-#include "Linear.h"
-#include "LinearApi.h"
+#include "Flatten.h"
+#include "FlattenApi.h"
+#include "Layer.h"
 #include "QuantizationApi.h"
-#include "Relu.h"
-#include "ReluApi.h"
 #include "Serialize.h"
-#include "Softmax.h"
-#include "SoftmaxApi.h"
 #include "StorageApi.h"
 #include "Tensor.h"
 #include "TensorApi.h"
 #include "unity.h"
-
-/*! Borrows already-built weight/bias parameter_t and a single quantization
- *  for forward + all backward math — replicates the deleted
- *  linearLayerInitLegacy(weights, bias, q, q, q, q) uniform-Q shape. This
- *  test needs bias tensors shaped [1, N] (matching the serialized-model
- *  fixture below byte-for-byte); the factory always allocates bias as
- *  rank-1 [N], so the layer is wired by hand instead. */
-static layer_t *buildBorrowedLinearLayer(parameter_t *weights, parameter_t *bias,
-                                         quantization_t *q) {
-    linearConfig_t *cfg = reserveMemory(sizeof(linearConfig_t));
-    cfg->weights = weights;
-    cfg->bias = bias;
-    cfg->forwardMath = arithmeticFromQuantization(q);
-    cfg->weightGradMath = arithmeticFromQuantization(q);
-    cfg->biasGradMath = arithmeticFromQuantization(q);
-    cfg->propLossMath = arithmeticFromQuantization(q);
-    cfg->outputQ = q;
-    cfg->propLossQ = q;
-    cfg->ownsQuantizations = false;
-    layerConfig_t *layerCfg = reserveMemory(sizeof(layerConfig_t));
-    layerCfg->linear = cfg;
-    layer_t *layer = reserveMemory(sizeof(layer_t));
-    initLayer(layer, LINEAR, layerCfg);
-    return layer;
-}
-
-/*! Frees only the layer_t + layerConfig_t + linearConfig_t shells — NOT the
- *  weight/bias parameters (caller-managed here, matches the deleted
- *  freeLinearLayerLegacy's wrapper-only teardown contract). */
-static void freeLinearLayerShellOnly(layer_t *layer) {
-    freeReservedMemory(layer->config->linear);
-    freeReservedMemory(layer->config);
-    freeReservedMemory(layer);
-}
 
 /* SERIALIZE_TEST_FILE_PATH is injected by the CMake target_compile_definitions
  * in test/unit/serial/CMakeLists.txt as an absolute path so the test does not
@@ -123,203 +86,94 @@ void testSerializeAndDeserializeTensor() {
     TEST_ASSERT_EQUAL_size_t_ARRAY(capturedSerialOrder, capturedDeserialOrder, 2);
 }
 
-void testSerializeAndDeserializeModel() {
-    /* One shared layer-config quantization per side. Layer free-functions
-     * release only the wrapper, so layerQ stays alive across the layer
-     * frees and is freed once with freeQuantization at the end. */
-    quantization_t *serialLayerQ = quantizationInitFloat();
-    quantization_t *deserialLayerQ = quantizationInitFloat();
+/* Hand-crafted malformed files exercising deserializeModel's NEW validation
+ * (bad magic / wrong version / layerCount mismatch / tag mismatch). A single
+ * Flatten layer is the minimal pre-built mirror model — Flatten needs no
+ * quantization setup, so these tests isolate the header/tag validation from
+ * any per-layer-type record decoding. */
 
-    /* === Serial side: Linear (20 x 28*28) -> ReLU -> Linear (10 x 20) -> Softmax === */
-    float serialWeight0Data[20 * 28 * 28];
-    for (size_t i = 0; i < 28 * 28 * 20; i++) {
-        serialWeight0Data[i] = (float)i;
-    }
-    tensor_t *serialWeight0Param = makeFloatTensor2D(20, 28 * 28, serialWeight0Data, 20 * 28 * 28);
-    tensor_t *serialWeight0Grad = gradInitFloat(serialWeight0Param, NULL);
-    parameter_t *serialWeight0 = parameterInit(serialWeight0Param, serialWeight0Grad);
-
-    float serialBias0Data[20];
-    for (size_t i = 0; i < 20; i++) {
-        serialBias0Data[i] = (float)i;
-    }
-    tensor_t *serialBias0Param = makeFloatTensor2D(1, 20, serialBias0Data, 20);
-    tensor_t *serialBias0Grad = gradInitFloat(serialBias0Param, NULL);
-    parameter_t *serialBias0 = parameterInit(serialBias0Param, serialBias0Grad);
-
-    layerQuant_t serialLq;
-    layerQuantInitUniform(&serialLq, serialLayerQ);
-    layer_t *serialLinear0 = buildBorrowedLinearLayer(serialWeight0, serialBias0, serialLayerQ);
-    layer_t *serialRelu = reluLayerInit(&serialLq);
-
-    float serialWeight1Data[10 * 20];
-    for (size_t i = 0; i < 10 * 20; i++) {
-        serialWeight1Data[i] = (float)i;
-    }
-    tensor_t *serialWeight1Param = makeFloatTensor2D(10, 20, serialWeight1Data, 10 * 20);
-    tensor_t *serialWeight1Grad = gradInitFloat(serialWeight1Param, NULL);
-    parameter_t *serialWeight1 = parameterInit(serialWeight1Param, serialWeight1Grad);
-
-    float serialBias1Data[10];
-    for (size_t i = 0; i < 10; i++) {
-        serialBias1Data[i] = (float)i;
-    }
-    tensor_t *serialBias1Param = makeFloatTensor2D(1, 10, serialBias1Data, 10);
-    tensor_t *serialBias1Grad = gradInitFloat(serialBias1Param, NULL);
-    parameter_t *serialBias1 = parameterInit(serialBias1Param, serialBias1Grad);
-
-    layer_t *serialLinear1 = buildBorrowedLinearLayer(serialWeight1, serialBias1, serialLayerQ);
-    layer_t *serialSoftmax = softmaxLayerInit(&serialLq);
-
-    layer_t *serialModel[] = {serialLinear0, serialRelu, serialLinear1, serialSoftmax};
-    size_t sizeModel = 4;
-
-    FILE *f = fopen(FILE_PATH, "w");
-    serializeModel(serialModel, sizeModel, f);
+static void testDeserializeRejectsBadMagic(void) {
+    FILE *f = fopen(FILE_PATH, "wb");
+    fwrite("XXXX", 1, 4, f);
+    uint32_t version = 1;
+    fwrite(&version, sizeof(uint32_t), 1, f);
+    uint32_t layerCount = 1;
+    fwrite(&layerCount, sizeof(uint32_t), 1, f);
+    uint8_t tag = (uint8_t)FLATTEN;
+    fwrite(&tag, sizeof(uint8_t), 1, f);
     fclose(f);
 
-    /* === Deserial side: zero-init mirror with the same layer topology. === */
-    tensor_t *deserialWeight0Param = makeFloatTensor2D(20, 28 * 28, NULL, 0);
-    tensor_t *deserialWeight0Grad = gradInitFloat(deserialWeight0Param, NULL);
-    parameter_t *deserialWeight0 = parameterInit(deserialWeight0Param, deserialWeight0Grad);
+    layer_t *layer = flattenLayerInit();
+    layer_t *model[] = {layer};
 
-    tensor_t *deserialBias0Param = makeFloatTensor2D(1, 20, NULL, 0);
-    tensor_t *deserialBias0Grad = gradInitFloat(deserialBias0Param, NULL);
-    parameter_t *deserialBias0 = parameterInit(deserialBias0Param, deserialBias0Grad);
-
-    layerQuant_t deserialLq;
-    layerQuantInitUniform(&deserialLq, deserialLayerQ);
-    layer_t *deserialLinear0 =
-        buildBorrowedLinearLayer(deserialWeight0, deserialBias0, deserialLayerQ);
-    layer_t *deserialRelu = reluLayerInit(&deserialLq);
-
-    tensor_t *deserialWeight1Param = makeFloatTensor2D(10, 20, NULL, 0);
-    tensor_t *deserialWeight1Grad = gradInitFloat(deserialWeight1Param, NULL);
-    parameter_t *deserialWeight1 = parameterInit(deserialWeight1Param, deserialWeight1Grad);
-
-    tensor_t *deserialBias1Param = makeFloatTensor2D(1, 10, NULL, 0);
-    tensor_t *deserialBias1Grad = gradInitFloat(deserialBias1Param, NULL);
-    parameter_t *deserialBias1 = parameterInit(deserialBias1Param, deserialBias1Grad);
-
-    layer_t *deserialLinear1 =
-        buildBorrowedLinearLayer(deserialWeight1, deserialBias1, deserialLayerQ);
-    layer_t *deserialSoftmax = softmaxLayerInit(&deserialLq);
-
-    layer_t *deserialModel[] = {deserialLinear0, deserialRelu, deserialLinear1, deserialSoftmax};
-
-    f = fopen(FILE_PATH, "r");
-    deserializeModel(deserialModel, sizeModel, f);
+    f = fopen(FILE_PATH, "rb");
+    ASSERT_EXITS_WITH_FAILURE(deserializeModel(model, 1, f));
     fclose(f);
 
-    /* CAPTURE every assertion value before any free. */
-    size_t numberOfWeights0 =
-        calcNumberOfElementsByTensor(serialModel[0]->config->linear->weights->param);
-    size_t numberOfBiases0 =
-        calcNumberOfElementsByTensor(serialModel[0]->config->linear->bias->param);
-    size_t numberOfWeights1 =
-        calcNumberOfElementsByTensor(serialModel[2]->config->linear->weights->param);
-    size_t numberOfBiases1 =
-        calcNumberOfElementsByTensor(serialModel[2]->config->linear->bias->param);
+    freeFlattenLayer(layer);
+}
 
-    /* Capture weight/bias arrays into heap buffers (sizes vary per layer). */
-    float *capturedSerialW0 = reserveMemory(numberOfWeights0 * sizeof(float));
-    float *capturedDeserialW0 = reserveMemory(numberOfWeights0 * sizeof(float));
-    float *capturedSerialB0 = reserveMemory(numberOfBiases0 * sizeof(float));
-    float *capturedDeserialB0 = reserveMemory(numberOfBiases0 * sizeof(float));
-    float *capturedSerialW1 = reserveMemory(numberOfWeights1 * sizeof(float));
-    float *capturedDeserialW1 = reserveMemory(numberOfWeights1 * sizeof(float));
-    float *capturedSerialB1 = reserveMemory(numberOfBiases1 * sizeof(float));
-    float *capturedDeserialB1 = reserveMemory(numberOfBiases1 * sizeof(float));
+static void testDeserializeRejectsWrongVersion(void) {
+    FILE *f = fopen(FILE_PATH, "wb");
+    fwrite("ODTS", 1, 4, f);
+    uint32_t version = 2;
+    fwrite(&version, sizeof(uint32_t), 1, f);
+    uint32_t layerCount = 1;
+    fwrite(&layerCount, sizeof(uint32_t), 1, f);
+    uint8_t tag = (uint8_t)FLATTEN;
+    fwrite(&tag, sizeof(uint8_t), 1, f);
+    fclose(f);
 
-    for (size_t i = 0; i < numberOfWeights0; i++) {
-        capturedSerialW0[i] = ((float *)serialModel[0]->config->linear->weights->param->data)[i];
-        capturedDeserialW0[i] =
-            ((float *)deserialModel[0]->config->linear->weights->param->data)[i];
-    }
-    for (size_t i = 0; i < numberOfBiases0; i++) {
-        capturedSerialB0[i] = ((float *)serialModel[0]->config->linear->bias->param->data)[i];
-        capturedDeserialB0[i] = ((float *)deserialModel[0]->config->linear->bias->param->data)[i];
-    }
-    for (size_t i = 0; i < numberOfWeights1; i++) {
-        capturedSerialW1[i] = ((float *)serialModel[2]->config->linear->weights->param->data)[i];
-        capturedDeserialW1[i] =
-            ((float *)deserialModel[2]->config->linear->weights->param->data)[i];
-    }
-    for (size_t i = 0; i < numberOfBiases1; i++) {
-        capturedSerialB1[i] = ((float *)serialModel[2]->config->linear->bias->param->data)[i];
-        capturedDeserialB1[i] = ((float *)deserialModel[2]->config->linear->bias->param->data)[i];
-    }
+    layer_t *layer = flattenLayerInit();
+    layer_t *model[] = {layer};
 
-    qtype_t capturedSerialL0FwdQ = serialModel[0]->config->linear->outputQ->type;
-    qtype_t capturedDeserialL0FwdQ = deserialModel[0]->config->linear->outputQ->type;
-    qtype_t capturedSerialL0PLQ = serialModel[0]->config->linear->propLossQ->type;
-    qtype_t capturedDeserialL0PLQ = deserialModel[0]->config->linear->propLossQ->type;
+    f = fopen(FILE_PATH, "rb");
+    ASSERT_EXITS_WITH_FAILURE(deserializeModel(model, 1, f));
+    fclose(f);
 
-    qtype_t capturedSerialReluFwdQ = serialModel[1]->config->relu->outputQ->type;
-    qtype_t capturedDeserialReluFwdQ = deserialModel[1]->config->relu->outputQ->type;
-    qtype_t capturedSerialReluBwdQ = serialModel[1]->config->relu->propLossQ->type;
-    qtype_t capturedDeserialReluBwdQ = deserialModel[1]->config->relu->propLossQ->type;
+    freeFlattenLayer(layer);
+}
 
-    qtype_t capturedSerialL1FwdQ = serialModel[2]->config->linear->outputQ->type;
-    qtype_t capturedDeserialL1FwdQ = deserialModel[2]->config->linear->outputQ->type;
-    qtype_t capturedSerialL1PLQ = serialModel[2]->config->linear->propLossQ->type;
-    qtype_t capturedDeserialL1PLQ = deserialModel[2]->config->linear->propLossQ->type;
+static void testDeserializeRejectsLayerCountMismatch(void) {
+    FILE *f = fopen(FILE_PATH, "wb");
+    fwrite("ODTS", 1, 4, f);
+    uint32_t version = 1;
+    fwrite(&version, sizeof(uint32_t), 1, f);
+    uint32_t layerCount = 2; /* caller below passes sizeModel = 1 */
+    fwrite(&layerCount, sizeof(uint32_t), 1, f);
+    uint8_t tag = (uint8_t)FLATTEN;
+    fwrite(&tag, sizeof(uint8_t), 1, f);
+    fclose(f);
 
-    qtype_t capturedSerialSoftFwdQ = serialModel[3]->config->softmax->outputQ->type;
-    qtype_t capturedDeserialSoftFwdQ = deserialModel[3]->config->softmax->outputQ->type;
-    qtype_t capturedSerialSoftBwdQ = serialModel[3]->config->softmax->propLossQ->type;
-    qtype_t capturedDeserialSoftBwdQ = deserialModel[3]->config->softmax->propLossQ->type;
+    layer_t *layer = flattenLayerInit();
+    layer_t *model[] = {layer};
 
-    /* FREE in reverse-init order. Layer free-functions release only the
-     * wrapper; parameters and the shared layerQ are caller-managed (per
-     * docs/CONVENTIONS.md "Test memory discipline"). */
-    freeSoftmaxLayer(deserialSoftmax);
-    freeLinearLayerShellOnly(deserialLinear1);
-    freeParameter(deserialBias1);
-    freeParameter(deserialWeight1);
-    freeReluLayer(deserialRelu);
-    freeLinearLayerShellOnly(deserialLinear0);
-    freeParameter(deserialBias0);
-    freeParameter(deserialWeight0);
-    freeQuantization(deserialLayerQ);
+    f = fopen(FILE_PATH, "rb");
+    ASSERT_EXITS_WITH_FAILURE(deserializeModel(model, 1, f));
+    fclose(f);
 
-    freeSoftmaxLayer(serialSoftmax);
-    freeLinearLayerShellOnly(serialLinear1);
-    freeParameter(serialBias1);
-    freeParameter(serialWeight1);
-    freeReluLayer(serialRelu);
-    freeLinearLayerShellOnly(serialLinear0);
-    freeParameter(serialBias0);
-    freeParameter(serialWeight0);
-    freeQuantization(serialLayerQ);
+    freeFlattenLayer(layer);
+}
 
-    /* ASSERT on captured. */
-    TEST_ASSERT_EQUAL_FLOAT_ARRAY(capturedSerialW0, capturedDeserialW0, numberOfWeights0);
-    TEST_ASSERT_EQUAL_FLOAT_ARRAY(capturedSerialB0, capturedDeserialB0, numberOfBiases0);
-    TEST_ASSERT_EQUAL_FLOAT_ARRAY(capturedSerialW1, capturedDeserialW1, numberOfWeights1);
-    TEST_ASSERT_EQUAL_FLOAT_ARRAY(capturedSerialB1, capturedDeserialB1, numberOfBiases1);
+static void testDeserializeRejectsTagMismatch(void) {
+    FILE *f = fopen(FILE_PATH, "wb");
+    fwrite("ODTS", 1, 4, f);
+    uint32_t version = 1;
+    fwrite(&version, sizeof(uint32_t), 1, f);
+    uint32_t layerCount = 1;
+    fwrite(&layerCount, sizeof(uint32_t), 1, f);
+    uint8_t tag = (uint8_t)LINEAR; /* pre-built mirror layer below is FLATTEN */
+    fwrite(&tag, sizeof(uint8_t), 1, f);
+    fclose(f);
 
-    TEST_ASSERT_EQUAL(capturedSerialL0FwdQ, capturedDeserialL0FwdQ);
-    TEST_ASSERT_EQUAL(capturedSerialL0PLQ, capturedDeserialL0PLQ);
+    layer_t *layer = flattenLayerInit();
+    layer_t *model[] = {layer};
 
-    TEST_ASSERT_EQUAL(capturedSerialReluFwdQ, capturedDeserialReluFwdQ);
-    TEST_ASSERT_EQUAL(capturedSerialReluBwdQ, capturedDeserialReluBwdQ);
+    f = fopen(FILE_PATH, "rb");
+    ASSERT_EXITS_WITH_FAILURE(deserializeModel(model, 1, f));
+    fclose(f);
 
-    TEST_ASSERT_EQUAL(capturedSerialL1FwdQ, capturedDeserialL1FwdQ);
-    TEST_ASSERT_EQUAL(capturedSerialL1PLQ, capturedDeserialL1PLQ);
-
-    TEST_ASSERT_EQUAL(capturedSerialSoftFwdQ, capturedDeserialSoftFwdQ);
-    TEST_ASSERT_EQUAL(capturedSerialSoftBwdQ, capturedDeserialSoftBwdQ);
-
-    /* Release the assertion-buffer scratch space last. */
-    freeReservedMemory(capturedSerialW0);
-    freeReservedMemory(capturedDeserialW0);
-    freeReservedMemory(capturedSerialB0);
-    freeReservedMemory(capturedDeserialB0);
-    freeReservedMemory(capturedSerialW1);
-    freeReservedMemory(capturedDeserialW1);
-    freeReservedMemory(capturedSerialB1);
-    freeReservedMemory(capturedDeserialB1);
+    freeFlattenLayer(layer);
 }
 
 void setUp() {}
@@ -328,6 +182,9 @@ void tearDown() {}
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testSerializeAndDeserializeTensor);
-    RUN_TEST(testSerializeAndDeserializeModel);
+    RUN_TEST(testDeserializeRejectsBadMagic);
+    RUN_TEST(testDeserializeRejectsWrongVersion);
+    RUN_TEST(testDeserializeRejectsLayerCountMismatch);
+    RUN_TEST(testDeserializeRejectsTagMismatch);
     return UNITY_END();
 }

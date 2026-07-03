@@ -5,8 +5,19 @@ target_link_libraries(Serialize PRIVATE
         Tensor
         Quantization
         Rounding
+        ArithmeticType
 
         Layer
+
+        AdaptiveAvgPool1d
+        AvgPool1d
+        Conv1d
+        Conv1dTransposed
+        Dropout
+        Kernel
+        LayerNorm
+        MaxPool1d
+        QuantizationLayer
 )
 
 add_library(Deserialize Deserialize.c)
@@ -16,6 +27,17 @@ target_link_libraries(Deserialize PRIVATE
         Tensor
         Quantization
         Rounding
+        ArithmeticType
 
         Layer
+
+        AdaptiveAvgPool1d
+        AvgPool1d
+        Conv1d
+        Conv1dTransposed
+        Dropout
+        Kernel
+        LayerNorm
+        MaxPool1d
+        QuantizationLayer
 )

@@ -3,6 +3,8 @@
 
 #include <stdio.h>
 
+#include "ArithmeticType.h"
+#include "Kernel.h"
 #include "Layer.h"
 #include "Tensor.h"
 
@@ -28,6 +30,22 @@ static void deserializeShape(shape_t *shape, FILE *f);
  * \param f: Pointer of file to deserialize from
  */
 static void deserializeQuantization(quantization_t *q, FILE *f);
+
+/*! Deserializes a declared compute representation from given file: u8 type +
+ *  u8 roundingMode.
+ *
+ * \param arithmetic: Pointer to arithmetic_t to deserialize into
+ * \param f: Pointer of file to deserialize from
+ */
+static void deserializeArithmetic(arithmetic_t *arithmetic, FILE *f);
+
+/*! Deserializes kernel geometry (all kernel_t fields) from given file.
+ *  Mirrors serializeKernel.
+ *
+ * \param kernel: Pointer to kernel_t to deserialize into
+ * \param f: Pointer of file to deserialize from
+ */
+static void deserializeKernel(kernel_t *kernel, FILE *f);
 
 /*! Deserializes quantization config of tensor from given file.
  *
