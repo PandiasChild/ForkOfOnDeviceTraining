@@ -418,17 +418,39 @@ void copyShape(shape_t *dest, shape_t *src) {
     dest->numberOfDimensions = src->numberOfDimensions;
 }
 
+/* Clones src's quantization into dest. Config-carrying dtypes (SYM_INT32/SYM/ASYM)
+ * copy INTO dest->qConfig -- the caller must have pre-allocated it for the same
+ * dtype (src/tensor never allocates). NULL-config dtypes (INT32/FLOAT32/BOOL)
+ * overwrite dest->qConfig with NULL; a heap config dest owned beforehand stays
+ * owned by the caller. */
+static void copyQConfigInto(quantization_t *dest, quantization_t *src, size_t qConfigSize,
+                            const char *typeName) {
+    if (dest->qConfig == NULL) {
+        PRINT_ERROR("copyQuantization: dest->qConfig for %s must be caller-allocated", typeName);
+        exit(1);
+    }
+    dest->type = src->type;
+    memcpy(dest->qConfig, src->qConfig, qConfigSize);
+}
+
 void copyQuantization(quantization_t *dest, quantization_t *src) {
     switch (src->type) {
+    case INT32:
+        dest->type = INT32;
+        dest->qConfig = NULL;
+        break;
     case FLOAT32:
         dest->type = FLOAT32;
         dest->qConfig = NULL;
         break;
     case SYM_INT32:
-        dest->type = SYM_INT32;
-        symInt32QConfig_t *destQC = dest->qConfig;
-        symInt32QConfig_t *srcQC = src->qConfig;
-        memcpy(destQC, srcQC, sizeof(symInt32QConfig_t));
+        copyQConfigInto(dest, src, sizeof(symInt32QConfig_t), "SYM_INT32");
+        break;
+    case SYM:
+        copyQConfigInto(dest, src, sizeof(symQConfig_t), "SYM");
+        break;
+    case ASYM:
+        copyQConfigInto(dest, src, sizeof(asymQConfig_t), "ASYM");
         break;
     case BOOL:
         dest->type = BOOL;

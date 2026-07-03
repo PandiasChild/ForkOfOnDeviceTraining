@@ -1,4 +1,5 @@
 #include "DTypes.h"
+#include "DeathTest.h"
 #include "StorageApi.h"
 #include "Tensor.h"
 #include "unity.h"
@@ -265,6 +266,143 @@ void test_calcNumberOfBytesForData_Sym_qBits5_N4() {
     TEST_ASSERT_EQUAL_size_t(3, calcNumberOfBytesForData(&q, 4));
 }
 
+void testCopyTensorInt32CarriesTypeAndData() {
+    /* Mutation guard: re-removing the INT32 arm makes copyQuantization exit(1)
+     * ("Unknown QType!"), killing the test run — RED. */
+    int32_t srcData[] = {7, -3, 2000000000, -2000000000};
+    size_t srcDims[] = {1, 4};
+    size_t srcOrder[] = {0, 1};
+    shape_t srcShape = {
+        .dimensions = srcDims, .numberOfDimensions = 2, .orderOfDimensions = srcOrder};
+    quantization_t qSrc;
+    initInt32Quantization(&qSrc);
+    tensor_t src;
+    setTensorValues(&src, (uint8_t *)srcData, &srcShape, &qSrc, NULL);
+
+    int32_t dstData[4] = {0};
+    size_t dstDims[2];
+    size_t dstOrder[2];
+    shape_t dstShape = {
+        .dimensions = dstDims, .numberOfDimensions = 2, .orderOfDimensions = dstOrder};
+    quantization_t qDst;
+    initFloat32Quantization(&qDst); /* NULL-config family: overwritten by copyQuantization */
+    tensor_t dst;
+    setTensorValues(&dst, (uint8_t *)dstData, &dstShape, &qDst, NULL);
+
+    copyTensor(&dst, &src);
+
+    TEST_ASSERT_EQUAL_INT(INT32, dst.quantization->type);
+    TEST_ASSERT_NULL(dst.quantization->qConfig);
+    TEST_ASSERT_EQUAL_INT32_ARRAY(srcData, (int32_t *)dst.data, 4);
+}
+
+void testCopyTensorSymCarriesConfigAndPackedBytes() {
+    /* 4 mantissas at qBits=6 -> ceil(24/8) = 3 packed bytes. Dest starts with a
+     * deliberately different config (scale 1.f, SR_HALF_AWAY): every field must be
+     * overwritten by the copy, INTO the caller's storage (no pointer swap).
+     * Mutation guard: re-removing the SYM arm exits the run ("Unknown QType!"). */
+    int32_t mantissas[] = {3, -3, 31, -32};
+    uint8_t srcData[3];
+    byteConversion((uint8_t *)mantissas, 32, srcData, 6, 4);
+    size_t srcDims[] = {1, 4};
+    size_t srcOrder[] = {0, 1};
+    shape_t srcShape = {
+        .dimensions = srcDims, .numberOfDimensions = 2, .orderOfDimensions = srcOrder};
+    symQConfig_t srcQC = {.scale = 0.25f, .qBits = 6, .roundingMode = HALF_AWAY};
+    quantization_t qSrc;
+    initSymQuantization(&srcQC, &qSrc);
+    tensor_t src;
+    setTensorValues(&src, srcData, &srcShape, &qSrc, NULL);
+
+    uint8_t dstData[3] = {0};
+    size_t dstDims[2];
+    size_t dstOrder[2];
+    shape_t dstShape = {
+        .dimensions = dstDims, .numberOfDimensions = 2, .orderOfDimensions = dstOrder};
+    symQConfig_t dstQC = {.scale = 1.f, .qBits = 6, .roundingMode = SR_HALF_AWAY};
+    quantization_t qDst;
+    initSymQuantization(&dstQC, &qDst);
+    tensor_t dst;
+    setTensorValues(&dst, dstData, &dstShape, &qDst, NULL);
+
+    copyTensor(&dst, &src);
+
+    TEST_ASSERT_EQUAL_INT(SYM, dst.quantization->type);
+    TEST_ASSERT_EQUAL_PTR(&dstQC, dst.quantization->qConfig);
+    TEST_ASSERT_EQUAL_FLOAT(0.25f, dstQC.scale);
+    TEST_ASSERT_EQUAL_UINT8(6, dstQC.qBits);
+    TEST_ASSERT_EQUAL_INT(HALF_AWAY, dstQC.roundingMode);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(srcData, dstData, 3);
+}
+
+void testCopyTensorAsymCarriesConfigAndPackedBytes() {
+    /* 4 codes at qBits=5 -> ceil(20/8) = 3 packed bytes. Mutation guard: re-removing
+     * the ASYM arm exits the run ("Unknown QType!"). */
+    int32_t codes[] = {0, 10, 20, 31};
+    uint8_t srcData[3];
+    byteConversion((uint8_t *)codes, 32, srcData, 5, 4);
+    size_t srcDims[] = {1, 4};
+    size_t srcOrder[] = {0, 1};
+    shape_t srcShape = {
+        .dimensions = srcDims, .numberOfDimensions = 2, .orderOfDimensions = srcOrder};
+    asymQConfig_t srcQC = {.scale = 0.5f, .zeroPoint = -7, .qBits = 5, .roundingMode = HALF_AWAY};
+    quantization_t qSrc;
+    initAsymQuantization(&srcQC, &qSrc);
+    tensor_t src;
+    setTensorValues(&src, srcData, &srcShape, &qSrc, NULL);
+
+    uint8_t dstData[3] = {0};
+    size_t dstDims[2];
+    size_t dstOrder[2];
+    shape_t dstShape = {
+        .dimensions = dstDims, .numberOfDimensions = 2, .orderOfDimensions = dstOrder};
+    asymQConfig_t dstQC = {.scale = 1.f, .zeroPoint = 0, .qBits = 5, .roundingMode = SR_HALF_AWAY};
+    quantization_t qDst;
+    initAsymQuantization(&dstQC, &qDst);
+    tensor_t dst;
+    setTensorValues(&dst, dstData, &dstShape, &qDst, NULL);
+
+    copyTensor(&dst, &src);
+
+    TEST_ASSERT_EQUAL_INT(ASYM, dst.quantization->type);
+    TEST_ASSERT_EQUAL_FLOAT(0.5f, dstQC.scale);
+    TEST_ASSERT_EQUAL_INT16(-7, dstQC.zeroPoint);
+    TEST_ASSERT_EQUAL_UINT8(5, dstQC.qBits);
+    TEST_ASSERT_EQUAL_INT(HALF_AWAY, dstQC.roundingMode);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(srcData, dstData, 3);
+}
+
+void testCopyTensorSymIntoNullConfigDestDies() {
+    /* Config-carrying src into a dest whose qConfig is NULL (FLOAT32-initialized)
+     * must fail fast, not memcpy through NULL. Mutation guard: without the NULL
+     * check the child dies by SIGSEGV (signal, not exit(1)) and
+     * ASSERT_EXITS_WITH_FAILURE flags the wrong termination kind. */
+    int32_t mantissas[] = {1, -1};
+    uint8_t srcData[2];
+    byteConversion((uint8_t *)mantissas, 32, srcData, 6, 2);
+    size_t srcDims[] = {1, 2};
+    size_t srcOrder[] = {0, 1};
+    shape_t srcShape = {
+        .dimensions = srcDims, .numberOfDimensions = 2, .orderOfDimensions = srcOrder};
+    symQConfig_t srcQC = {.scale = 1.f, .qBits = 6, .roundingMode = HALF_AWAY};
+    quantization_t qSrc;
+    initSymQuantization(&srcQC, &qSrc);
+    tensor_t src;
+    setTensorValues(&src, srcData, &srcShape, &qSrc, NULL);
+
+    uint8_t dstData[2] = {0};
+    size_t dstDims[2];
+    size_t dstOrder[2];
+    shape_t dstShape = {
+        .dimensions = dstDims, .numberOfDimensions = 2, .orderOfDimensions = dstOrder};
+    quantization_t qDst;
+    initFloat32Quantization(&qDst); /* qConfig == NULL on purpose */
+    tensor_t dst;
+    setTensorValues(&dst, dstData, &dstShape, &qDst, NULL);
+
+    ASSERT_EXITS_WITH_FAILURE(copyTensor(&dst, &src));
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -285,6 +423,10 @@ int main(void) {
     RUN_TEST(testReadByte);
 
     RUN_TEST(testCopyTensor);
+    RUN_TEST(testCopyTensorInt32CarriesTypeAndData);
+    RUN_TEST(testCopyTensorSymCarriesConfigAndPackedBytes);
+    RUN_TEST(testCopyTensorAsymCarriesConfigAndPackedBytes);
+    RUN_TEST(testCopyTensorSymIntoNullConfigDestDies);
 
     RUN_TEST(test_calcBitsPerElement_Sym_qBits3);
     RUN_TEST(test_calcBytesPerElement_Sym_qBits3);
