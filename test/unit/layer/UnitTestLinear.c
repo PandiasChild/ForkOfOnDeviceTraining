@@ -1210,8 +1210,9 @@ void testLinearLayerInitOwningWeightGradStorageKnobOverridesPropLossQDefault(voi
 }
 
 void testLinearLayerInitOwningBoolWeightGradStorageKnobAborts(void) {
-    /* getQLike (gradInit's clone path) has no SYM/BOOL arms — a knob naming an
-     * unsupported dtype must fail fast (packed grads land in PR3). */
+    /* getQLike (gradInit's clone path) supports SYM (packed grads, #269) but
+     * deliberately has no BOOL arm — a knob naming an unsupported dtype must
+     * fail fast at the factory, the earliest gate. */
     quantization_t *q = quantizationInitFloat();
     layerQuant_t lq;
     layerQuantInitUniform(&lq, q);

@@ -169,6 +169,12 @@ tensor_t *gradInitAsym(tensor_t *param, uint8_t qBits, roundingMode_t roundingMo
                       sparsity);
 }
 
+tensor_t *gradInitSym(tensor_t *param, uint8_t qBits, roundingMode_t roundingMode,
+                      sparsity_t *sparsity) {
+    return initTensor(getShapeLike(param->shape), quantizationInitSym(qBits, roundingMode),
+                      sparsity);
+}
+
 // getLike
 
 shape_t *getShapeLike(shape_t *shape) {
@@ -211,6 +217,18 @@ quantization_t *getQLike(quantization_t *quantization) {
         initAsymQConfig(asymQC->qBits, asymQC->roundingMode, likeAsymQC);
         initAsymQuantization(likeAsymQC, likeQ);
         break;
+    case SYM: {
+        symQConfig_t *likeSymQC = reserveMemory(sizeof(symQConfig_t));
+        symQConfig_t *symQC = quantization->qConfig;
+        /* Precedent A clone: width + rounding preserved, scale reset — a fresh
+         * clone is an ungridded zero-state (first accumulate derives the grid). */
+        initSymQConfig(symQC->qBits, symQC->roundingMode, likeSymQC);
+        initSymQuantization(likeSymQC, likeQ);
+        break;
+    }
+    /* BOOL deliberately unsupported here: grad/state clones must fail fast at
+     * construction (see UnitTestLinear BOOL-knob death test); add an arm only
+     * when a real BOOL-clone consumer appears (#269 deviation). */
     default:
         PRINT_ERROR("Unknown QType");
         exit(1);
@@ -227,10 +245,11 @@ uint8_t *getDataLike(quantization_t *quantization, size_t numberOfValues) {
     case SYM_INT32:
         return reserveMemory(numberOfValues * sizeof(int32_t));
     case ASYM:
-        asymQConfig_t *asymQC = quantization->qConfig;
-        size_t totalBits = numberOfValues * asymQC->qBits;
-        size_t totalBytes = (totalBits + 7) / 8;
-        return reserveMemory(totalBytes);
+    case SYM:
+        /* Packed/sub-byte payloads size via the single ceiling authority
+         * (calcNumberOfBytesForData) — never re-derive the bit-packing
+         * arithmetic inline (#269). */
+        return reserveMemory(calcNumberOfBytesForData(quantization, numberOfValues));
     default:
         PRINT_ERROR("Unknown QType");
         exit(1);

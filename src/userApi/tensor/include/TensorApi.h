@@ -100,6 +100,20 @@ tensor_t *gradInitSymInt32(tensor_t *param, roundingMode_t roundingMode, sparsit
  */
 tensor_t *gradInitAsym(tensor_t *param, uint8_t qBits, roundingMode_t roundingMode,
                        sparsity_t *sparsity);
+/*! Initializes SYM (packed sub-byte) gradient tensor to match given param
+ *  tensor's shape. Use when a layer's grad-storage knob names SYM explicitly
+ *  for memory-constrained packed grad storage (#269, PR3); direct
+ *  quantizationInitSym, no getQLike detour.
+ *
+ * \param param: Pointer to param tensor (supplies the shape to clone)
+ * \param qBits: Sub-byte width of the packed SYM grad
+ * \param roundingMode: Rounding mode for the SYM quantization config
+ * \param sparsity: sparsity_t of tensor
+ *
+ * \returns Pointer to initialized gradient tensor
+ */
+tensor_t *gradInitSym(tensor_t *param, uint8_t qBits, roundingMode_t roundingMode,
+                      sparsity_t *sparsity);
 
 /*! Initializes parameter with given param and graident tensor.
  *
