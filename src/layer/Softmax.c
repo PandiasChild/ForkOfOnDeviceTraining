@@ -9,6 +9,7 @@
 
 #include "ArithmeticType.h"
 #include "Common.h"
+#include "ExecuteOp.h"
 #include "Softmax.h"
 #include "TensorConversion.h"
 
@@ -25,15 +26,26 @@ void softmaxInitLayer(layerConfig_t *softmaxConfig, layer_t *softmaxLayer) {
     softmaxLayer->config = softmaxConfig;
 }
 
-static void softmaxForwardFloat(tensor_t *input, tensor_t *output) {
-    size_t n = calcNumberOfElementsByTensor(input);
+/* Softmax's real compute is always float (numerically stable max-shifted exp);
+ * SYM_INT32 forwardMath only ever meant "convert in, compute in float, convert
+ * out" (never native SYM arithmetic like Linear/Conv), so the funnel's
+ * prologue/epilogue perform that conversion automatically. Arithmetic is
+ * hardcoded ARITH_FLOAT32 here on purpose — forwardMath no longer selects a
+ * compute path, it only declares the layer's storage dtype. */
+static void softmaxForwardKernel(tensor_t **ops, size_t n, tensor_t *rawOut, tensor_t *auxOut,
+                                 const void *ctx) {
+    (void)n;
+    (void)auxOut;
+    (void)ctx;
+    tensor_t *input = ops[0];
+    size_t count = calcNumberOfElementsByTensor(input);
 
     float *x = (float *)input->data;
-    float *y = (float *)output->data;
+    float *y = (float *)rawOut->data;
 
     // 1. find max
     float max = x[0];
-    for (size_t i = 1; i < n; i++) {
+    for (size_t i = 1; i < count; i++) {
         if (x[i] > max) {
             max = x[i];
         }
@@ -41,78 +53,29 @@ static void softmaxForwardFloat(tensor_t *input, tensor_t *output) {
 
     // 2. exp and sum
     float sum = 0.f;
-    for (size_t i = 0; i < n; i++) {
+    for (size_t i = 0; i < count; i++) {
         float e = expf(x[i] - max);
         y[i] = e;
         sum += e;
     }
 
     // 3. normalize
-    for (size_t i = 0; i < n; i++) {
+    for (size_t i = 0; i < count; i++) {
         y[i] /= sum;
     }
 }
 
-/*static void softmaxForwardFloat(tensor_t *input, tensor_t *output) {
-    size_t inputSize = calcNumberOfElementsByTensor(input);
-
-    float *inputFloat = (float *)input->data;
-    float *outputFloat = (float *)output->data;
-
-    float sum = 0;
-    for (size_t i = 0; i < inputSize; i++) {
-        sum += expf(inputFloat[i]);
-    }
-
-    for (size_t i = 0; i < inputSize; i++) {
-        outputFloat[i] = expf(inputFloat[i]) / sum;
-    }
-}*/
-
-static void softmaxForwardSymInt32(tensor_t *input, tensor_t *output) {
-    size_t inputSize = calcNumberOfElementsByTensor(input);
-
-    tensor_t inputFloat;
-    quantization_t inputFloatQ;
-    initFloat32Quantization(&inputFloatQ);
-    uint8_t inputFloatData[inputSize * sizeof(float)];
-    setTensorValuesForConversion(inputFloatData, &inputFloatQ, input, &inputFloat);
-    convertTensor(input, &inputFloat);
-
-    tensor_t outputFloat;
-    quantization_t outputFloatQ;
-    initFloat32Quantization(&outputFloatQ);
-    uint8_t outputFloatData[inputSize * sizeof(float)];
-    setTensorValuesForConversion(outputFloatData, &outputFloatQ, output, &outputFloat);
-    convertTensor(output, &outputFloat);
-
-    float *inputFloatArr = (float *)inputFloat.data;
-    float *outputFloatArr = (float *)outputFloat.data;
-
-    float sum = 0;
-    for (size_t i = 0; i < inputSize; i++) {
-        sum += expf(inputFloatArr[i]);
-    }
-
-    for (size_t i = 0; i < inputSize; i++) {
-        outputFloatArr[i] = expf(inputFloatArr[i]) / sum;
-    }
-
-    convertTensor(&outputFloat, output);
-}
-
 void softmaxForward(layer_t *softmaxLayer, tensor_t *input, tensor_t *output) {
-    switch (softmaxLayer->config->softmax->forwardMath.type) {
-    case ARITH_FLOAT32:
-        softmaxForwardFloat(input, output);
-        break;
-    case ARITH_SYM_INT32:
-        softmaxForwardSymInt32(input, output);
-        break;
-    default:
-        PRINT_ERROR("Unknown QType!");
-        exit(1);
-    }
+    (void)softmaxLayer;
+    executeOp(
+        &(opSpec_t){
+            .kernel = softmaxForwardKernel,
+            .inputs = (tensor_t *[]){input},
+            .nInputs = 1,
+            .arithmetic = (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY},
+            .mode = OUT_WRITE,
+        },
+        output);
 }
 
 static void softmaxBackwardFloat(tensor_t *input, tensor_t *loss, tensor_t *propLoss) {

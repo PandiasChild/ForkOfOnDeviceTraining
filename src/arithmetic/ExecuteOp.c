@@ -12,8 +12,9 @@
 #include "Tensor.h"
 #include "TensorConversion.h"
 
-/* Maximum operands any in-tree op passes (matmul: 2). Bump deliberately. */
-#define EXECUTE_OP_MAX_INPUTS 2
+/* Maximum operands any in-tree op passes (Linear/LayerNorm forward: input +
+ * weights/gamma + bias/beta = 3). Bump deliberately. */
+#define EXECUTE_OP_MAX_INPUTS 3
 
 void executeOpIdentityKernel(tensor_t **operands, size_t nOperands, tensor_t *rawOut,
                              tensor_t *auxOut, const void *ctx) {

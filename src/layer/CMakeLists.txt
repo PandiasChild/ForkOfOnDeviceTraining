@@ -158,6 +158,7 @@ target_link_libraries(Softmax PRIVATE
         Tensor
         Arithmetic
         ArithmeticType
+        ExecuteOp
         Layer
         Common
 )

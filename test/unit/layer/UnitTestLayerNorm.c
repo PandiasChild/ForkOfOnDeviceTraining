@@ -850,18 +850,32 @@ static void runGoldBackward(size_t numDims, const size_t *dims, const float *xVa
 /* SYM gold runner: forward over generated fixtures, then assert
  * (a) mantissas within +-mantissaTol of the float64 emulation (float32 stats
  *     noise can flip a rounding boundary; tol = 2*max|gamma_q|+1),
- * (b) output scale within 1e-4 relative of the emulated s_y,
+ * (b) output scale within scaleRelTol relative of the emulated s_y,
  * (c) dequantized output within dequantTol of F.layer_norm on the same
  *     dequantized inputs,
  * (d) for gamma=1/beta=0 fixtures: dequant within 3e-5 of PyTorch xhat (the
  *     spec-verified tolerance; generator guarantees absmax(xhat) <= 1.9), and
- * (e) per-group dequant variance within 5e-3 of var/(var+eps). */
+ * (e) per-group dequant variance within 5e-3 of var/(var+eps).
+ *
+ * PR1b.2 (Task 3): expMantissas/expScale/mantissaTol are now the RESTORED
+ * (post-executeOp-OUT_WRITE) values, not the affine stage's raw producer
+ * output — LayerNorm's SYM forward is an accumulator-range producer (same
+ * class as Linear/Conv1d's matmul, Finding A), so the funnel's mandatory
+ * SYM->SYM diagonal requant (requantSymInt32Tensor) now restores width at the
+ * producer instead of leaving it to a downstream Quantization layer. scaleTol
+ * widens beyond the old fixed 1e-4f: the restored scale is itself derived
+ * from an absmax over the (float32, C-vs-Python-noisy) mantissas, so it
+ * inherits the SAME per-element rounding-boundary noise the mantissas do,
+ * unlike the old raw sY (a direct product of two independently-computed
+ * scales, insensitive to mantissa noise). See
+ * generate_expected_layernorm_sym.py's `_restore_tolerances` for the
+ * empirical (perturbation-based) derivation of both. */
 static void runSymGoldForward(size_t numDims, const size_t *dims, size_t numNormDims,
                               const size_t *normShapeIn, const float *xVals, const float *gammaVals,
                               const float *betaVals, const int32_t *expMantissas, float expScale,
                               int32_t mantissaTol, const float *expDequant, float dequantTol,
-                              const float *expXhat, const float *expGroupVarRatio, size_t groups,
-                              size_t count) {
+                              float scaleRelTol, const float *expXhat,
+                              const float *expGroupVarRatio, size_t groups, size_t count) {
     TEST_ASSERT_TRUE_MESSAGE(count > 0 && count <= 64, "fixture exceeds capture buffer");
     size_t normCount = count / groups;
 
@@ -899,7 +913,7 @@ static void runSymGoldForward(size_t numDims, const size_t *dims, size_t numNorm
     for (size_t i = 0; i < count; i++) {
         TEST_ASSERT_INT_WITHIN(mantissaTol, expMantissas[i], m[i]);
     }
-    TEST_ASSERT_FLOAT_WITHIN(expScale * 1e-4f, expScale, scale);
+    TEST_ASSERT_FLOAT_WITHIN(expScale * scaleRelTol, expScale, scale);
     for (size_t i = 0; i < count; i++) {
         float deq = (float)m[i] * scale;
         TEST_ASSERT_FLOAT_WITHIN(dequantTol, expDequant[i], deq);
@@ -1091,7 +1105,7 @@ void testSymGoldParityMultiGroup(void) {
                       beta_layerNormSym_symParity, expectedMantissas_layerNormSym_symParity,
                       expectedScale_layerNormSym_symParity, mantissaTol_layerNormSym_symParity,
                       expectedDequant_layerNormSym_symParity, dequantTol_layerNormSym_symParity,
-                      expectedXhat_layerNormSym_symParity,
+                      scaleTol_layerNormSym_symParity, expectedXhat_layerNormSym_symParity,
                       expectedGroupVarRatio_layerNormSym_symParity, 3,
                       expectedMantissas_layerNormSym_symParity_len);
 }
@@ -1103,7 +1117,8 @@ void testSymGoldAffine(void) {
                       beta_layerNormSym_symAffine, expectedMantissas_layerNormSym_symAffine,
                       expectedScale_layerNormSym_symAffine, mantissaTol_layerNormSym_symAffine,
                       expectedDequant_layerNormSym_symAffine, dequantTol_layerNormSym_symAffine,
-                      NULL, NULL, 2, expectedMantissas_layerNormSym_symAffine_len);
+                      scaleTol_layerNormSym_symAffine, NULL, NULL, 2,
+                      expectedMantissas_layerNormSym_symAffine_len);
 }
 
 void testSymGoldSigmaRatio10x(void) {
@@ -1114,8 +1129,9 @@ void testSymGoldSigmaRatio10x(void) {
         beta_layerNormSym_symSigmaRatio, expectedMantissas_layerNormSym_symSigmaRatio,
         expectedScale_layerNormSym_symSigmaRatio, mantissaTol_layerNormSym_symSigmaRatio,
         expectedDequant_layerNormSym_symSigmaRatio, dequantTol_layerNormSym_symSigmaRatio,
-        expectedXhat_layerNormSym_symSigmaRatio, expectedGroupVarRatio_layerNormSym_symSigmaRatio,
-        2, expectedMantissas_layerNormSym_symSigmaRatio_len);
+        scaleTol_layerNormSym_symSigmaRatio, expectedXhat_layerNormSym_symSigmaRatio,
+        expectedGroupVarRatio_layerNormSym_symSigmaRatio, 2,
+        expectedMantissas_layerNormSym_symSigmaRatio_len);
 }
 
 /* Small-variance fixture: var (1.25e-6) is comparable to eps (1e-5), so this
@@ -1251,16 +1267,25 @@ void testSymForwardConstantInputEmitsZeros(void) {
 }
 
 /* The affine with gamma=ones multiplies every normalized mantissa by exactly
- * the gamma operand qMax. At int12 operands (#227) gamma=ones quantizes to
- * qMax=2047 (absmax=1 -> every gamma_q = 2047) and beta=zeros -> seed=0, so
- * y_q = qNorm * 2047 EXACTLY. Recover qNorm = y_q/2047 (remainder must be 0 —
- * pins that the gamma multiply actually happened) and assert the
- * normalization-stage invariants: full-range stretch (max |qNorm| == 2047, the
- * normalized output also saturates to the int12 qMax) and near-zero per-group
+ * the gamma operand qMax (2047 at int12, #227) and beta=zeros -> seed=0, so
+ * the affine's RAW output is qNorm*2047 EXACTLY at scale sNorm/2047.
+ *
+ * PR1b.2 (Task 3, re-gold — LayerNorm is an accumulator-range producer,
+ * Finding A, same class as Linear/Conv1d's matmul): executeOp's OUT_WRITE
+ * epilogue now restores width via the SYM->SYM diagonal requant
+ * (requantSymInt32Tensor) instead of leaving the raw qNorm*2047 mantissas for
+ * a downstream Quantization layer. Because the requant's absmax is computed
+ * from the SAME dequantized values (qNorm*2047 * sNorm/2047 == qNorm*sNorm),
+ * the restored scale becomes EXACTLY sNorm and the restored mantissas become
+ * EXACTLY qNorm again — the gamma-multiply and the requant's own divide
+ * cancel algebraically (qNorm*2047 * (sNorm/2047) / sNorm == qNorm). This
+ * fixture is therefore a lossless round-trip BACK to the normalization
+ * stage's own mantissas; assert the SAME normalization-stage invariants
+ * directly on the (now-restored) output: full-range stretch (max |m| == 2047,
+ * the normalized output saturates to the int12 qMax) and near-zero per-group
  * mantissa sums (Σ n == 0 exactly in real arithmetic; rounding adds <= 0.5/
  * element, so |Σ qNorm| <= N/2 = 2, asserted within the width-independent
- * [-4, 4]). Pure width substitution from the int16 era (32767 -> 2047); the
- * structural invariant is unchanged. */
+ * [-4, 4]). */
 void testSymForwardMantissaInvariantsViaOnesGamma(void) {
     size_t dims[] = {2, 4};
     tensor_t *in =
@@ -1295,12 +1320,9 @@ void testSymForwardMantissaInvariantsViaOnesGamma(void) {
     freeTensor(out);
     freeTensor(in);
 
-    int32_t qNorm[8];
     int32_t maxAbs = 0;
     for (size_t i = 0; i < 8; i++) {
-        TEST_ASSERT_EQUAL_INT(0, m[i] % 2047);
-        qNorm[i] = m[i] / 2047;
-        int32_t a = (qNorm[i] < 0) ? -qNorm[i] : qNorm[i];
+        int32_t a = (m[i] < 0) ? -m[i] : m[i];
         if (a > maxAbs) {
             maxAbs = a;
         }
@@ -1309,7 +1331,7 @@ void testSymForwardMantissaInvariantsViaOnesGamma(void) {
     for (size_t g = 0; g < 2; g++) {
         int32_t sum = 0;
         for (size_t j = 0; j < 4; j++) {
-            sum += qNorm[g * 4 + j];
+            sum += m[g * 4 + j];
         }
         TEST_ASSERT_TRUE(sum >= -4 && sum <= 4);
     }
@@ -1318,8 +1340,19 @@ void testSymForwardMantissaInvariantsViaOnesGamma(void) {
 /* Constant input + nonzero beta: y = gamma*0 + beta. Pins (a) the affine runs
  * AFTER the constant guard, (b) the beta-rescale idiom (raw beta_q would
  * dequantize to 2x the right value here since s_beta = 0.5/2047 != s_y), and
- * (c) the post-affine output scale s_y = s_norm * s_gamma = 1/2047 (int12
- * operand gamma=ones quantizes to qMax=2047 with scale 1/2047, #227). */
+ * (c) PR1b.2's producer-restored output scale (LayerNorm's affine output is an
+ * accumulator-range producer, Finding A — executeOp's OUT_WRITE epilogue
+ * restores width via the SYM->SYM diagonal requant, same as Linear/Conv1d).
+ *
+ * Derivation of the restored scale: betaScale = absmax(beta)/2047 = 0.5/2047;
+ * betaQ = round(beta/betaScale) = round(beta*4094) = [2047, -1024, 512]
+ * (half-away: -1023.5 -> -1024). Pre-restoration affine raw output is
+ * seed_j = round(betaQ_j * betaScale/sY) with the raw producer scale
+ * sY = sNorm*gammaScale = 1.0*(1/2047) (constant input -> sNorm=1, gamma=ones
+ * -> gammaScale=1/2047): seed = round(betaQ_j * 0.5) = [1024, -512, 256] (all
+ * exact, no .5 ties). The requant's absmax over these raw mantissas is 1024
+ * (at scale sY), so the restored scale is max(|seed_j|)/2047 * sY =
+ * 1024/2047 * (1/2047). */
 void testSymForwardConstantInputAppliesBeta(void) {
     size_t dims[] = {2, 3};
     tensor_t *in = buildSymInt32TensorND(2, dims, (float[]){7.f, 7.f, 7.f, 7.f, 7.f, 7.f});
@@ -1354,7 +1387,7 @@ void testSymForwardConstantInputAppliesBeta(void) {
     freeTensor(out);
     freeTensor(in);
 
-    float expectedScale = 1.0f / 2047.0f;
+    float expectedScale = (1024.0f / 2047.0f) / 2047.0f;
     TEST_ASSERT_FLOAT_WITHIN(expectedScale * 1e-4f, expectedScale, scale);
     float expBeta[] = {0.5f, -0.25f, 0.125f};
     for (size_t g = 0; g < 2; g++) {

@@ -186,26 +186,31 @@ static void layerNormGroupStatsSymInt32(tensor_t *t, size_t numNormDims, size_t 
  *            throughout" holds only while the rescaled seed leaves one worst-case
  *            int12xint12 product (2047*2047 ≈ 4.2e6, #227) of int32 headroom for the
  *            gamma-product, i.e. |beta| <~ absmax_n * absmax_gamma.)
- * gamma/beta are contiguous default-order rank-D tensors -> flat index j. */
-static void layerNormAffineSymInt32(layerNormConfig_t *cfg, tensor_t *output, float sNorm) {
+ * gamma/beta are contiguous default-order rank-D tensors -> flat index j. This
+ * writes a RAW, unrestored y_q (accumulator-range, same class as Linear/Conv's
+ * matmul output, spec D2/D3) into rawOut's own scale field — the executeOp
+ * OUT_WRITE epilogue (caller, layerNormForward) restores width at the
+ * producer via the SYM->SYM diagonal requant. */
+static void layerNormAffineSymInt32(size_t numNormDims, tensor_t *gamma, tensor_t *beta,
+                                    tensor_t *output, float sNorm) {
     int32_t *out = (int32_t *)output->data;
-    int32_t *gammaQ = (int32_t *)cfg->gamma->param->data;
-    int32_t *betaQ = (int32_t *)cfg->beta->param->data;
+    int32_t *gammaQ = (int32_t *)gamma->data;
+    int32_t *betaQ = (int32_t *)beta->data;
     symInt32QConfig_t *outQC = output->quantization->qConfig;
-    symInt32QConfig_t *gammaQC = cfg->gamma->param->quantization->qConfig;
-    symInt32QConfig_t *betaQC = cfg->beta->param->quantization->qConfig;
+    symInt32QConfig_t *gammaQC = gamma->quantization->qConfig;
+    symInt32QConfig_t *betaQC = beta->quantization->qConfig;
 
     float sY = sNorm * gammaQC->scale;
 
     size_t G, N;
-    layerNormGroupSizes(output, cfg->numNormDims, &G, &N);
+    layerNormGroupSizes(output, numNormDims, &G, &N);
 
     /* Seed-rescale + flag-gated int32-overflow guard live in the shared #189 helper
      * (rescaleIntoAccumulatorScale): beta is refolded from its own scale into the
      * output (gamma-product) scale sY per element. */
     for (size_t g = 0; g < G; g++) {
         for (size_t j = 0; j < N; j++) {
-            size_t off = layerNormPhysOffset(output, cfg->numNormDims, g, j);
+            size_t off = layerNormPhysOffset(output, numNormDims, g, j);
             int32_t seed =
                 rescaleIntoAccumulatorScale(betaQ[j], betaQC->scale, sY, outQC->roundingMode);
             out[off] = out[off] * gammaQ[j] + seed;
@@ -222,14 +227,17 @@ static void layerNormAffineSymInt32(layerNormConfig_t *cfg, tensor_t *output, fl
  * pass 2: recompute stats per group (recompute-over-store: no scratch at all,
  *         not even G floats — stateless and MCU-friendly), normalize, stretch
  *         by K = qMax/absmax, round-clamp.
- * Output scale s_norm = 1/K. Per-group reconstructed variance of the output is
- * var/(var+eps) — exactly PyTorch's eps behavior. The affine stage follows
- * separately (Task 3). */
-static void layerNormForwardSymInt32(layerNormConfig_t *cfg, tensor_t *input, tensor_t *output) {
+ * Output scale s_norm = 1/K, then the affine stage folds in gamma/beta and
+ * writes the (raw, unrestored) producer scale. gamma/beta are passed
+ * explicitly (funnel operands, PR1b.2) rather than read via cfg, mirroring
+ * Linear's weights/bias adapter pattern — cfg is retained only for
+ * eps/numNormDims/qMaxBits-independent geometry. */
+static void layerNormForwardSymInt32(layerNormConfig_t *cfg, tensor_t *gamma, tensor_t *beta,
+                                     tensor_t *input, tensor_t *output) {
     layerNormValidateSymTensor(input, "input");
     layerNormValidateSymTensor(output, "output");
-    layerNormValidateSymTensor(cfg->gamma->param, "gamma");
-    layerNormValidateSymTensor(cfg->beta->param, "beta");
+    layerNormValidateSymTensor(gamma, "gamma");
+    layerNormValidateSymTensor(beta, "beta");
 
     symInt32QConfig_t *inQC = input->quantization->qConfig;
     symInt32QConfig_t *outQC = output->quantization->qConfig;
@@ -322,47 +330,68 @@ static void layerNormForwardSymInt32(layerNormConfig_t *cfg, tensor_t *input, te
         }
     }
 
-    layerNormAffineSymInt32(cfg, output, sNorm);
+    layerNormAffineSymInt32(cfg->numNormDims, gamma, beta, output, sNorm);
 }
 
-static void layerNormForwardFloat(layerNormConfig_t *cfg, tensor_t *input, tensor_t *output) {
+static void layerNormForwardFloat(layerNormConfig_t *cfg, tensor_t *gamma, tensor_t *beta,
+                                  tensor_t *input, tensor_t *output) {
     float *in = (float *)input->data;
     float *out = (float *)output->data;
-    float *gamma = (float *)cfg->gamma->param->data;
-    float *beta = (float *)cfg->beta->param->data;
+    float *g = (float *)gamma->data;
+    float *b = (float *)beta->data;
 
     size_t G, N;
     layerNormGroupSizes(input, cfg->numNormDims, &G, &N);
 
-    for (size_t g = 0; g < G; g++) {
+    for (size_t grp = 0; grp < G; grp++) {
         float mean;
         float invSigma;
-        layerNormGroupStats(input, cfg->numNormDims, g, N, cfg->eps, &mean, &invSigma);
+        layerNormGroupStats(input, cfg->numNormDims, grp, N, cfg->eps, &mean, &invSigma);
 
         for (size_t j = 0; j < N; j++) {
-            size_t off = layerNormPhysOffset(input, cfg->numNormDims, g, j);
+            size_t off = layerNormPhysOffset(input, cfg->numNormDims, grp, j);
             float nval = (in[off] - mean) * invSigma;
-            size_t outOff = layerNormPhysOffset(output, cfg->numNormDims, g, j);
-            out[outOff] = gamma[j] * nval + beta[j];
+            size_t outOff = layerNormPhysOffset(output, cfg->numNormDims, grp, j);
+            out[outOff] = g[j] * nval + b[j];
         }
     }
+}
+
+/* executeOp forward kernel adapters — operands {input, gamma, beta}; ctx =
+ * cfg (eps/normalizedShape/numNormDims geometry, not a tensor so it cannot
+ * travel through the funnel's operand array). The SYM kernel emits a RAW,
+ * unrestored producer scale (Finding A/D2/D3): the OUT_WRITE epilogue
+ * (layerNormForward) restores width via the SYM->SYM diagonal requant, same
+ * as Linear/Conv1d's matmul-family forwards. */
+static void layerNormForwardKernelFloat(tensor_t **ops, size_t n, tensor_t *rawOut,
+                                        tensor_t *auxOut, const void *ctx) {
+    (void)n;
+    (void)auxOut;
+    layerNormForwardFloat((layerNormConfig_t *)ctx, ops[1], ops[2], ops[0], rawOut);
+}
+static void layerNormForwardKernelSym(tensor_t **ops, size_t n, tensor_t *rawOut, tensor_t *auxOut,
+                                      const void *ctx) {
+    (void)n;
+    (void)auxOut;
+    layerNormForwardSymInt32((layerNormConfig_t *)ctx, ops[1], ops[2], ops[0], rawOut);
 }
 
 void layerNormForward(layer_t *layer, tensor_t *input, tensor_t *output) {
     layerNormConfig_t *cfg = layer->config->layerNorm;
     layerNormValidateInputShape(cfg, input);
-    switch (cfg->forwardMath.type) {
-    case ARITH_FLOAT32:
-        layerNormForwardFloat(cfg, input, output);
-        break;
-    case ARITH_SYM_INT32:
-        layerNormForwardSymInt32(cfg, input, output);
-        break;
-    default:
-        PRINT_ERROR(
-            "LayerNorm forward: quantization type not implemented (FLOAT32/SYM_INT32 only)");
-        exit(1);
-    }
+
+    executeOp(
+        &(opSpec_t){
+            .kernel = cfg->forwardMath.type == ARITH_SYM_INT32 ? layerNormForwardKernelSym
+                                                               : layerNormForwardKernelFloat,
+            .ctx = cfg,
+            .inputs = (tensor_t *[]){input, getParamFromParameter(cfg->gamma),
+                                     getParamFromParameter(cfg->beta)},
+            .nInputs = 3,
+            .arithmetic = cfg->forwardMath,
+            .mode = OUT_WRITE,
+        },
+        output);
 }
 
 static void layerNormBackwardFloat(layerNormConfig_t *cfg, tensor_t *forwardInput, tensor_t *loss,

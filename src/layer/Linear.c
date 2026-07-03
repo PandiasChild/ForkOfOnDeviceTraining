@@ -40,23 +40,41 @@ void linearForwardSymInt32(tensor_t *w, tensor_t *b, tensor_t *input, tensor_t *
     transposeTensor(w, 0, 1);
 }
 
+/* executeOp forward kernel adapters — operands are {input, weights} or
+ * {input, weights, bias} (bias omitted, not NULL-padded, when the layer has
+ * no bias); ctx unused (matmul infers geometry from the tensors themselves). */
+static void linearForwardKernelFloat(tensor_t **ops, size_t n, tensor_t *rawOut, tensor_t *auxOut,
+                                     const void *ctx) {
+    (void)auxOut;
+    (void)ctx;
+    tensor_t *bias = (n > 2) ? ops[2] : NULL;
+    linearForwardFloat(ops[1], bias, ops[0], rawOut);
+}
+static void linearForwardKernelSym(tensor_t **ops, size_t n, tensor_t *rawOut, tensor_t *auxOut,
+                                   const void *ctx) {
+    (void)auxOut;
+    (void)ctx;
+    tensor_t *bias = (n > 2) ? ops[2] : NULL;
+    linearForwardSymInt32(ops[1], bias, ops[0], rawOut);
+}
+
 void linearForward(layer_t *linearLayer, tensor_t *input, tensor_t *output) {
     linearConfig_t *linearConfig = linearLayer->config->linear;
 
     tensor_t *weights = getParamFromParameter(linearConfig->weights);
-    tensor_t *bias = getParamFromParameter(linearConfig->bias);
+    tensor_t *bias = linearConfig->bias != NULL ? getParamFromParameter(linearConfig->bias) : NULL;
 
-    switch (linearConfig->forwardMath.type) {
-    case ARITH_FLOAT32:
-        linearForwardFloat(weights, bias, input, output);
-        break;
-    case ARITH_SYM_INT32:
-        linearForwardSymInt32(weights, bias, input, output);
-        break;
-    default:
-        PRINT_ERROR("Unknown QType!");
-        exit(1);
-    }
+    executeOp(
+        &(opSpec_t){
+            .kernel = linearConfig->forwardMath.type == ARITH_SYM_INT32 ? linearForwardKernelSym
+                                                                        : linearForwardKernelFloat,
+            .inputs = bias != NULL ? (tensor_t *[]){input, weights, bias}
+                                   : (tensor_t *[]){input, weights},
+            .nInputs = bias != NULL ? 3 : 2,
+            .arithmetic = linearConfig->forwardMath,
+            .mode = OUT_WRITE,
+        },
+        output);
 }
 
 void linearCalcWeightGradsFloat32(tensor_t *forwardInput, tensor_t *loss, tensor_t *weightGrads) {
