@@ -75,3 +75,13 @@ the inverse of PyTorch's `q − zeroPoint`). A constant tensor (`min == max`) us
 unreachable. New asym-producing converters MUST call this helper and never re-derive the
 grid inline: hand-rolled copies are exactly how the four `*→ASYM` converters drifted
 before #243. The float→SYM pack sibling is `packFloatBufferAsSym`.
+
+**Grad-accumulate primitives (PR3, #261).** `accumulateFloatIntoSymTensorFixedGrid` /
+`accumulateFloatIntoSymTensorRescale` / `accumulateFloatIntoAsymTensorRescale`
+(`src/tensor/TensorConversion.c`) are the packed-grad accumulate primitives that back
+the executeOp epilogue's `SYM`/`ASYM` accumulate arms: FixedGrid carries the target's
+scale (fit-preserving; first store after a zero-fill derives the grid from the
+increment) and **aborts** on grid overflow (#227 discipline — never clamps); Rescale
+re-derives a fresh grid every store (absmax for SYM, affine min/max for ASYM). Both are
+direct-call only, not `conversionMatrix` cells (there is no dtype-pair to key a matrix
+cell on — the second operand is a raw float increment, not a tensor).

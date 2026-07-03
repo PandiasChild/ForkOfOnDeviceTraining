@@ -49,6 +49,55 @@ static tensor_t *buildFloat(size_t n, const float *values) {
     return t;
 }
 
+/* Packed sub-byte SYM tensor (PR3 targets), distinct from buildSym's
+ * SYM_INT32 compute format above. Mantissas are packed verbatim via
+ * byteConversion (the same seeding idiom UnitTestTensorConversion.c uses for
+ * the primitives this task wires up); all-zero mantissas reproduce the
+ * post-initTensor / post-sgdZeroGrad fresh-accumulator state. */
+static tensor_t *buildPackedSym(size_t n, const int32_t *mantissas, uint8_t qBits, float scale) {
+    size_t *dims = reserveMemory(sizeof(size_t));
+    dims[0] = n;
+    size_t *order = reserveMemory(sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, 1, order);
+    tensor_t *t = initTensor(shape, quantizationInitSym(qBits, HALF_AWAY), NULL);
+    byteConversion((uint8_t *)mantissas, 32, t->data, qBits, n);
+    ((symQConfig_t *)t->quantization->qConfig)->scale = scale;
+    return t;
+}
+
+/* Packed ASYM tensor (PR3 targets); codes are non-negative, no sign-extend
+ * needed on the seeding side (byteConversion narrows verbatim). */
+static tensor_t *buildAsymPacked(size_t n, const int32_t *codes, uint8_t qBits, float scale,
+                                 int16_t zeroPoint) {
+    size_t *dims = reserveMemory(sizeof(size_t));
+    dims[0] = n;
+    size_t *order = reserveMemory(sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, 1, order);
+    tensor_t *t = initTensor(shape, quantizationInitAsym(qBits, HALF_AWAY), NULL);
+    byteConversion((uint8_t *)codes, 32, t->data, qBits, n);
+    asymQConfig_t *qc = t->quantization->qConfig;
+    qc->scale = scale;
+    qc->zeroPoint = zeroPoint;
+    return t;
+}
+
+/* Sign-extends packed SYM mantissas for in-test readback (byteConversion
+ * zero-fills on widen); mirrors UnitTestTensorConversion.c's helper of the
+ * same name. */
+static void symTestUnpackSignExtend(const uint8_t *packed, size_t qBits, int32_t *out, size_t n) {
+    byteConversion((uint8_t *)packed, qBits, (uint8_t *)out, 32, n);
+    const int32_t signBit = (int32_t)1 << (qBits - 1);
+    const int32_t mask = (int32_t)(((uint32_t)1 << qBits) - 1u);
+    for (size_t i = 0; i < n; i++) {
+        int32_t v = out[i] & mask;
+        out[i] = (v ^ signBit) - signBit;
+    }
+}
+
 /* ---- tests ---------------------------------------------------------- */
 
 /* Prologue no-op: dtype matches the arithmetic -> the source is passed
@@ -371,20 +420,150 @@ void testAccFixedSymIntoSymRescalesIntoExistingScale(void) {
     TEST_ASSERT_FLOAT_WITHIN(1e-9f, 0.02f, gScale);
 }
 
-/* Sub-byte / unsupported targets abort until PR3. */
-void testAccIntoSubByteTargetAborts(void) {
-    tensor_t *inc = buildFloat(2, (float[]){1.f, 2.f});
-    size_t *dims = reserveMemory(sizeof(size_t));
-    dims[0] = 2;
-    size_t *order = reserveMemory(sizeof(size_t));
-    setOrderOfDimsForNewTensor(1, order);
-    shape_t *shape = reserveMemory(sizeof(shape_t));
-    setShape(shape, dims, 1, order);
-    tensor_t *grad = initTensor(shape, quantizationInitSym(8, HALF_AWAY), NULL);
+/* CONTRACT FLIP (PR3 Task 3, #261): this test previously pinned "packed
+ * sub-byte (SYM) targets abort under accumulate" -- that restriction is
+ * lifted by this task's new `case SYM:` arm in accumulateOut. Flipped into
+ * the OUT_ACC_FIXED_SCALE happy path: a fresh (post-initTensor all-zero)
+ * SYM@8 target derives its grid from the first increment, then a second
+ * accumulate carries that grid verbatim (fit-preserving, spec D1/D2). One of
+ * exactly two sanctioned contract-flip test edits in this PR (spec §4.1/§9;
+ * the other is the PR2 ASYM-zero test's config-reset extension, out of scope
+ * here). Parity oracle: a twin target driven directly through
+ * accumulateFloatIntoSymTensorFixedGrid must end up bit-identical to the
+ * executeOp-driven target. inc2 deliberately SHRINKS the element that hit the
+ * grid boundary on call 1 (index 0, derived to exactly +127) while nudging
+ * the others -- carrying the grid keeps scale unchanged, but a mutant that
+ * swaps in the DYNAMIC_RESCALE primitive for FIXED_SCALE would re-derive from
+ * the new (smaller) absmax and land on a visibly different, smaller scale;
+ * this is what makes the "swap FIXED/DYNAMIC primitive calls" mutation
+ * (Step 5) observable here (an unperturbed already-maxed element would let a
+ * fresh re-derivation reproduce the same tight grid by coincidence -- the
+ * Task-2-report lesson on vacuous carried-grid fixtures). */
+void testAccFixedIntoPackedSymDerivesThenCarriesGrid(void) {
+    size_t n = 3;
+    tensor_t *target = buildPackedSym(n, (int32_t[]){0, 0, 0}, 8, 1.0f);
+    tensor_t *ref = buildPackedSym(n, (int32_t[]){0, 0, 0}, 8, 1.0f);
+    tensor_t *inc1T = buildFloat(n, (float[]){2.0f, -0.9f, 0.37f});
     quantization_t floatArith;
     initFloat32Quantization(&floatArith);
 
-    ASSERT_EXITS_WITH_FAILURE(executeOp(
+    executeOp(
+        &(opSpec_t){
+            .kernel = executeOpIdentityKernel,
+            .inputs = (tensor_t *[]){inc1T},
+            .nInputs = 1,
+            .arithmetic = arithmeticFromQuantization(&floatArith),
+            .mode = OUT_ACC_FIXED_SCALE,
+        },
+        target);
+    float inc1[] = {2.0f, -0.9f, 0.37f};
+    accumulateFloatIntoSymTensorFixedGrid(ref, inc1, n);
+    float scaleAfterCall1 = ((symQConfig_t *)target->quantization->qConfig)->scale;
+
+    tensor_t *inc2T = buildFloat(n, (float[]){-1.8f, 0.05f, -0.1f});
+    executeOp(
+        &(opSpec_t){
+            .kernel = executeOpIdentityKernel,
+            .inputs = (tensor_t *[]){inc2T},
+            .nInputs = 1,
+            .arithmetic = arithmeticFromQuantization(&floatArith),
+            .mode = OUT_ACC_FIXED_SCALE,
+        },
+        target);
+    float inc2[] = {-1.8f, 0.05f, -0.1f};
+    accumulateFloatIntoSymTensorFixedGrid(ref, inc2, n);
+
+    int32_t got[3];
+    int32_t want[3];
+    symTestUnpackSignExtend(target->data, 8, got, n);
+    symTestUnpackSignExtend(ref->data, 8, want, n);
+    float gotScale = ((symQConfig_t *)target->quantization->qConfig)->scale;
+    float wantScale = ((symQConfig_t *)ref->quantization->qConfig)->scale;
+    freeTensor(inc2T);
+    freeTensor(inc1T);
+    freeTensor(ref);
+    freeTensor(target);
+    TEST_ASSERT_EQUAL_INT32_ARRAY(want, got, n);
+    TEST_ASSERT_EQUAL_FLOAT(wantScale, gotScale);
+    TEST_ASSERT_EQUAL_FLOAT(scaleAfterCall1, gotScale); /* carried, not re-derived */
+}
+
+/* The float-bridge closure (spec §4.1): a SYM_INT32 intermediate must reach
+ * the SAME packed-SYM result as a value-identical FLOAT32 intermediate, for
+ * BOTH FIXED_SCALE (tested here) since the epilogue dequantizes either
+ * representation before calling the primitive. Fixture chosen so the
+ * SYM_INT32 intermediate's dequant (mantissa*scale) is bit-exact against the
+ * FLOAT32 sibling's literals (5*0.25=1.25, -2*0.25=-0.5, 8*0.25=2.0 -- all
+ * exact binary fractions), so the two targets must end up byte-for-byte and
+ * scale-for-scale identical, not merely within tolerance.
+ * Mutation guard: dropping the SYM_INT32 branch (e.g. always treating the
+ * intermediate as FLOAT32, misreading its raw int32 bits as float) makes
+ * targetViaSymInt32 diverge from targetViaFloat -- RED. */
+void testAccFixedSymPackedAcceptsSymInt32IntermediateBitIdenticalToFloatBridge(void) {
+    size_t n = 3;
+    int32_t seedMant[] = {10, -20, 5};
+    tensor_t *targetViaFloat = buildPackedSym(n, seedMant, 8, 0.05f);
+    tensor_t *targetViaSymInt32 = buildPackedSym(n, seedMant, 8, 0.05f);
+
+    tensor_t *incFloat = buildFloat(n, (float[]){1.25f, -0.5f, 2.0f});
+    quantization_t floatArith;
+    initFloat32Quantization(&floatArith);
+    executeOp(
+        &(opSpec_t){
+            .kernel = executeOpIdentityKernel,
+            .inputs = (tensor_t *[]){incFloat},
+            .nInputs = 1,
+            .arithmetic = arithmeticFromQuantization(&floatArith),
+            .mode = OUT_ACC_FIXED_SCALE,
+        },
+        targetViaFloat);
+
+    tensor_t *incSymInt32 = buildSym(n, (int32_t[]){5, -2, 8}, 0.25f);
+    quantization_t symArith;
+    symInt32QConfig_t symArithQC;
+    initSymInt32QConfig(HALF_AWAY, &symArithQC);
+    initSymInt32Quantization(&symArithQC, &symArith);
+    executeOp(
+        &(opSpec_t){
+            .kernel = executeOpIdentityKernel,
+            .inputs = (tensor_t *[]){incSymInt32},
+            .nInputs = 1,
+            .arithmetic = arithmeticFromQuantization(&symArith),
+            .mode = OUT_ACC_FIXED_SCALE,
+        },
+        targetViaSymInt32);
+
+    int32_t gotFloat[3];
+    int32_t gotSymInt32[3];
+    symTestUnpackSignExtend(targetViaFloat->data, 8, gotFloat, n);
+    symTestUnpackSignExtend(targetViaSymInt32->data, 8, gotSymInt32, n);
+    float scaleFloat = ((symQConfig_t *)targetViaFloat->quantization->qConfig)->scale;
+    float scaleSymInt32 = ((symQConfig_t *)targetViaSymInt32->quantization->qConfig)->scale;
+    freeTensor(incSymInt32);
+    freeTensor(incFloat);
+    freeTensor(targetViaSymInt32);
+    freeTensor(targetViaFloat);
+    TEST_ASSERT_EQUAL_INT32_ARRAY(gotFloat, gotSymInt32, n);
+    TEST_ASSERT_EQUAL_FLOAT(scaleFloat, scaleSymInt32);
+}
+
+/* DYNAMIC_RESCALE on a packed SYM target must match
+ * accumulateFloatIntoSymTensorRescale exactly and must actually RE-DERIVE the
+ * grid from the new absmax (not carry the old one) -- the defining
+ * difference from the FIXED_SCALE arm above. Seed scale 0.1 is small; the
+ * increment (+-50) dwarfs the seed values, so a correctly re-derived scale
+ * must land close to 50.4/127 (~0.397), several times the old 0.1 --
+ * anti-vacuity against a mutant that carries the old scale instead. */
+void testAccDynamicSymPackedRederivesScaleMatchesRescalePrimitive(void) {
+    size_t n = 2;
+    int32_t seedMant[] = {4, -2};
+    tensor_t *target = buildPackedSym(n, seedMant, 8, 0.1f);
+    tensor_t *ref = buildPackedSym(n, seedMant, 8, 0.1f);
+    tensor_t *inc = buildFloat(n, (float[]){50.0f, -50.0f});
+    quantization_t floatArith;
+    initFloat32Quantization(&floatArith);
+
+    executeOp(
         &(opSpec_t){
             .kernel = executeOpIdentityKernel,
             .inputs = (tensor_t *[]){inc},
@@ -392,10 +571,65 @@ void testAccIntoSubByteTargetAborts(void) {
             .arithmetic = arithmeticFromQuantization(&floatArith),
             .mode = OUT_ACC_DYNAMIC_RESCALE,
         },
-        grad));
+        target);
+    float incVals[] = {50.0f, -50.0f};
+    accumulateFloatIntoSymTensorRescale(ref, incVals, n);
 
-    freeTensor(grad);
+    int32_t got[2];
+    int32_t want[2];
+    symTestUnpackSignExtend(target->data, 8, got, n);
+    symTestUnpackSignExtend(ref->data, 8, want, n);
+    float gotScale = ((symQConfig_t *)target->quantization->qConfig)->scale;
+    float wantScale = ((symQConfig_t *)ref->quantization->qConfig)->scale;
     freeTensor(inc);
+    freeTensor(ref);
+    freeTensor(target);
+    TEST_ASSERT_EQUAL_INT32_ARRAY(want, got, n);
+    TEST_ASSERT_EQUAL_FLOAT(wantScale, gotScale);
+    TEST_ASSERT_TRUE(gotScale > 3.0f * 0.1f); /* re-derived (~0.397), not carried at 0.1 */
+}
+
+/* ASYM DYNAMIC_RESCALE happy path (D4: the only supported ASYM accumulate
+ * mode) must match accumulateFloatIntoAsymTensorRescale exactly (fresh
+ * affine grid every store). Fixture matches Task 2's own ASYM-rescale
+ * fixture (recon-pack precedent): ASYM@5 codes {12,16,20,24} @
+ * scale=0.25/zeroPoint=-4 dequant to {2,3,4,5}. */
+void testAccDynamicAsymPackedMatchesRescalePrimitive(void) {
+    size_t n = 4;
+    int32_t seedCodes[] = {12, 16, 20, 24};
+    tensor_t *target = buildAsymPacked(n, seedCodes, 5, 0.25f, -4);
+    tensor_t *ref = buildAsymPacked(n, seedCodes, 5, 0.25f, -4);
+    tensor_t *inc = buildFloat(n, (float[]){1.0f, -0.5f, 2.0f, 0.25f});
+    quantization_t floatArith;
+    initFloat32Quantization(&floatArith);
+
+    executeOp(
+        &(opSpec_t){
+            .kernel = executeOpIdentityKernel,
+            .inputs = (tensor_t *[]){inc},
+            .nInputs = 1,
+            .arithmetic = arithmeticFromQuantization(&floatArith),
+            .mode = OUT_ACC_DYNAMIC_RESCALE,
+        },
+        target);
+    float incVals[] = {1.0f, -0.5f, 2.0f, 0.25f};
+    accumulateFloatIntoAsymTensorRescale(ref, incVals, n);
+
+    int32_t got[4];
+    int32_t want[4];
+    byteConversion(target->data, 5, (uint8_t *)got, 32,
+                   n); /* asym codes: non-negative, no sign-extend */
+    byteConversion(ref->data, 5, (uint8_t *)want, 32, n);
+    float gotScale = ((asymQConfig_t *)target->quantization->qConfig)->scale;
+    float wantScale = ((asymQConfig_t *)ref->quantization->qConfig)->scale;
+    int16_t gotZp = ((asymQConfig_t *)target->quantization->qConfig)->zeroPoint;
+    int16_t wantZp = ((asymQConfig_t *)ref->quantization->qConfig)->zeroPoint;
+    freeTensor(inc);
+    freeTensor(ref);
+    freeTensor(target);
+    TEST_ASSERT_EQUAL_INT32_ARRAY(want, got, n);
+    TEST_ASSERT_EQUAL_FLOAT(wantScale, gotScale);
+    TEST_ASSERT_EQUAL_INT16(wantZp, gotZp);
 }
 
 /* Grad-width contract moved from layerNormValidateSymGrad: SYM targets wider
@@ -418,6 +652,56 @@ void testAccIntoTooWideSymTargetAborts(void) {
         grad));
 
     freeTensor(grad);
+    freeTensor(inc);
+}
+
+/* The same ODT_SYM_GRAD_QMAXBITS(16) contract applies to packed SYM targets
+ * (spec §4.1: "mirror of the existing SYM_INT32 guard"). qBits=17 packs and
+ * unpacks fine on its own (packFitGuarded allows up to 31) -- only the grad
+ * contract rejects it. */
+void testAccIntoTooWidePackedSymTargetAborts(void) {
+    size_t n = 2;
+    tensor_t *target = buildPackedSym(n, (int32_t[]){0, 0}, 17, 1.0f); /* 17 > 16 */
+    tensor_t *inc = buildFloat(n, (float[]){1.f, 2.f});
+    quantization_t floatArith;
+    initFloat32Quantization(&floatArith);
+
+    ASSERT_EXITS_WITH_FAILURE(executeOp(
+        &(opSpec_t){
+            .kernel = executeOpIdentityKernel,
+            .inputs = (tensor_t *[]){inc},
+            .nInputs = 1,
+            .arithmetic = arithmeticFromQuantization(&floatArith),
+            .mode = OUT_ACC_FIXED_SCALE,
+        },
+        target));
+
+    freeTensor(target);
+    freeTensor(inc);
+}
+
+/* D4: no fit-preserving ASYM pack exists, so OUT_ACC_FIXED_SCALE on an ASYM
+ * target must abort rather than silently behave like DYNAMIC_RESCALE.
+ * Mutation guard: dropping this guard (falling through to the rescale path)
+ * lets the child exit 0 -- RED. */
+void testAccFixedScaleOnAsymTargetAborts(void) {
+    size_t n = 2;
+    tensor_t *target = buildAsymPacked(n, (int32_t[]){0, 0}, 8, 1.0f, 0);
+    tensor_t *inc = buildFloat(n, (float[]){1.f, -1.f});
+    quantization_t floatArith;
+    initFloat32Quantization(&floatArith);
+
+    ASSERT_EXITS_WITH_FAILURE(executeOp(
+        &(opSpec_t){
+            .kernel = executeOpIdentityKernel,
+            .inputs = (tensor_t *[]){inc},
+            .nInputs = 1,
+            .arithmetic = arithmeticFromQuantization(&floatArith),
+            .mode = OUT_ACC_FIXED_SCALE,
+        },
+        target));
+
+    freeTensor(target);
     freeTensor(inc);
 }
 
@@ -640,8 +924,13 @@ int main(void) {
     RUN_TEST(testAccDynamicSymIntoSymBitEqualsAddSymInplace);
     RUN_TEST(testAccDynamicFloatIncIntoSymTargetMatchesLayerNormReference);
     RUN_TEST(testAccFixedSymIntoSymRescalesIntoExistingScale);
-    RUN_TEST(testAccIntoSubByteTargetAborts);
+    RUN_TEST(testAccFixedIntoPackedSymDerivesThenCarriesGrid);
+    RUN_TEST(testAccFixedSymPackedAcceptsSymInt32IntermediateBitIdenticalToFloatBridge);
+    RUN_TEST(testAccDynamicSymPackedRederivesScaleMatchesRescalePrimitive);
+    RUN_TEST(testAccDynamicAsymPackedMatchesRescalePrimitive);
     RUN_TEST(testAccIntoTooWideSymTargetAborts);
+    RUN_TEST(testAccIntoTooWidePackedSymTargetAborts);
+    RUN_TEST(testAccFixedScaleOnAsymTargetAborts);
     RUN_TEST(testCtxReachesKernel);
     RUN_TEST(testAuxOutIsKernelWrittenVerbatimAndNeverFunnelConverted);
     RUN_TEST(testAccFixedScaleHonorsTargetSrRoundingMode);

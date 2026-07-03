@@ -55,6 +55,15 @@ char *quantTypeToString(qtype_t t);
  *  cell (the rescale variant owns [SYM_INT32][SYM]); call directly. */
 void repackSymInt32ToSymNoRescale(tensor_t *inputTensor, tensor_t *outputTensor);
 
+/* Grad-accumulate primitives (PR3, #261). Direct-call only — not conversionMatrix
+ * cells. FixedGrid = fit-preserving: carries the target's scale (first store after
+ * a zero-fill derives it from the increment) and ABORTS on grid overflow (#227
+ * discipline, no clamp). Rescale = requant: fresh absmax (SYM) / fresh affine grid
+ * (ASYM) on every store. n must equal the target's element count. */
+void accumulateFloatIntoSymTensorFixedGrid(tensor_t *target, const float *inc, size_t n);
+void accumulateFloatIntoSymTensorRescale(tensor_t *target, const float *inc, size_t n);
+void accumulateFloatIntoAsymTensorRescale(tensor_t *target, const float *inc, size_t n);
+
 extern conversionFunction_t conversionMatrix[6][6];
 
 #endif // TENSOR_CONVERSION_H

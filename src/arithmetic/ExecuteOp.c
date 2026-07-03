@@ -47,6 +47,25 @@ void executeConvert(tensor_t *input, tensor_t *target) {
     writeOut(input, target);
 }
 
+/* PR3 packed SYM/ASYM arms (spec §4.1-4.2): the increment arrives as either
+ * arithmetic representation (FLOAT32 or SYM_INT32); the packed primitives
+ * below only take a float increment, so FLOAT32 intermediates are used
+ * directly and SYM_INT32 intermediates are dequantized into VLA scratch --
+ * the same idiom the FLOAT32 target arm already uses for its SYM_INT32
+ * intermediate (above). Returns a pointer into either `intermediate->data`
+ * or `scratch`, never both. */
+static const float *incrementAsFloatView(tensor_t *intermediate, size_t n, uint8_t *scratch) {
+    if (intermediate->quantization->type == FLOAT32) {
+        return (const float *)intermediate->data;
+    }
+    quantization_t floatQ;
+    initFloat32Quantization(&floatQ);
+    tensor_t incFloat;
+    setTensorValuesForConversion(scratch, &floatQ, intermediate, &incFloat);
+    convertTensor(intermediate, &incFloat);
+    return (const float *)incFloat.data;
+}
+
 /* Phase 4, ACC modes. The SYM->SYM add is Strategy A via
  * addSymInt32TensorsInplace (bit-identical to Linear.c's weight-grad
  * accumulate); the FLOAT32-intermediate -> SYM arm first quantizes the
@@ -117,10 +136,43 @@ static void accumulateOut(tensor_t *intermediate, tensor_t *target, outputMode_t
         addSymInt32TensorsInplace(target, &incSym);
         return;
     }
+    case SYM: {
+        symQConfig_t *targetQC = target->quantization->qConfig;
+        if (targetQC->qBits > ODT_SYM_GRAD_QMAXBITS) {
+            PRINT_ERROR("executeOp: SYM grad target qBits (%u) exceeds grad contract (%u)",
+                        (unsigned)targetQC->qBits, (unsigned)ODT_SYM_GRAD_QMAXBITS);
+            exit(1);
+        }
+        uint8_t incFloatData[(n > 0 ? n : 1) * sizeof(float)];
+        const float *inc = incrementAsFloatView(intermediate, n, incFloatData);
+        if (mode == OUT_ACC_FIXED_SCALE) {
+            accumulateFloatIntoSymTensorFixedGrid(target, inc, n);
+        } else {
+            accumulateFloatIntoSymTensorRescale(target, inc, n);
+        }
+        return;
+    }
+    case ASYM: {
+        asymQConfig_t *targetQC = target->quantization->qConfig;
+        if (targetQC->qBits > ODT_SYM_GRAD_QMAXBITS) {
+            PRINT_ERROR("executeOp: ASYM grad target qBits (%u) exceeds grad contract (%u)",
+                        (unsigned)targetQC->qBits, (unsigned)ODT_SYM_GRAD_QMAXBITS);
+            exit(1);
+        }
+        if (mode == OUT_ACC_FIXED_SCALE) {
+            PRINT_ERROR("executeOp: no fit-preserving ASYM pack — ASYM grad targets "
+                        "accumulate under OUT_ACC_DYNAMIC_RESCALE only (PR3 spec, #261)");
+            exit(1);
+        }
+        uint8_t incFloatData[(n > 0 ? n : 1) * sizeof(float)];
+        const float *inc = incrementAsFloatView(intermediate, n, incFloatData);
+        accumulateFloatIntoAsymTensorRescale(target, inc, n);
+        return;
+    }
     default:
         PRINT_ERROR("executeOp: accumulate target dtype %d not supported "
-                    "(accepted: FLOAT32, SYM_INT32; INT32/SYM/ASYM/BOOL arms "
-                    "land in PR3, #261)",
+                    "(accepted: FLOAT32, SYM_INT32, SYM, ASYM; INT32/BOOL "
+                    "remain unsupported)",
                     (int)target->quantization->type);
         exit(1);
     }

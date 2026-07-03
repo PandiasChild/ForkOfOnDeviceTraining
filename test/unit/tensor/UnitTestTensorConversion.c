@@ -1592,6 +1592,287 @@ void testConvertersPreserveCallerOutputShape() {
     TEST_ASSERT_EQUAL_PTR(&outShape, floatOut2.shape);
 }
 
+void testAccumulateSymFixedGridFirstStoreDerivesGridThenCarries(void) {
+    /* Fresh (all-zero) 4-elem SYM@6 target: first accumulate derives
+     * scale = absmax(inc)/31 from the increment; second accumulate must CARRY
+     * that scale verbatim (fit-preserving). Mutation guard: swapping the
+     * fixed-grid store for packFloatBufferAsSym re-derives scale on the 2nd
+     * call -> scale assert RED.
+     *
+     * Derivation (HALF_AWAY; cross-checked with a throwaway float32 harness
+     * mirroring the exact arithmetic below -- house style, recon-pack §2):
+     * call1: absMax(inc1) = 3.1 -> scale = 3.1/31 ~= 0.1.
+     *   codes1[i] = round(inc1[i]/scale): round(31)=31, round(-15.5)=-16
+     *   (HALF_AWAY, ties away from zero), round(7.75)=8, round(3.875)=4.
+     * call2 (carried scale): codes2[i] = round(codes1[i] + inc2[i]/scale):
+     *   round(31 - 1) = 30, round(-16 + 1) = -15, round(8+0) = 8, round(4+0) = 4.
+     * inc2[0] is -0.1, not +0.1: +0.1 would push element 0 to 32, overflowing
+     * the 6-bit grid (exercised separately by the overflow-aborts test). */
+    uint8_t data[3] = {0};
+    size_t dims[] = {1, 4};
+    size_t order[] = {0, 1};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 2, .orderOfDimensions = order};
+    symQConfig_t qc = {.scale = 1.f, .qBits = 6, .roundingMode = HALF_AWAY};
+    quantization_t q;
+    initSymQuantization(&qc, &q);
+    tensor_t target;
+    setTensorValues(&target, data, &shape, &q, NULL);
+
+    float inc1[] = {3.1f, -1.55f, 0.775f, 0.3875f};
+    accumulateFloatIntoSymTensorFixedGrid(&target, inc1, 4);
+    float scaleAfter1 = qc.scale;
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 3.1f / 31.0f, scaleAfter1);
+
+    int32_t codes1[4];
+    symTestUnpackSignExtend(data, 6, codes1, 4);
+    int32_t expectedCodes1[] = {31, -16, 8, 4};
+    TEST_ASSERT_EQUAL_INT32_ARRAY(expectedCodes1, codes1, 4);
+
+    float inc2[] = {-0.1f, 0.1f, 0.f, 0.f};
+    accumulateFloatIntoSymTensorFixedGrid(&target, inc2, 4);
+
+    TEST_ASSERT_EQUAL_FLOAT(scaleAfter1, qc.scale); /* carried, not re-derived */
+
+    int32_t codes2[4];
+    symTestUnpackSignExtend(data, 6, codes2, 4);
+    int32_t expectedCodes2[] = {30, -15, 8, 4};
+    TEST_ASSERT_EQUAL_INT32_ARRAY(expectedCodes2, codes2, 4);
+}
+
+void testAccumulateSymFixedGridZeroIncrementIsBitExact(void) {
+    /* Carried-grid exactness (HALF_AWAY): accumulating an all-zero increment
+     * must leave packed bytes AND scale bit-identical (on-grid values survive
+     * re-round exactly; recon-pack §2 proof: mant*scale/scale round-trips to
+     * mant exactly for |mant| well under 2^15, which every 6-bit mantissa is).
+     * Mutation guard (verified by deliberately breaking the primitive and
+     * confirming this test goes RED, per house mutation-testing convention):
+     * the rescale variant re-derives scale from the (nonzero) dequantized
+     * values and re-rounds every element -> byte/scale assert RED. The seed
+     * is packed directly at a DELIBERATELY LOOSE grid (mantissas far from
+     * the +-31/-32 boundary): a first mutation attempt seeded via the
+     * derive path instead (absmax mapped onto the full +-31 range) and the
+     * rescale mutant's fresh-absmax re-derivation accidentally reproduced
+     * the same tight grid, making the test pass even under the mutation --
+     * this loose-grid seed is required for real discriminating power.
+     *
+     * Seed directly: scale=0.1, mant={5,-2,3,-4} (not touching the range
+     * boundary) -> dequant={0.5,-0.2,0.3,-0.4}. Carried-grid zero-increment
+     * codes stay exactly {5,-2,3,-4} (recon-pack §2). A rescale mutant would
+     * instead re-derive from absMax(dequant)=0.5: scale'=0.5/31~=0.016129,
+     * codes'=round(dequant/scale')={31,-12,19,-25} -- a different scale AND
+     * different bytes (verified via a throwaway float32 harness). */
+    int32_t seedMant[] = {5, -2, 3, -4};
+    uint8_t data[3];
+    byteConversion((uint8_t *)seedMant, 32, data, 6, 4);
+    size_t dims[] = {1, 4};
+    size_t order[] = {0, 1};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 2, .orderOfDimensions = order};
+    symQConfig_t qc = {.scale = 0.1f, .qBits = 6, .roundingMode = HALF_AWAY};
+    quantization_t q;
+    initSymQuantization(&qc, &q);
+    tensor_t target;
+    setTensorValues(&target, data, &shape, &q, NULL);
+
+    uint8_t snapshotBytes[3];
+    memcpy(snapshotBytes, data, 3);
+    float snapshotScale = qc.scale;
+
+    float zeroInc[] = {0.f, 0.f, 0.f, 0.f};
+    accumulateFloatIntoSymTensorFixedGrid(&target, zeroInc, 4);
+
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(snapshotBytes, data, 3);
+    TEST_ASSERT_EQUAL_FLOAT(snapshotScale, qc.scale);
+}
+
+void testAccumulateSymFixedGridOverflowAborts(void) {
+    /* D2: growing past the 6-bit grid must exit(1) (#227 message), never
+     * clamp. Seed mantissa 31 (grid max) directly via byteConversion -- so
+     * the CARRIED scale (not a derived one) is under test, since the target
+     * is not all-zero -- and add +1 grid step (inc == scale): 31 -> 32,
+     * outside the 6-bit range [-32, 31].
+     * Mutation guard: clamping instead of fit-guarding lets the child exit
+     * 0 (no abort) -> RED. */
+    size_t n = 1;
+    size_t dims[] = {1};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    symQConfig_t qc = {.scale = 0.1f, .qBits = 6, .roundingMode = HALF_AWAY};
+    quantization_t q;
+    initSymQuantization(&qc, &q);
+    uint8_t data[calcNumberOfBytesForData(&q, n)];
+    int32_t mant[] = {31};
+    byteConversion((uint8_t *)mant, 32, data, 6, n);
+    tensor_t target;
+    setTensorValues(&target, data, &shape, &q, NULL);
+
+    float inc[] = {0.1f}; /* +1 grid step: 31 -> 32, overflow */
+    ASSERT_EXITS_WITH_FAILURE(accumulateFloatIntoSymTensorFixedGrid(&target, inc, n));
+}
+
+void testAccumulateSymRescaleRederivesGridEachCall(void) {
+    /* DYNAMIC semantics: after a second accumulate with larger values, scale
+     * reflects the NEW absmax (fresh grid every store), not the carried one.
+     * Also asserts dequant equivalence within one grid-step tolerance.
+     * Mutation guard: the fixed-grid variant would either abort (the carried
+     * scale=0.5 grid cannot hold mant+100) or, on a fresh all-zero target,
+     * keep an unrelated scale -> the scale1/codes1 asserts RED either way.
+     *
+     * Seed directly: scale=0.5, mant={2,-1,0,0} -> dequant={1.0,-0.5,0,0}
+     * (bit-exact: both values are exact powers of two at this scale).
+     * call1 (inc=0): absMax=1.0 -> scale1=1.0/31; codes1=round(dequant/scale1)
+     *   = round(31)=31, round(-15.5)=-16 (HALF_AWAY), round(0)=0, round(0)=0.
+     * call2 (inc=50 each): reference2[i] = codes1[i]*scale1 + 50 (computed at
+     *   runtime from the SUT's own call1 output -- no hand-rounded literal
+     *   needed); absMax(reference2) ~= 51 -> scale2 ~= 51/31 ~= 1.645, over
+     *   50x scale1 (rederived, not carried). Reconstruction must land within
+     *   one grid step (scale2) of reference2. */
+    size_t n = 4;
+    size_t dims[] = {4};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    int32_t seedMant[] = {2, -1, 0, 0};
+    uint8_t data[3];
+    byteConversion((uint8_t *)seedMant, 32, data, 6, 4);
+    symQConfig_t qc = {.scale = 0.5f, .qBits = 6, .roundingMode = HALF_AWAY};
+    quantization_t q;
+    initSymQuantization(&qc, &q);
+    tensor_t target;
+    setTensorValues(&target, data, &shape, &q, NULL);
+
+    float inc1[] = {0.f, 0.f, 0.f, 0.f};
+    accumulateFloatIntoSymTensorRescale(&target, inc1, n);
+    float scale1 = qc.scale;
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.0f / 31.0f, scale1);
+
+    int32_t codes1[4];
+    symTestUnpackSignExtend(data, 6, codes1, 4);
+    int32_t expectedCodes1[] = {31, -16, 0, 0};
+    TEST_ASSERT_EQUAL_INT32_ARRAY(expectedCodes1, codes1, 4);
+
+    float reference2[4];
+    for (size_t i = 0; i < n; i++) {
+        reference2[i] = (float)codes1[i] * scale1 + 50.f;
+    }
+
+    float inc2[] = {50.f, 50.f, 50.f, 50.f};
+    accumulateFloatIntoSymTensorRescale(&target, inc2, n);
+    float scale2 = qc.scale;
+
+    /* Rederivation, not carry: scale2 reflects the new (much larger) absmax. */
+    TEST_ASSERT_TRUE(scale2 > scale1 * 10.f);
+
+    float absMax2 = reference2[0];
+    for (size_t i = 1; i < n; i++) {
+        if (reference2[i] > absMax2) {
+            absMax2 = reference2[i];
+        }
+    }
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, absMax2 / 31.0f, scale2);
+
+    int32_t codes2[4];
+    symTestUnpackSignExtend(data, 6, codes2, 4);
+    for (size_t i = 0; i < n; i++) {
+        float recon = (float)codes2[i] * scale2;
+        TEST_ASSERT_FLOAT_WITHIN(scale2, reference2[i], recon);
+    }
+}
+
+void testAccumulateAsymRescaleMatchesFloatReference(void) {
+    /* ASYM: decode+add+requant equals numpy-style float reference within one
+     * affine grid step; zeroPoint/scale re-derived per store (D4).
+     * Mutation guard: carrying the OLD scale/zeroPoint (0.25/-4) instead of
+     * rederiving would leave qc.scale/qc.zeroPoint unchanged -> the exact
+     * asserts below RED.
+     *
+     * Seed ASYM@5 codes {12,16,20,24} at scale=0.25, zeroPoint=-4 -> dequant
+     * = (code+zeroPoint)*scale = {2, 3, 4, 5} (exact integers).
+     * inc = {1.0, -0.5, 2.0, 0.25} -> reference = {3, 2.5, 6, 5.25}.
+     * Fresh affine grid: min=2.5, max=6.0, qMax=2^5-1=31;
+     * scale' = (6.0-2.5)/31 = 3.5/31 ~= 0.112903;
+     * zeroPoint' = round(2.5/scale') = round(22.142857) = 22. */
+    size_t n = 4;
+    size_t dims[] = {4};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    asymQConfig_t qc;
+    initAsymQConfig(5, HALF_AWAY, &qc);
+    qc.scale = 0.25f;
+    qc.zeroPoint = -4;
+    quantization_t q;
+    initAsymQuantization(&qc, &q);
+    uint8_t data[calcNumberOfBytesForData(&q, n)];
+    int32_t seedCodes[] = {12, 16, 20, 24};
+    byteConversion((uint8_t *)seedCodes, 32, data, 5, n);
+    tensor_t target;
+    setTensorValues(&target, data, &shape, &q, NULL);
+
+    float inc[] = {1.0f, -0.5f, 2.0f, 0.25f};
+    float reference[] = {3.0f, 2.5f, 6.0f, 5.25f};
+
+    accumulateFloatIntoAsymTensorRescale(&target, inc, n);
+
+    TEST_ASSERT_EQUAL_FLOAT(3.5f / 31.0f, qc.scale);
+    TEST_ASSERT_EQUAL_INT16(22, qc.zeroPoint);
+
+    int32_t codes[4];
+    byteConversion(data, 5, (uint8_t *)codes, 32, n); /* asym codes: non-negative, no sign-extend */
+    for (size_t i = 0; i < n; i++) {
+        float recon = ((float)codes[i] + (float)qc.zeroPoint) * qc.scale;
+        TEST_ASSERT_FLOAT_WITHIN(qc.scale, reference[i], recon);
+    }
+}
+
+void testAccumulateAsymValueZeroAfterConfigReset(void) {
+    /* With scale=1, zeroPoint=0 and zero codes (the sgdZeroGrad reset state,
+     * spec §5.3), decoded values are exactly 0 -> first accumulate equals the
+     * increment quantized fresh (0.0f + inc[i] == inc[i] exactly, no
+     * rounding at the add). Reference: convertFloatTensorToAsymTensor(inc)
+     * calls the identical quantizeFloatToAsym helper on the identical float
+     * array, so a match here is bit-for-bit, not tolerance-based.
+     * Mutation guard: skipping the config reset (a stale scale/zeroPoint
+     * left over from a prior store) would decode a nonzero baseline and
+     * diverge from this fresh-quantize reference. */
+    size_t n = 3;
+    size_t dims[] = {3};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    asymQConfig_t qc;
+    initAsymQConfig(5, HALF_AWAY, &qc);
+    qc.scale = 1.f;
+    qc.zeroPoint = 0;
+    quantization_t q;
+    initAsymQuantization(&qc, &q);
+    uint8_t data[calcNumberOfBytesForData(&q, n)];
+    memset(data, 0, sizeof(data)); /* zero codes: the sgdZeroGrad reset state */
+    tensor_t target;
+    setTensorValues(&target, data, &shape, &q, NULL);
+
+    float inc[] = {2.0f, -3.5f, 0.0f};
+    accumulateFloatIntoAsymTensorRescale(&target, inc, n);
+
+    asymQConfig_t refQC;
+    initAsymQConfig(5, HALF_AWAY, &refQC);
+    quantization_t refQ;
+    initAsymQuantization(&refQC, &refQ);
+    uint8_t refData[calcNumberOfBytesForData(&refQ, n)];
+    tensor_t refTensor;
+    setTensorValues(&refTensor, refData, &shape, &refQ, NULL);
+
+    quantization_t floatQ;
+    initFloat32Quantization(&floatQ);
+    tensor_t floatTensor;
+    setTensorValues(&floatTensor, (uint8_t *)inc, &shape, &floatQ, NULL);
+    convertTensor(&floatTensor, &refTensor);
+
+    TEST_ASSERT_EQUAL_FLOAT(refQC.scale, qc.scale);
+    TEST_ASSERT_EQUAL_INT16(refQC.zeroPoint, qc.zeroPoint);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(refData, data, calcNumberOfBytesForData(&refQ, n));
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -1645,6 +1926,13 @@ int main(void) {
     RUN_TEST(testConvertSymToInt32RejectsZeroQBits);
     RUN_TEST(testConvertInt32ToSymRejectsZeroQBits);
     RUN_TEST(testConvertersPreserveCallerOutputShape);
+
+    RUN_TEST(testAccumulateSymFixedGridFirstStoreDerivesGridThenCarries);
+    RUN_TEST(testAccumulateSymFixedGridZeroIncrementIsBitExact);
+    RUN_TEST(testAccumulateSymFixedGridOverflowAborts);
+    RUN_TEST(testAccumulateSymRescaleRederivesGridEachCall);
+    RUN_TEST(testAccumulateAsymRescaleMatchesFloatReference);
+    RUN_TEST(testAccumulateAsymValueZeroAfterConfigReset);
 
     return UNITY_END();
 }

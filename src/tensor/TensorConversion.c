@@ -1,5 +1,6 @@
 #define SOURCE_FILE "TENSOR_CONVERSION"
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -472,6 +473,63 @@ void repackSymInt32ToSymNoRescale(tensor_t *inputTensor, tensor_t *outputTensor)
     outQC->scale = inQC->scale;
     packFitGuarded((int32_t *)inputTensor->data, n, outputTensor->data, outQC->qBits,
                    "repackSymInt32ToSymNoRescale");
+}
+
+/* Grad-accumulate primitives (PR3, #261) -- see header doc comment for the
+ * when-to-use contract. */
+void accumulateFloatIntoSymTensorFixedGrid(tensor_t *target, const float *inc, size_t n) {
+    symQConfig_t *qc = target->quantization->qConfig;
+    int32_t mant[n];
+    unpackSignExtend(target->data, qc->qBits, mant, n);
+
+    bool allZero = true;
+    for (size_t i = 0; i < n; i++) {
+        if (mant[i] != 0) {
+            allZero = false;
+            break;
+        }
+    }
+    if (allZero) {
+        /* Fresh accumulator (post-initTensor zero-fill or post-sgdZeroGrad
+         * memset): derive the grid from the increment (absmax/qMax; absmax
+         * 0 -> scale 1.f, packFloatBufferAsSym convention). */
+        float absMax = findAbsMaxFloat((uint8_t *)inc, n);
+        const float qMax = powf(2, (float)qc->qBits - 1) - 1;
+        qc->scale = (absMax == 0.f) ? 1.f : absMax / qMax;
+    }
+    /* else: carry the grid verbatim -- no re-derivation, no renorm (D1/D2). */
+
+    float scale = qc->scale;
+    int32_t codes[n];
+    for (size_t i = 0; i < n; i++) {
+        codes[i] = roundByMode(((float)mant[i] * scale + inc[i]) / scale, qc->roundingMode);
+    }
+    /* No clamp: packFitGuarded aborts on overflow (D2, #227 discipline). */
+    packFitGuarded(codes, n, target->data, qc->qBits, "accumulateFloatIntoSymTensorFixedGrid");
+}
+
+void accumulateFloatIntoSymTensorRescale(tensor_t *target, const float *inc, size_t n) {
+    symQConfig_t *qc = target->quantization->qConfig;
+    int32_t mant[n];
+    unpackSignExtend(target->data, qc->qBits, mant, n);
+    float vals[n];
+    for (size_t i = 0; i < n; i++) {
+        vals[i] = (float)mant[i] * qc->scale + inc[i];
+    }
+    /* Fresh absmax every call -- no carried grid (unlike the FixedGrid twin). */
+    packFloatBufferAsSym(vals, n, qc, target->data, "accumulateFloatIntoSymTensorRescale");
+}
+
+void accumulateFloatIntoAsymTensorRescale(tensor_t *target, const float *inc, size_t n) {
+    asymQConfig_t *qc = target->quantization->qConfig;
+    int32_t codes[n];
+    byteConversion(target->data, qc->qBits, (uint8_t *)codes, 32, n); /* asym codes >= 0 */
+    float vals[n];
+    for (size_t i = 0; i < n; i++) {
+        vals[i] = ((float)codes[i] + (float)qc->zeroPoint) * qc->scale + inc[i];
+    }
+    /* Fresh affine grid every call (D4: no fit-preserving ASYM pack exists). */
+    quantizeFloatToAsym(vals, n, qc, target->data);
 }
 
 _Static_assert(BOOL + 1 == 6, "extend conversionMatrix when adding qtype_t entries");
