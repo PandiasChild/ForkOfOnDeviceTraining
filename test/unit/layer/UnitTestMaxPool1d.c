@@ -1,9 +1,11 @@
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "Layer.h"
 #include "MaxPool1d.h"
 #include "QuantizationApi.h"
+#include "StorageApi.h"
 #include "TensorApi.h"
 #include "expected_max_pool_1d.h"
 #include "unity.h"
@@ -19,6 +21,32 @@ typedef struct maxPool1dRunResult {
     quantization_t *q;
 } maxPool1dRunResult_t;
 
+static size_t *ownedDims(size_t const *dims, size_t numDims) {
+    size_t *owned = reserveMemory(numDims * sizeof(size_t));
+    memcpy(owned, dims, numDims * sizeof(size_t));
+    return owned;
+}
+
+static shape_t *makeShape(size_t const *dims, size_t numDims) {
+    size_t *order = reserveMemory(numDims * sizeof(size_t));
+    setOrderOfDimsForNewTensor(numDims, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, ownedDims(dims, numDims), numDims, order);
+    return shape;
+}
+
+static tensor_t *makeFloatTensor(size_t const *dims, size_t numDims, float const *data) {
+    tensor_t *t = initTensor(makeShape(dims, numDims), quantizationInitFloat(), NULL);
+    if (data != NULL) {
+        tensorFillFromFloatBuffer(t, data, calcNumberOfElementsByTensor(t));
+    }
+    return t;
+}
+
+static tensor_t *makeInt32Tensor(size_t const *dims, size_t numDims) {
+    return initTensor(makeShape(dims, numDims), quantizationInitInt32(), NULL);
+}
+
 static maxPool1dRunResult_t maxPool1dBuild(float const *inputData, size_t const *inputDims,
                                            size_t kSize, paddingType_t padding, size_t dilation,
                                            size_t stride, float *outputBuf, int32_t *argmaxBuf,
@@ -32,7 +60,7 @@ static maxPool1dRunResult_t maxPool1dBuild(float const *inputData, size_t const 
 
     quantization_t *q = quantizationInitFloat();
 
-    tensor_t *argmax = tensorInitInt32(argmaxBuf, (size_t *)outputDims, 3, NULL);
+    tensor_t *argmax = makeInt32Tensor(outputDims, 3);
     initMaxPool1dConfig(&cfgStore, &kernelStore, argmax, q, q);
 
     layerStore.type = MAXPOOL1D;
@@ -41,8 +69,10 @@ static maxPool1dRunResult_t maxPool1dBuild(float const *inputData, size_t const 
 
     maxPool1dRunResult_t r = {0};
     r.layer = &layerStore;
-    r.input = tensorInitFloat((float *)inputData, (size_t *)inputDims, 3, NULL);
-    r.output = tensorInitFloat(outputBuf, (size_t *)outputDims, 3, NULL);
+    r.input = makeFloatTensor(inputDims, 3, inputData);
+    r.output = makeFloatTensor(outputDims, 3, NULL);
+    (void)outputBuf;
+    (void)argmaxBuf;
     r.argmax = argmax;
     r.q = q;
     return r;
@@ -75,8 +105,7 @@ void testMaxPool1dCalcOutputShapeValidAndSame(void) {
         maxPool1dConfig_t cfg = {0};
         // argmax tensor not used by calcOutputShape — pass a dummy via minimal init.
         size_t dummyDims[] = {1, 1, 1};
-        int32_t dummyData[1] = {0};
-        tensor_t *dummyArgmax = tensorInitInt32(dummyData, dummyDims, 3, NULL);
+        tensor_t *dummyArgmax = makeInt32Tensor(dummyDims, 3);
         initMaxPool1dConfig(&cfg, &kernel, dummyArgmax, q, q);
 
         layer_t layer;
@@ -111,8 +140,7 @@ void testMaxPool1dCalcOutputShapeValidAndSame(void) {
         initKernel(&kernel, 3, SAME, 1, 1);
         maxPool1dConfig_t cfg = {0};
         size_t dummyDims[] = {1, 1, 1};
-        int32_t dummyData[1] = {0};
-        tensor_t *dummyArgmax = tensorInitInt32(dummyData, dummyDims, 3, NULL);
+        tensor_t *dummyArgmax = makeInt32Tensor(dummyDims, 3);
         initMaxPool1dConfig(&cfg, &kernel, dummyArgmax, q, q);
 
         layer_t layer;
@@ -155,10 +183,9 @@ void testMaxPool1dBackwardBasic(void) {
     for (size_t i = 0; i < 3; i++) {
         lossGradData[i] = 1.0f;
     }
-    tensor_t *lossGrad = tensorInitFloat(lossGradData, (size_t *)outputDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outputDims, 3, lossGradData);
 
-    float propLossData[1 * 1 * 4] = {0};
-    tensor_t *propLoss = tensorInitFloat(propLossData, (size_t *)inputDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(inputDims, 3, NULL);
 
     maxPool1dBackward(r.layer, r.input, lossGrad, propLoss);
 
@@ -212,10 +239,9 @@ void testMaxPool1dMultiChannel(void) {
     for (size_t i = 0; i < 12; i++) {
         lossGradData[i] = 1.0f;
     }
-    tensor_t *lossGrad = tensorInitFloat(lossGradData, (size_t *)outputDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outputDims, 3, lossGradData);
 
-    float propLossData[1 * 3 * 5] = {0};
-    tensor_t *propLoss = tensorInitFloat(propLossData, (size_t *)inputDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(inputDims, 3, NULL);
 
     maxPool1dBackward(r.layer, r.input, lossGrad, propLoss);
     for (size_t i = 0; i < expectedPropLoss_maxPool1d_multiChannel_len; i++) {
@@ -243,10 +269,9 @@ void testMaxPool1dMultiBatch(void) {
     for (size_t i = 0; i < 24; i++) {
         lossGradData[i] = 1.0f;
     }
-    tensor_t *lossGrad = tensorInitFloat(lossGradData, (size_t *)outputDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outputDims, 3, lossGradData);
 
-    float propLossData[4 * 2 * 4] = {0};
-    tensor_t *propLoss = tensorInitFloat(propLossData, (size_t *)inputDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(inputDims, 3, NULL);
 
     maxPool1dBackward(r.layer, r.input, lossGrad, propLoss);
     for (size_t i = 0; i < expectedPropLoss_maxPool1d_multiBatch_len; i++) {
@@ -273,11 +298,9 @@ void testMaxPool1dWithStrideAndDilation(void) {
 
     // Use the gold-emitted random lossGrad (NOT ones), so positional mutations
     // on the backward path are non-vacuous (codebase_uniform_lossgrad_mutation_vacuity).
-    tensor_t *lossGrad = tensorInitFloat((float *)lossGrad_maxPool1d_withStrideAndDilation,
-                                         (size_t *)outputDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outputDims, 3, lossGrad_maxPool1d_withStrideAndDilation);
 
-    float propLossData[1 * 1 * 9] = {0};
-    tensor_t *propLoss = tensorInitFloat(propLossData, (size_t *)inputDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(inputDims, 3, NULL);
 
     maxPool1dBackward(r.layer, r.input, lossGrad, propLoss);
     for (size_t i = 0; i < expectedPropLoss_maxPool1d_withStrideAndDilation_len; i++) {
@@ -311,10 +334,9 @@ void testMaxPool1dWithSamePadding(void) {
     for (size_t i = 0; i < 5; i++) {
         lossGradData[i] = 1.0f;
     }
-    tensor_t *lossGrad = tensorInitFloat(lossGradData, (size_t *)outputDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outputDims, 3, lossGradData);
 
-    float propLossData[1 * 1 * 5] = {0};
-    tensor_t *propLoss = tensorInitFloat(propLossData, (size_t *)inputDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(inputDims, 3, NULL);
 
     maxPool1dBackward(r.layer, r.input, lossGrad, propLoss);
     for (size_t i = 0; i < expectedPropLoss_maxPool1d_withSamePadding_len; i++) {
@@ -348,10 +370,9 @@ void testMaxPool1dEdgeCases(void) {
     for (size_t i = 0; i < 4; i++) {
         lossGradData[i] = 1.0f;
     }
-    tensor_t *lossGrad = tensorInitFloat(lossGradData, (size_t *)outputDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outputDims, 3, lossGradData);
 
-    float propLossData[1 * 1 * 4] = {0};
-    tensor_t *propLoss = tensorInitFloat(propLossData, (size_t *)inputDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(inputDims, 3, NULL);
 
     maxPool1dBackward(r.layer, r.input, lossGrad, propLoss);
     for (size_t i = 0; i < expectedPropLoss_maxPool1d_edgeCases_len; i++) {

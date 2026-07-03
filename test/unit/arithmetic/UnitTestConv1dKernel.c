@@ -1,21 +1,37 @@
+#include <string.h>
+
 #include "Conv1dKernel.h"
 #include "QuantizationApi.h"
+#include "StorageApi.h"
 #include "TensorApi.h"
 #include "expected_conv1d_kernel.h"
 #include "unity.h"
 
+static tensor_t *makeFloatTensor(size_t const *dims, size_t numDims, float const *data) {
+    size_t *ownedDims = reserveMemory(numDims * sizeof(size_t));
+    memcpy(ownedDims, dims, numDims * sizeof(size_t));
+    size_t *order = reserveMemory(numDims * sizeof(size_t));
+    setOrderOfDimsForNewTensor(numDims, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, ownedDims, numDims, order);
+    tensor_t *t = initTensor(shape, quantizationInitFloat(), NULL);
+    if (data != NULL) {
+        tensorFillFromFloatBuffer(t, data, calcNumberOfElementsByTensor(t));
+    }
+    return t;
+}
+
 void testConv1dKernelSingleChannelSingleBatch() {
     float xData[] = {1.0f, 2.0f, 3.0f, 4.0f};
     size_t xDims[] = {1, 1, 4};
-    tensor_t *x = tensorInitFloat(xData, xDims, 3, NULL);
+    tensor_t *x = makeFloatTensor(xDims, 3, xData);
 
     float wData[] = {2.0f, 4.0f};
     size_t wDims[] = {1, 1, 2};
-    tensor_t *w = tensorInitFloat(wData, wDims, 3, NULL);
+    tensor_t *w = makeFloatTensor(wDims, 3, wData);
 
-    float yData[3] = {0};
     size_t yDims[] = {1, 1, 3};
-    tensor_t *y = tensorInitFloat(yData, yDims, 3, NULL);
+    tensor_t *y = makeFloatTensor(yDims, 3, NULL);
 
     kernel_t kernel;
     initKernel(&kernel, 2, VALID, 1, 1); // size, padding, dilation, stride
@@ -33,7 +49,7 @@ void testConv1dKernelMultiChannelWithBias() {
         xData[i] = (float)i;
     }
     size_t xDims[] = {1, 3, 5};
-    tensor_t *x = tensorInitFloat(xData, xDims, 3, NULL);
+    tensor_t *x = makeFloatTensor(xDims, 3, xData);
 
     // w: [2, 3, 3] = arange(18) * 0.1
     float wData[18];
@@ -41,15 +57,14 @@ void testConv1dKernelMultiChannelWithBias() {
         wData[i] = (float)i * 0.1f;
     }
     size_t wDims[] = {2, 3, 3};
-    tensor_t *w = tensorInitFloat(wData, wDims, 3, NULL);
+    tensor_t *w = makeFloatTensor(wDims, 3, wData);
 
     float bData[] = {0.5f, -0.5f};
     size_t bDims[] = {2};
-    tensor_t *b = tensorInitFloat(bData, bDims, 1, NULL);
+    tensor_t *b = makeFloatTensor(bDims, 1, bData);
 
-    float yData[2 * 3] = {0};
     size_t yDims[] = {1, 2, 3};
-    tensor_t *y = tensorInitFloat(yData, yDims, 3, NULL);
+    tensor_t *y = makeFloatTensor(yDims, 3, NULL);
 
     kernel_t kernel;
     initKernel(&kernel, 3, VALID, 1, 1);
@@ -63,15 +78,14 @@ void testConv1dKernelMultiChannelWithBias() {
 void testConv1dKernelMultiBatch() {
     // x and w come from the generator; their seeds are fixed.
     // x: [4, 2, 4]; w: [2, 2, 2]; output: [4, 2, 3]
-    float yData[4 * 2 * 3] = {0};
     size_t yDims[] = {4, 2, 3};
-    tensor_t *y = tensorInitFloat(yData, yDims, 3, NULL);
+    tensor_t *y = makeFloatTensor(yDims, 3, NULL);
 
     size_t xDims[] = {4, 2, 4};
-    tensor_t *x = tensorInitFloat((float *)inputConv1dForward_multiBatch, xDims, 3, NULL);
+    tensor_t *x = makeFloatTensor(xDims, 3, inputConv1dForward_multiBatch);
 
     size_t wDims[] = {2, 2, 2};
-    tensor_t *w = tensorInitFloat((float *)weightConv1dForward_multiBatch, wDims, 3, NULL);
+    tensor_t *w = makeFloatTensor(wDims, 3, weightConv1dForward_multiBatch);
 
     kernel_t kernel;
     initKernel(&kernel, 2, VALID, 1, 1);
@@ -83,15 +97,14 @@ void testConv1dKernelMultiBatch() {
 }
 
 void testConv1dKernelGroupsDepthwise() {
-    float yData[1 * 4 * 4] = {0}; // [B=1, Cout=4, Lout=5-2+1=4]
-    size_t yDims[] = {1, 4, 4};
-    tensor_t *y = tensorInitFloat(yData, yDims, 3, NULL);
+    size_t yDims[] = {1, 4, 4}; // [B=1, Cout=4, Lout=5-2+1=4]
+    tensor_t *y = makeFloatTensor(yDims, 3, NULL);
 
     size_t xDims[] = {1, 4, 5};
-    tensor_t *x = tensorInitFloat((float *)inputConv1dForward_groupsDepthwise, xDims, 3, NULL);
+    tensor_t *x = makeFloatTensor(xDims, 3, inputConv1dForward_groupsDepthwise);
 
     size_t wDims[] = {4, 1, 2}; // [Cout=4, Cin/groups=1, K=2]
-    tensor_t *w = tensorInitFloat((float *)weightConv1dForward_groupsDepthwise, wDims, 3, NULL);
+    tensor_t *w = makeFloatTensor(wDims, 3, weightConv1dForward_groupsDepthwise);
 
     kernel_t kernel;
     initKernel(&kernel, 2, VALID, 1, 1);
@@ -103,15 +116,14 @@ void testConv1dKernelGroupsDepthwise() {
 }
 
 void testConv1dKernelGroupsGrouped() {
-    float yData[1 * 8 * 4] = {0}; // [B=1, Cout=8, Lout=4]
-    size_t yDims[] = {1, 8, 4};
-    tensor_t *y = tensorInitFloat(yData, yDims, 3, NULL);
+    size_t yDims[] = {1, 8, 4}; // [B=1, Cout=8, Lout=4]
+    tensor_t *y = makeFloatTensor(yDims, 3, NULL);
 
     size_t xDims[] = {1, 4, 5};
-    tensor_t *x = tensorInitFloat((float *)inputConv1dForward_groupsGrouped, xDims, 3, NULL);
+    tensor_t *x = makeFloatTensor(xDims, 3, inputConv1dForward_groupsGrouped);
 
     size_t wDims[] = {8, 2, 2}; // [Cout=8, Cin/groups=2, K=2]
-    tensor_t *w = tensorInitFloat((float *)weightConv1dForward_groupsGrouped, wDims, 3, NULL);
+    tensor_t *w = makeFloatTensor(wDims, 3, weightConv1dForward_groupsGrouped);
 
     kernel_t kernel;
     initKernel(&kernel, 2, VALID, 1, 1);
@@ -125,15 +137,14 @@ void testConv1dKernelGroupsGrouped() {
 void testConv1dKernelStrideDilation() {
     float xData[] = {1.0f, 0.0f, 2.0f, 0.0f, 0.0f, 0.0f, 3.0f, 0.0f, 4.0f};
     size_t xDims[] = {1, 1, 9};
-    tensor_t *x = tensorInitFloat(xData, xDims, 3, NULL);
+    tensor_t *x = makeFloatTensor(xDims, 3, xData);
 
     float wData[] = {2.0f, 4.0f};
     size_t wDims[] = {1, 1, 2};
-    tensor_t *w = tensorInitFloat(wData, wDims, 3, NULL);
+    tensor_t *w = makeFloatTensor(wDims, 3, wData);
 
-    float yData[3] = {0};
     size_t yDims[] = {1, 1, 3};
-    tensor_t *y = tensorInitFloat(yData, yDims, 3, NULL);
+    tensor_t *y = makeFloatTensor(yDims, 3, NULL);
 
     kernel_t kernel;
     initKernel(&kernel, 2, VALID, 2, 3); // size, padding, dilation, stride
@@ -147,15 +158,14 @@ void testConv1dKernelStrideDilation() {
 void testConv1dKernelSamePadding() {
     float xData[] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f};
     size_t xDims[] = {1, 1, 5};
-    tensor_t *x = tensorInitFloat(xData, xDims, 3, NULL);
+    tensor_t *x = makeFloatTensor(xDims, 3, xData);
 
     float wData[] = {1.0f, 2.0f, 3.0f};
     size_t wDims[] = {1, 1, 3};
-    tensor_t *w = tensorInitFloat(wData, wDims, 3, NULL);
+    tensor_t *w = makeFloatTensor(wDims, 3, wData);
 
-    float yData[5] = {0};
     size_t yDims[] = {1, 1, 5};
-    tensor_t *y = tensorInitFloat(yData, yDims, 3, NULL);
+    tensor_t *y = makeFloatTensor(yDims, 3, NULL);
 
     kernel_t kernel;
     initKernel(&kernel, 3, SAME, 1, 1);
@@ -176,19 +186,18 @@ void testConv1dKernelExplicitPaddingStride2() {
         xData[i] = (float)(i + 1);
     }
     size_t xDims[] = {1, 1, 10};
-    tensor_t *x = tensorInitFloat(xData, xDims, 3, NULL);
+    tensor_t *x = makeFloatTensor(xDims, 3, xData);
 
     float wData[] = {0.1f, -0.2f, 0.3f, -0.4f, 0.5f, -0.6f, 0.7f};
     size_t wDims[] = {1, 1, 7};
-    tensor_t *w = tensorInitFloat(wData, wDims, 3, NULL);
+    tensor_t *w = makeFloatTensor(wDims, 3, wData);
 
     float bData[] = {0.25f};
     size_t bDims[] = {1};
-    tensor_t *b = tensorInitFloat(bData, bDims, 1, NULL);
+    tensor_t *b = makeFloatTensor(bDims, 1, bData);
 
-    float yData[5] = {0};
     size_t yDims[] = {1, 1, 5};
-    tensor_t *y = tensorInitFloat(yData, yDims, 3, NULL);
+    tensor_t *y = makeFloatTensor(yDims, 3, NULL);
 
     kernel_t kernel;
     initKernelExplicit(&kernel, 7, 3, 1, 2); // size, padding, dilation, stride

@@ -1,9 +1,11 @@
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "AdaptiveAvgPool1d.h"
 #include "Layer.h"
 #include "QuantizationApi.h"
+#include "StorageApi.h"
 #include "TensorApi.h"
 #include "expected_adaptive_avg_pool_1d.h"
 #include "unity.h"
@@ -17,6 +19,20 @@ typedef struct adaptivePoolRun {
     tensor_t *output;
     quantization_t *q;
 } adaptivePoolRun_t;
+
+static tensor_t *makeFloatTensor(size_t const *dims, size_t numDims, float const *data) {
+    size_t *ownedDims = reserveMemory(numDims * sizeof(size_t));
+    memcpy(ownedDims, dims, numDims * sizeof(size_t));
+    size_t *order = reserveMemory(numDims * sizeof(size_t));
+    setOrderOfDimsForNewTensor(numDims, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, ownedDims, numDims, order);
+    tensor_t *t = initTensor(shape, quantizationInitFloat(), NULL);
+    if (data != NULL) {
+        tensorFillFromFloatBuffer(t, data, calcNumberOfElementsByTensor(t));
+    }
+    return t;
+}
 
 static adaptivePoolRun_t build(float const *inputData, size_t const *inputDims, size_t outputSize,
                                float *outputBuf, size_t const *outputDims) {
@@ -32,8 +48,9 @@ static adaptivePoolRun_t build(float const *inputData, size_t const *inputDims, 
 
     adaptivePoolRun_t r = {0};
     r.layer = &layerStore;
-    r.input = tensorInitFloat((float *)inputData, (size_t *)inputDims, 3, NULL);
-    r.output = tensorInitFloat(outputBuf, (size_t *)outputDims, 3, NULL);
+    r.input = makeFloatTensor(inputDims, 3, inputData);
+    r.output = makeFloatTensor(outputDims, 3, NULL);
+    (void)outputBuf;
     r.q = q;
     return r;
 }
@@ -130,9 +147,8 @@ void testBackwardBasic(void) {
     adaptiveAvgPool1dForward(r.layer, r.input, r.output);
 
     float gyData[1 * 1 * 2] = {1.0f, 1.0f};
-    tensor_t *lossGrad = tensorInitFloat(gyData, (size_t *)outDims, 3, NULL);
-    float gxData[1 * 1 * 4] = {0};
-    tensor_t *propLoss = tensorInitFloat(gxData, (size_t *)inDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outDims, 3, gyData);
+    tensor_t *propLoss = makeFloatTensor(inDims, 3, NULL);
 
     adaptiveAvgPool1dBackward(r.layer, r.input, lossGrad, propLoss);
 
@@ -149,10 +165,8 @@ void testBackwardMultiChannelOverlap(void) {
     adaptivePoolRun_t r = build(input_adaptiveAvgPool1d_multiChannel, inDims, 2, outData, outDims);
     adaptiveAvgPool1dForward(r.layer, r.input, r.output);
 
-    tensor_t *lossGrad = tensorInitFloat((float *)lossGrad_adaptiveAvgPool1d_multiChannel,
-                                         (size_t *)outDims, 3, NULL);
-    float gxData[1 * 3 * 5] = {0};
-    tensor_t *propLoss = tensorInitFloat(gxData, (size_t *)inDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outDims, 3, lossGrad_adaptiveAvgPool1d_multiChannel);
+    tensor_t *propLoss = makeFloatTensor(inDims, 3, NULL);
 
     adaptiveAvgPool1dBackward(r.layer, r.input, lossGrad, propLoss);
 
@@ -169,10 +183,8 @@ void testBackwardMultiBatch(void) {
     adaptivePoolRun_t r = build(input_adaptiveAvgPool1d_multiBatch, inDims, 4, outData, outDims);
     adaptiveAvgPool1dForward(r.layer, r.input, r.output);
 
-    tensor_t *lossGrad =
-        tensorInitFloat((float *)lossGrad_adaptiveAvgPool1d_multiBatch, (size_t *)outDims, 3, NULL);
-    float gxData[4 * 2 * 6] = {0};
-    tensor_t *propLoss = tensorInitFloat(gxData, (size_t *)inDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outDims, 3, lossGrad_adaptiveAvgPool1d_multiBatch);
+    tensor_t *propLoss = makeFloatTensor(inDims, 3, NULL);
 
     adaptiveAvgPool1dBackward(r.layer, r.input, lossGrad, propLoss);
 
@@ -190,9 +202,8 @@ void testBackwardGlobal(void) {
     adaptiveAvgPool1dForward(r.layer, r.input, r.output);
 
     float gyData[1 * 2 * 1] = {1.0f, 1.0f};
-    tensor_t *lossGrad = tensorInitFloat(gyData, (size_t *)outDims, 3, NULL);
-    float gxData[1 * 2 * 7] = {0};
-    tensor_t *propLoss = tensorInitFloat(gxData, (size_t *)inDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outDims, 3, gyData);
+    tensor_t *propLoss = makeFloatTensor(inDims, 3, NULL);
 
     adaptiveAvgPool1dBackward(r.layer, r.input, lossGrad, propLoss);
 
@@ -209,10 +220,8 @@ void testBackwardUpsample(void) {
     adaptivePoolRun_t r = build(input_adaptiveAvgPool1d_upsample, inDims, 5, outData, outDims);
     adaptiveAvgPool1dForward(r.layer, r.input, r.output);
 
-    tensor_t *lossGrad =
-        tensorInitFloat((float *)lossGrad_adaptiveAvgPool1d_upsample, (size_t *)outDims, 3, NULL);
-    float gxData[1 * 1 * 3] = {0};
-    tensor_t *propLoss = tensorInitFloat(gxData, (size_t *)inDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outDims, 3, lossGrad_adaptiveAvgPool1d_upsample);
+    tensor_t *propLoss = makeFloatTensor(inDims, 3, NULL);
 
     adaptiveAvgPool1dBackward(r.layer, r.input, lossGrad, propLoss);
 

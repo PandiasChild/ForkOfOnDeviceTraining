@@ -11,7 +11,8 @@ source of randomness from `examples/_shared/seeds.py` constants:
 Each side uses its own native init. PyTorch uses `torch.nn.init`
 defaults (Kaiming uniform for `Conv1d`/`Linear` weights, uniform
 `[-1/√fan_in, 1/√fan_in]` for biases). C uses the framework's native
-parameter init via `tensorInitWithDistribution(XAVIER_UNIFORM, ...)`.
+parameter init via each layer factory's `initTensor` + `initWeightTensor`/
+`initBiasTensor` (which route through `initDistribution`).
 Init weights are NOT exchanged between implementations — that's the
 design choice that keeps the parity story robust to known C-side init
 drift.

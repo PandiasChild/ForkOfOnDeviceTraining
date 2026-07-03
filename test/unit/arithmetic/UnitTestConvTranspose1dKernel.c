@@ -1,21 +1,37 @@
+#include <string.h>
+
 #include "ConvTranspose1dKernel.h"
 #include "QuantizationApi.h"
+#include "StorageApi.h"
 #include "TensorApi.h"
 #include "expected_conv_transpose_1d_kernel.h"
 #include "unity.h"
 
+static tensor_t *makeFloatTensor(size_t const *dims, size_t numDims, float const *data) {
+    size_t *ownedDims = reserveMemory(numDims * sizeof(size_t));
+    memcpy(ownedDims, dims, numDims * sizeof(size_t));
+    size_t *order = reserveMemory(numDims * sizeof(size_t));
+    setOrderOfDimsForNewTensor(numDims, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, ownedDims, numDims, order);
+    tensor_t *t = initTensor(shape, quantizationInitFloat(), NULL);
+    if (data != NULL) {
+        tensorFillFromFloatBuffer(t, data, calcNumberOfElementsByTensor(t));
+    }
+    return t;
+}
+
 void testConvTranspose1dKernelBasic() {
     float xData[] = {1.0f, 2.0f, 3.0f};
     size_t xDims[] = {1, 1, 3};
-    tensor_t *x = tensorInitFloat(xData, xDims, 3, NULL);
+    tensor_t *x = makeFloatTensor(xDims, 3, xData);
 
     float wData[] = {2.0f, 4.0f};
     size_t wDims[] = {1, 1, 2}; // [Cin=1, Cout/groups=1, K=2]
-    tensor_t *w = tensorInitFloat(wData, wDims, 3, NULL);
+    tensor_t *w = makeFloatTensor(wDims, 3, wData);
 
-    float yData[4] = {0};
     size_t yDims[] = {1, 1, 4};
-    tensor_t *y = tensorInitFloat(yData, yDims, 3, NULL);
+    tensor_t *y = makeFloatTensor(yDims, 3, NULL);
 
     kernel_t kernel;
     initKernel(&kernel, 2, VALID, 1, 1); // size, paddingType, dilation, stride
@@ -29,16 +45,15 @@ void testConvTranspose1dKernelBasic() {
 void testConvTranspose1dKernelWithStride() {
     float xData[] = {1.0f, 2.0f, 3.0f};
     size_t xDims[] = {1, 1, 3};
-    tensor_t *x = tensorInitFloat(xData, xDims, 3, NULL);
+    tensor_t *x = makeFloatTensor(xDims, 3, xData);
 
     float wData[] = {2.0f, 4.0f};
     size_t wDims[] = {1, 1, 2};
-    tensor_t *w = tensorInitFloat(wData, wDims, 3, NULL);
+    tensor_t *w = makeFloatTensor(wDims, 3, wData);
 
     // Lout = (3-1)*2 + (2-1)*1 + 0 + 1 = 6
-    float yData[6] = {0};
     size_t yDims[] = {1, 1, 6};
-    tensor_t *y = tensorInitFloat(yData, yDims, 3, NULL);
+    tensor_t *y = makeFloatTensor(yDims, 3, NULL);
 
     kernel_t kernel;
     initKernel(&kernel, 2, VALID, 1, 2); // size, padding, dilation, stride=2
@@ -52,16 +67,15 @@ void testConvTranspose1dKernelWithStride() {
 void testConvTranspose1dKernelWithOutputPadding() {
     float xData[] = {1.0f, 2.0f, 3.0f};
     size_t xDims[] = {1, 1, 3};
-    tensor_t *x = tensorInitFloat(xData, xDims, 3, NULL);
+    tensor_t *x = makeFloatTensor(xDims, 3, xData);
 
     float wData[] = {2.0f, 4.0f};
     size_t wDims[] = {1, 1, 2};
-    tensor_t *w = tensorInitFloat(wData, wDims, 3, NULL);
+    tensor_t *w = makeFloatTensor(wDims, 3, wData);
 
     // Lout = (3-1)*2 + (2-1)*1 + 1 + 1 = 7 with outputPadding=1
-    float yData[7] = {0};
     size_t yDims[] = {1, 1, 7};
-    tensor_t *y = tensorInitFloat(yData, yDims, 3, NULL);
+    tensor_t *y = makeFloatTensor(yDims, 3, NULL);
 
     kernel_t kernel;
     initKernel(&kernel, 2, VALID, 1, 2);
@@ -74,15 +88,14 @@ void testConvTranspose1dKernelWithOutputPadding() {
 
 void testConvTranspose1dKernelWithGroups() {
     // Lout = (3-1)*1 + (2-1)*1 + 0 + 1 = 4
-    float yData[1 * 4 * 4] = {0};
     size_t yDims[] = {1, 4, 4};
-    tensor_t *y = tensorInitFloat(yData, yDims, 3, NULL);
+    tensor_t *y = makeFloatTensor(yDims, 3, NULL);
 
     size_t xDims[] = {1, 4, 3};
-    tensor_t *x = tensorInitFloat((float *)inputConvT1dForward_groups, xDims, 3, NULL);
+    tensor_t *x = makeFloatTensor(xDims, 3, inputConvT1dForward_groups);
 
     size_t wDims[] = {4, 2, 2}; // [Cin=4, Cout/groups=2, K=2]
-    tensor_t *w = tensorInitFloat((float *)weightConvT1dForward_groups, wDims, 3, NULL);
+    tensor_t *w = makeFloatTensor(wDims, 3, weightConvT1dForward_groups);
 
     kernel_t kernel;
     initKernel(&kernel, 2, VALID, 1, 1);
@@ -111,14 +124,13 @@ void testConvTranspose1dKernelIsConvBackwardAdjoint() {
     //      = 2*1 + 1*2 + 0 + 1 = 5  ✓
 
     size_t xDims[] = {1, 3, 3};
-    tensor_t *gy = tensorInitFloat((float *)inputConvT1dForward_adjointCheck, xDims, 3, NULL);
+    tensor_t *gy = makeFloatTensor(xDims, 3, inputConvT1dForward_adjointCheck);
 
     size_t wDims[] = {3, 2, 3};
-    tensor_t *w = tensorInitFloat((float *)weightConvT1dForward_adjointCheck, wDims, 3, NULL);
+    tensor_t *w = makeFloatTensor(wDims, 3, weightConvT1dForward_adjointCheck);
 
-    float gxData[1 * 2 * 5] = {0};
     size_t yDims[] = {1, 2, 5};
-    tensor_t *gx = tensorInitFloat(gxData, yDims, 3, NULL);
+    tensor_t *gx = makeFloatTensor(yDims, 3, NULL);
 
     kernel_t kernel;
     initKernel(&kernel, 3, VALID, 1, 1);
@@ -160,15 +172,14 @@ void testConvTranspose1dKernelSamePaddingSymmetric() {
 
     float lossGradData[] = {1, 1, 1, 1, 1};
     size_t lossGradDims[] = {1, 1, 5};
-    tensor_t *lossGrad = tensorInitFloat(lossGradData, lossGradDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(lossGradDims, 3, lossGradData);
 
     float weightData[] = {2, 4, 8};
     size_t weightDims[] = {1, 1, 3};
-    tensor_t *weight = tensorInitFloat(weightData, weightDims, 3, NULL);
+    tensor_t *weight = makeFloatTensor(weightDims, 3, weightData);
 
-    float propLossData[5] = {0};
     size_t propLossDims[] = {1, 1, 5};
-    tensor_t *propLoss = tensorInitFloat(propLossData, propLossDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(propLossDims, 3, NULL);
 
     kernel_t kernel;
     initKernel(&kernel, 3, SAME, 1, 1); // size, paddingType, dilation, stride
@@ -202,15 +213,14 @@ void testConvTranspose1dKernelSamePaddingAsymmetric() {
 
     float lossGradData[] = {1, 1, 1, 1, 1};
     size_t lossGradDims[] = {1, 1, 5};
-    tensor_t *lossGrad = tensorInitFloat(lossGradData, lossGradDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(lossGradDims, 3, lossGradData);
 
     float weightData[] = {1, 2, 4, 8};
     size_t weightDims[] = {1, 1, 4};
-    tensor_t *weight = tensorInitFloat(weightData, weightDims, 3, NULL);
+    tensor_t *weight = makeFloatTensor(weightDims, 3, weightData);
 
-    float propLossData[5] = {0};
     size_t propLossDims[] = {1, 1, 5};
-    tensor_t *propLoss = tensorInitFloat(propLossData, propLossDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(propLossDims, 3, NULL);
 
     kernel_t kernel;
     initKernel(&kernel, 4, SAME, 1, 1);
@@ -223,14 +233,13 @@ void testConvTranspose1dKernelSamePaddingAsymmetric() {
 
 void testConvTranspose1dKernelAdjointSameGrouped() {
     size_t gyDims[] = {2, 4, 6};
-    tensor_t *gy = tensorInitFloat((float *)inputConvT1d_adjointSameGrouped, gyDims, 3, NULL);
+    tensor_t *gy = makeFloatTensor(gyDims, 3, inputConvT1d_adjointSameGrouped);
 
     size_t wDims[] = {4, 2, 3};
-    tensor_t *w = tensorInitFloat((float *)weightConvT1d_adjointSameGrouped, wDims, 3, NULL);
+    tensor_t *w = makeFloatTensor(wDims, 3, weightConvT1d_adjointSameGrouped);
 
     size_t propLossDims[] = {2, 4, 6};
-    float propLossData[2 * 4 * 6] = {0};
-    tensor_t *propLoss = tensorInitFloat(propLossData, propLossDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(propLossDims, 3, NULL);
 
     kernel_t kernel;
     initKernel(&kernel, 3, SAME, 1, 1);

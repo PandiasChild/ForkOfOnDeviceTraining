@@ -176,9 +176,8 @@ void testAddSymInt32TensorsInplace() {
     addSymInt32TensorsInplace(&aTensor, &bTensor);
 
     /* Build a heap Float32 output tensor for the convert-back step using the
-     * post-#106 primitives. The deprecated tensorInit(actual, dims, ...) form
-     * stored caller's data pointer; here, initTensor owns its own data buffer
-     * and convertTensor writes the result there. */
+     * post-#106 primitives: initTensor owns its own data buffer and
+     * convertTensor writes the result there. */
     size_t *outputDims = reserveMemory(1 * sizeof(size_t));
     outputDims[0] = numberOfValues;
     size_t *outputOrder = reserveMemory(1 * sizeof(size_t));

@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <string.h>
 
 #include "Conv1dTransposed.h"
 #include "ConvTranspose1dKernel.h"
@@ -24,17 +25,31 @@ typedef struct convT1dRunResult {
     quantization_t *q;
 } convT1dRunResult_t;
 
+static tensor_t *makeFloatTensor(size_t const *dims, size_t numDims, float const *data) {
+    size_t *ownedDims = reserveMemory(numDims * sizeof(size_t));
+    memcpy(ownedDims, dims, numDims * sizeof(size_t));
+    size_t *order = reserveMemory(numDims * sizeof(size_t));
+    setOrderOfDimsForNewTensor(numDims, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, ownedDims, numDims, order);
+    tensor_t *t = initTensor(shape, quantizationInitFloat(), NULL);
+    if (data != NULL) {
+        tensorFillFromFloatBuffer(t, data, calcNumberOfElementsByTensor(t));
+    }
+    return t;
+}
+
 static void convT1dBuild(convT1dRunResult_t *r, float const *weightData, size_t const *weightDims,
                          float const *biasData, size_t const *biasDims, int hasBias,
                          float const *inputData, size_t const *inputDims, size_t kSize,
                          size_t dilation, size_t stride, size_t groups, size_t outputPadding,
                          float *outputBuf, size_t const *outputDims) {
-    tensor_t *weightParam = tensorInitFloat((float *)weightData, (size_t *)weightDims, 3, NULL);
+    tensor_t *weightParam = makeFloatTensor(weightDims, 3, weightData);
     tensor_t *weightGrad = gradInitFloat(weightParam, NULL);
     r->weights = parameterInit(weightParam, weightGrad);
 
     if (hasBias) {
-        tensor_t *biasParam = tensorInitFloat((float *)biasData, (size_t *)biasDims, 1, NULL);
+        tensor_t *biasParam = makeFloatTensor(biasDims, 1, biasData);
         tensor_t *biasGrad = gradInitFloat(biasParam, NULL);
         r->bias = parameterInit(biasParam, biasGrad);
     } else {
@@ -50,8 +65,9 @@ static void convT1dBuild(convT1dRunResult_t *r, float const *weightData, size_t 
     r->lc.conv1dTransposed = &r->cfg;
     r->layer.config = &r->lc;
 
-    r->input = tensorInitFloat((float *)inputData, (size_t *)inputDims, 3, NULL);
-    r->output = tensorInitFloat(outputBuf, (size_t *)outputDims, 3, NULL);
+    r->input = makeFloatTensor(inputDims, 3, inputData);
+    r->output = makeFloatTensor(outputDims, 3, NULL);
+    (void)outputBuf;
 }
 
 /* Build a SYM_INT32 (HALF_AWAY, qMaxBits=12 operands) tensor from a float fixture:
@@ -210,10 +226,9 @@ void testConv1dTransposedBackwardSingleChannelWithBias() {
     for (size_t i = 0; i < 4; i++) {
         lossGradData[i] = 1.0f;
     }
-    tensor_t *lossGrad = tensorInitFloat(lossGradData, outputDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outputDims, 3, lossGradData);
 
-    float propLossData[3] = {0};
-    tensor_t *propLoss = tensorInitFloat(propLossData, inputDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(inputDims, 3, NULL);
 
     conv1dTransposedBackward(&r.layer, r.input, lossGrad, propLoss);
 
@@ -248,10 +263,9 @@ void testConv1dTransposedBackwardStride2() {
     for (size_t i = 0; i < 6; i++) {
         lossGradData[i] = 1.0f;
     }
-    tensor_t *lossGrad = tensorInitFloat(lossGradData, outputDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outputDims, 3, lossGradData);
 
-    float propLossData[3] = {0};
-    tensor_t *propLoss = tensorInitFloat(propLossData, inputDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(inputDims, 3, NULL);
 
     conv1dTransposedBackward(&r.layer, r.input, lossGrad, propLoss);
 
@@ -319,10 +333,9 @@ void testConv1dTransposedBackwardGroupsDepthwise() {
     for (size_t i = 0; i < 20; i++) {
         lossGradData[i] = 1.0f;
     }
-    tensor_t *lossGrad = tensorInitFloat(lossGradData, outputDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outputDims, 3, lossGradData);
 
-    float propLossData[1 * 4 * 4] = {0};
-    tensor_t *propLoss = tensorInitFloat(propLossData, inputDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(inputDims, 3, NULL);
 
     conv1dTransposedBackward(&r.layer, r.input, lossGrad, propLoss);
 
@@ -373,10 +386,9 @@ void testConv1dTransposedBackwardGroupsGrouped() {
     for (size_t i = 0; i < 40; i++) {
         lossGradData[i] = 1.0f;
     }
-    tensor_t *lossGrad = tensorInitFloat(lossGradData, outputDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outputDims, 3, lossGradData);
 
-    float propLossData[1 * 4 * 4] = {0};
-    tensor_t *propLoss = tensorInitFloat(propLossData, inputDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(inputDims, 3, NULL);
 
     conv1dTransposedBackward(&r.layer, r.input, lossGrad, propLoss);
 
@@ -866,10 +878,9 @@ void testConv1dTransposedWeightGradFloatRejectsBatchMismatch() {
 
     size_t lossDims[] = {1, 1, 4}; // lossGrad batch 1 != forward batch 2
     float lossData[4] = {0};
-    tensor_t *lossGrad = tensorInitFloat(lossData, lossDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(lossDims, 3, lossData);
     size_t propDims[] = {2, 1, 3};
-    float propBuf[6] = {0};
-    tensor_t *propLoss = tensorInitFloat(propBuf, propDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(propDims, 3, NULL);
 
     ASSERT_EXITS_WITH_FAILURE(conv1dTransposedBackward(&r.layer, r.input, lossGrad, propLoss));
 }
@@ -887,10 +898,9 @@ void testConv1dTransposedWeightGradFloatRejectsOutChannelMismatch() {
 
     size_t lossDims[] = {1, 3, 4}; // outChannels 3 != weight Cout 1
     float lossData[12] = {0};
-    tensor_t *lossGrad = tensorInitFloat(lossData, lossDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(lossDims, 3, lossData);
     size_t propDims[] = {1, 1, 3};
-    float propBuf[3] = {0};
-    tensor_t *propLoss = tensorInitFloat(propBuf, propDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(propDims, 3, NULL);
 
     ASSERT_EXITS_WITH_FAILURE(conv1dTransposedBackward(&r.layer, r.input, lossGrad, propLoss));
 }
@@ -951,10 +961,9 @@ void testConv1dTransposedBiasGradFloatRejectsOutChannelMismatch() {
 
     size_t lossDims[] = {1, 2, 4}; // outChannels 2 == weight Cout, != bias Cout 1
     float lossData[8] = {0};
-    tensor_t *lossGrad = tensorInitFloat(lossData, lossDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(lossDims, 3, lossData);
     size_t propDims[] = {1, 1, 3};
-    float propBuf[3] = {0};
-    tensor_t *propLoss = tensorInitFloat(propBuf, propDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(propDims, 3, NULL);
 
     ASSERT_EXITS_WITH_FAILURE(conv1dTransposedBackward(&r.layer, r.input, lossGrad, propLoss));
 }

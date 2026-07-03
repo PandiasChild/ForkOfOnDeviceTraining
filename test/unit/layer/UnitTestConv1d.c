@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <string.h>
 
 #include "Conv1d.h"
 #include "Conv1dApi.h"
@@ -13,9 +14,6 @@
 #include "unity.h"
 
 typedef struct conv1dFixtureSetup {
-    // Pointer-to-caller-stack dims: tensorInitFloat stores a raw pointer, not a copy.
-    // The pointed-to arrays must outlive the tensor — i.e. must live on the test
-    // function's stack, not on conv1dRunForward's stack.
     size_t const *weightDims; // length 3
     size_t const *biasDims;   // length 1 (or NULL when hasBias==0)
     size_t const *inputDims;  // length 3
@@ -41,6 +39,20 @@ typedef struct conv1dRunResult {
     quantization_t *q;
 } conv1dRunResult_t;
 
+static tensor_t *makeFloatTensor(size_t const *dims, size_t numDims, float const *data) {
+    size_t *ownedDims = reserveMemory(numDims * sizeof(size_t));
+    memcpy(ownedDims, dims, numDims * sizeof(size_t));
+    size_t *order = reserveMemory(numDims * sizeof(size_t));
+    setOrderOfDimsForNewTensor(numDims, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, ownedDims, numDims, order);
+    tensor_t *t = initTensor(shape, quantizationInitFloat(), NULL);
+    if (data != NULL) {
+        tensorFillFromFloatBuffer(t, data, calcNumberOfElementsByTensor(t));
+    }
+    return t;
+}
+
 // Builds the layer (using direct initConv1dConfigWithWeightsAndBias when groups != 1
 // — bypassing the UserAPI that hardcodes groups=1) and runs forward.
 // Caller owns output buffer.
@@ -52,12 +64,12 @@ static conv1dRunResult_t conv1dRunForward(conv1dFixtureSetup_t s, float *outputB
     // clobber the first.
     conv1dRunResult_t r = {0};
 
-    tensor_t *weightParam = tensorInitFloat((float *)s.weightData, (size_t *)s.weightDims, 3, NULL);
+    tensor_t *weightParam = makeFloatTensor(s.weightDims, 3, s.weightData);
     tensor_t *weightGrad = gradInitFloat(weightParam, NULL);
     r.weights = parameterInit(weightParam, weightGrad);
 
     if (s.hasBias) {
-        tensor_t *biasParam = tensorInitFloat((float *)s.biasData, (size_t *)s.biasDims, 1, NULL);
+        tensor_t *biasParam = makeFloatTensor(s.biasDims, 1, s.biasData);
         tensor_t *biasGrad = gradInitFloat(biasParam, NULL);
         r.bias = parameterInit(biasParam, biasGrad);
     } else {
@@ -89,8 +101,9 @@ static conv1dRunResult_t conv1dRunForward(conv1dFixtureSetup_t s, float *outputB
     l.config = &lc;
     r.layer = &l;
 
-    r.input = tensorInitFloat((float *)s.inputData, (size_t *)s.inputDims, 3, NULL);
-    r.output = tensorInitFloat(outputBuf, (size_t *)s.outputDims, 3, NULL);
+    r.input = makeFloatTensor(s.inputDims, 3, s.inputData);
+    r.output = makeFloatTensor(s.outputDims, 3, NULL);
+    (void)outputBuf;
     conv1dForward(r.layer, r.input, r.output);
 
     return r;
@@ -146,14 +159,12 @@ static layer_t *buildBorrowedConv1dLayer(parameter_t *weights, parameter_t *bias
 
 void testConv1dForwardMultiChannelWithBias() {
     size_t weightDims[] = {2, 3, 3};
-    tensor_t *weightParam =
-        tensorInitFloat((float *)weight_conv1d_multiChannelWithBias, weightDims, 3, NULL);
+    tensor_t *weightParam = makeFloatTensor(weightDims, 3, weight_conv1d_multiChannelWithBias);
     tensor_t *weightGrad = gradInitFloat(weightParam, NULL);
     parameter_t *weights = parameterInit(weightParam, weightGrad);
 
     size_t biasDims[] = {2};
-    tensor_t *biasParam =
-        tensorInitFloat((float *)bias_conv1d_multiChannelWithBias, biasDims, 1, NULL);
+    tensor_t *biasParam = makeFloatTensor(biasDims, 1, bias_conv1d_multiChannelWithBias);
     tensor_t *biasGrad = gradInitFloat(biasParam, NULL);
     parameter_t *bias = parameterInit(biasParam, biasGrad);
 
@@ -163,12 +174,10 @@ void testConv1dForwardMultiChannelWithBias() {
     layer_t *conv1d = buildBorrowedConv1dLayer(weights, bias, &kernel, q);
 
     size_t inputDims[] = {1, 3, 5};
-    tensor_t *input =
-        tensorInitFloat((float *)input_conv1d_multiChannelWithBias, inputDims, 3, NULL);
+    tensor_t *input = makeFloatTensor(inputDims, 3, input_conv1d_multiChannelWithBias);
 
-    float outputData[1 * 2 * 3] = {0};
     size_t outputDims[] = {1, 2, 3};
-    tensor_t *output = tensorInitFloat(outputData, outputDims, 3, NULL);
+    tensor_t *output = makeFloatTensor(outputDims, 3, NULL);
 
     conv1dForward(conv1d, input, output);
 
@@ -178,8 +187,7 @@ void testConv1dForwardMultiChannelWithBias() {
 
 void testConv1dForwardSingleChannelSingleBatch() {
     size_t weightDims[] = {1, 1, 2};
-    tensor_t *weightParam =
-        tensorInitFloat((float *)weight_conv1d_singleChannelSingleBatch, weightDims, 3, NULL);
+    tensor_t *weightParam = makeFloatTensor(weightDims, 3, weight_conv1d_singleChannelSingleBatch);
     tensor_t *weightGrad = gradInitFloat(weightParam, NULL);
     parameter_t *weights = parameterInit(weightParam, weightGrad);
 
@@ -190,12 +198,10 @@ void testConv1dForwardSingleChannelSingleBatch() {
     layer_t *conv1d = buildBorrowedConv1dLayer(weights, NULL, &kernel, q);
 
     size_t inputDims[] = {1, 1, 4};
-    tensor_t *input =
-        tensorInitFloat((float *)input_conv1d_singleChannelSingleBatch, inputDims, 3, NULL);
+    tensor_t *input = makeFloatTensor(inputDims, 3, input_conv1d_singleChannelSingleBatch);
 
-    float outputData[3] = {0};
     size_t outputDims[] = {1, 1, 3};
-    tensor_t *output = tensorInitFloat(outputData, outputDims, 3, NULL);
+    tensor_t *output = makeFloatTensor(outputDims, 3, NULL);
 
     conv1dForward(conv1d, input, output);
 
@@ -205,17 +211,13 @@ void testConv1dForwardSingleChannelSingleBatch() {
 
 void testConv1dBackwardSingleChannelWithBias() {
     size_t weightDims[] = {1, 1, 2};
-    tensor_t *weightParam =
-        tensorInitFloat((float *)weight_conv1d_singleChannelWithBias, weightDims, 3, NULL);
-    float weightGradData[2] = {0};
-    tensor_t *weightGrad = tensorInitFloat(weightGradData, weightDims, 3, NULL);
+    tensor_t *weightParam = makeFloatTensor(weightDims, 3, weight_conv1d_singleChannelWithBias);
+    tensor_t *weightGrad = makeFloatTensor(weightDims, 3, NULL);
     parameter_t *weights = parameterInit(weightParam, weightGrad);
 
     size_t biasDims[] = {1};
-    tensor_t *biasParam =
-        tensorInitFloat((float *)bias_conv1d_singleChannelWithBias, biasDims, 1, NULL);
-    float biasGradData[1] = {0};
-    tensor_t *biasGrad = tensorInitFloat(biasGradData, biasDims, 1, NULL);
+    tensor_t *biasParam = makeFloatTensor(biasDims, 1, bias_conv1d_singleChannelWithBias);
+    tensor_t *biasGrad = makeFloatTensor(biasDims, 1, NULL);
     parameter_t *bias = parameterInit(biasParam, biasGrad);
 
     kernel_t kernel;
@@ -224,13 +226,11 @@ void testConv1dBackwardSingleChannelWithBias() {
     layer_t *conv1d = buildBorrowedConv1dLayer(weights, bias, &kernel, q);
 
     size_t inputDims[] = {1, 1, 4};
-    tensor_t *input =
-        tensorInitFloat((float *)input_conv1d_singleChannelWithBias, inputDims, 3, NULL);
+    tensor_t *input = makeFloatTensor(inputDims, 3, input_conv1d_singleChannelWithBias);
 
     // forward (sanity — also fills output)
-    float outputData[3] = {0};
     size_t outputDims[] = {1, 1, 3};
-    tensor_t *output = tensorInitFloat(outputData, outputDims, 3, NULL);
+    tensor_t *output = makeFloatTensor(outputDims, 3, NULL);
     conv1dForward(conv1d, input, output);
 
     // lossGrad = ones (matches what the generator used for autograd)
@@ -238,11 +238,10 @@ void testConv1dBackwardSingleChannelWithBias() {
     for (size_t i = 0; i < 3; i++) {
         lossGradData[i] = 1.0f;
     }
-    tensor_t *lossGrad = tensorInitFloat(lossGradData, outputDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outputDims, 3, lossGradData);
 
     // propLoss buffer caller-owned, pre-zeroed
-    float propLossData[4] = {0};
-    tensor_t *propLoss = tensorInitFloat(propLossData, inputDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(inputDims, 3, NULL);
 
     conv1dBackward(conv1d, input, lossGrad, propLoss);
 
@@ -257,10 +256,8 @@ void testConv1dBackwardSingleChannelWithBias() {
 
 void testConv1dBackwardSamePaddingSymmetric() {
     size_t weightDims[] = {1, 1, 3};
-    tensor_t *weightParam =
-        tensorInitFloat((float *)weight_conv1d_samePaddingSymmetric, weightDims, 3, NULL);
-    float weightGradData[3] = {0};
-    tensor_t *weightGrad = tensorInitFloat(weightGradData, weightDims, 3, NULL);
+    tensor_t *weightParam = makeFloatTensor(weightDims, 3, weight_conv1d_samePaddingSymmetric);
+    tensor_t *weightGrad = makeFloatTensor(weightDims, 3, NULL);
     parameter_t *weights = parameterInit(weightParam, weightGrad);
 
     kernel_t kernel;
@@ -269,22 +266,19 @@ void testConv1dBackwardSamePaddingSymmetric() {
     layer_t *conv1d = buildBorrowedConv1dLayer(weights, NULL, &kernel, q);
 
     size_t inputDims[] = {1, 1, 5};
-    tensor_t *input =
-        tensorInitFloat((float *)input_conv1d_samePaddingSymmetric, inputDims, 3, NULL);
+    tensor_t *input = makeFloatTensor(inputDims, 3, input_conv1d_samePaddingSymmetric);
 
-    float outputData[5] = {0};
     size_t outputDims[] = {1, 1, 5};
-    tensor_t *output = tensorInitFloat(outputData, outputDims, 3, NULL);
+    tensor_t *output = makeFloatTensor(outputDims, 3, NULL);
     conv1dForward(conv1d, input, output);
 
     float lossGradData[5];
     for (size_t i = 0; i < 5; i++) {
         lossGradData[i] = 1.0f;
     }
-    tensor_t *lossGrad = tensorInitFloat(lossGradData, outputDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outputDims, 3, lossGradData);
 
-    float propLossData[5] = {0};
-    tensor_t *propLoss = tensorInitFloat(propLossData, inputDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(inputDims, 3, NULL);
 
     conv1dBackward(conv1d, input, lossGrad, propLoss);
 
@@ -378,10 +372,9 @@ void testConv1dBackwardGroupsDepthwise() {
     for (size_t i = 0; i < 16; i++) {
         lossGradData[i] = 1.0f;
     }
-    tensor_t *lossGrad = tensorInitFloat(lossGradData, outputDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outputDims, 3, lossGradData);
 
-    float propLossData[1 * 4 * 5] = {0};
-    tensor_t *propLoss = tensorInitFloat(propLossData, inputDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(inputDims, 3, NULL);
 
     conv1dBackward(r.layer, r.input, lossGrad, propLoss);
 
@@ -451,10 +444,9 @@ void testConv1dBackwardGroupsGrouped() {
     for (size_t i = 0; i < 32; i++) {
         lossGradData[i] = 1.0f;
     }
-    tensor_t *lossGrad = tensorInitFloat(lossGradData, outputDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outputDims, 3, lossGradData);
 
-    float propLossData[1 * 4 * 5] = {0};
-    tensor_t *propLoss = tensorInitFloat(propLossData, inputDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(inputDims, 3, NULL);
 
     conv1dBackward(r.layer, r.input, lossGrad, propLoss);
 
@@ -555,10 +547,9 @@ void testConv1dBackwardSamePaddingAsymmetric() {
     for (size_t i = 0; i < 5; i++) {
         lossGradData[i] = 1.0f;
     }
-    tensor_t *lossGrad = tensorInitFloat(lossGradData, outputDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outputDims, 3, lossGradData);
 
-    float propLossData[5] = {0};
-    tensor_t *propLoss = tensorInitFloat(propLossData, inputDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(inputDims, 3, NULL);
 
     conv1dBackward(r.layer, r.input, lossGrad, propLoss);
 
@@ -628,10 +619,9 @@ void testConv1dBackwardSamePaddingWithGroups() {
     for (size_t i = 0; i < 48; i++) {
         lossGradData[i] = 1.0f;
     }
-    tensor_t *lossGrad = tensorInitFloat(lossGradData, outputDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outputDims, 3, lossGradData);
 
-    float propLossData[2 * 4 * 6] = {0};
-    tensor_t *propLoss = tensorInitFloat(propLossData, inputDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(inputDims, 3, NULL);
 
     conv1dBackward(r.layer, r.input, lossGrad, propLoss);
 
@@ -704,10 +694,9 @@ void testConv1dBackwardPointwise() {
     // Non-uniform lossGrad (from the generator), NOT all-ones: pins output-channel
     // dependence in the weight/bias/input gradients — the channel-mixing that defines
     // a pointwise (1x1) conv. See generate_expected_conv1d.py::fixture_pointwise.
-    tensor_t *lossGrad = tensorInitFloat((float *)lossGrad_conv1d_pointwise, outputDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outputDims, 3, lossGrad_conv1d_pointwise);
 
-    float propLossData[2 * 3 * 5] = {0};
-    tensor_t *propLoss = tensorInitFloat(propLossData, inputDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(inputDims, 3, NULL);
 
     conv1dBackward(r.layer, r.input, lossGrad, propLoss);
 
@@ -785,11 +774,9 @@ void testConv1dBackwardExplicitPadding() {
 
     // Non-uniform lossGrad (from the generator), NOT all-ones — pins the output
     // channel in dL/dW (see generate_expected_conv1d.py::fixture_explicit_padding).
-    tensor_t *lossGrad =
-        tensorInitFloat((float *)lossGrad_conv1d_explicitPadding, outputDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outputDims, 3, lossGrad_conv1d_explicitPadding);
 
-    float propLossData[1 * 2 * 10] = {0};
-    tensor_t *propLoss = tensorInitFloat(propLossData, inputDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(inputDims, 3, NULL);
 
     conv1dBackward(r.layer, r.input, lossGrad, propLoss);
 
@@ -1243,10 +1230,9 @@ void testConv1dWeightGradFloatRejectsBatchMismatch() {
 
     size_t lossDims[] = {1, 1, 4}; // lossGrad batch 1 != forward batch 2
     float lossData[4] = {0};
-    tensor_t *lossGrad = tensorInitFloat(lossData, lossDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(lossDims, 3, lossData);
     size_t propDims[] = {2, 1, 5};
-    float propBuf[10] = {0};
-    tensor_t *propLoss = tensorInitFloat(propBuf, propDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(propDims, 3, NULL);
 
     ASSERT_EXITS_WITH_FAILURE(conv1dBackward(r.layer, r.input, lossGrad, propLoss));
 }
@@ -1278,10 +1264,9 @@ void testConv1dWeightGradFloatRejectsOutChannelMismatch() {
 
     size_t lossDims[] = {1, 3, 4}; // outChannels 3 != weight Cout 1
     float lossData[12] = {0};
-    tensor_t *lossGrad = tensorInitFloat(lossData, lossDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(lossDims, 3, lossData);
     size_t propDims[] = {1, 1, 5};
-    float propBuf[5] = {0};
-    tensor_t *propLoss = tensorInitFloat(propBuf, propDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(propDims, 3, NULL);
 
     ASSERT_EXITS_WITH_FAILURE(conv1dBackward(r.layer, r.input, lossGrad, propLoss));
 }
@@ -1334,9 +1319,9 @@ void testConv1dBiasGradFloatRejectsOutChannelMismatch() {
     float biasData[1] = {0};
     float inputData[5] = {0};
 
-    tensor_t *weightParam = tensorInitFloat(weightData, weightDims, 3, NULL);
+    tensor_t *weightParam = makeFloatTensor(weightDims, 3, weightData);
     parameter_t *weights = parameterInit(weightParam, gradInitFloat(weightParam, NULL));
-    tensor_t *biasParam = tensorInitFloat(biasData, biasDims, 1, NULL);
+    tensor_t *biasParam = makeFloatTensor(biasDims, 1, biasData);
     parameter_t *bias = parameterInit(biasParam, gradInitFloat(biasParam, NULL));
 
     kernel_t kernel;
@@ -1344,13 +1329,12 @@ void testConv1dBiasGradFloatRejectsOutChannelMismatch() {
     quantization_t *q = quantizationInitFloat();
     layer_t *layer = buildBorrowedConv1dLayer(weights, bias, &kernel, q);
 
-    tensor_t *input = tensorInitFloat(inputData, inputDims, 3, NULL);
+    tensor_t *input = makeFloatTensor(inputDims, 3, inputData);
     size_t lossDims[] = {1, 2, 4}; // outChannels 2 == weight Cout, != bias Cout 1
     float lossData[8] = {0};
-    tensor_t *lossGrad = tensorInitFloat(lossData, lossDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(lossDims, 3, lossData);
     size_t propDims[] = {1, 1, 5};
-    float propBuf[5] = {0};
-    tensor_t *propLoss = tensorInitFloat(propBuf, propDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(propDims, 3, NULL);
 
     ASSERT_EXITS_WITH_FAILURE(conv1dBackward(layer, input, lossGrad, propLoss));
 }

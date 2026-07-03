@@ -12,71 +12,7 @@
 #include "Rounding.h"
 #include "StorageApi.h"
 #include "TensorApi.h"
-#include "TensorApiInternal.h"
 #include "TensorConversion.h"
-
-// tensor inits
-
-tensor_t *tensorInitInt32(int32_t *data, size_t *dims, size_t numberOfDims, sparsity_t *sparsity) {
-    quantization_t *q = reserveMemory(sizeof(quantization_t));
-    initInt32Quantization(q);
-
-    return initTensorWithQInt32(data, dims, numberOfDims, q, sparsity);
-}
-
-tensor_t *tensorInitFloat(float *data, size_t *dims, size_t numberOfDims, sparsity_t *sparsity) {
-    quantization_t *q = reserveMemory(sizeof(quantization_t));
-    initFloat32Quantization(q);
-
-    return initTensorWithQFloat(data, dims, numberOfDims, q, sparsity);
-}
-
-tensor_t *tensorInitSymInt32(float *data, size_t *dims, size_t numberOfDims,
-                             roundingMode_t roundingMode, sparsity_t *sparsity) {
-    quantization_t *symInt32Q = reserveMemory(sizeof(quantization_t));
-    symInt32QConfig_t *symInt32QC = reserveMemory(sizeof(symInt32QConfig_t));
-    initSymInt32QConfig(roundingMode, symInt32QC);
-    initSymInt32Quantization(symInt32QC, symInt32Q);
-
-    return initTensorWithQSymInt32(data, dims, numberOfDims, symInt32Q, sparsity);
-}
-
-tensor_t *tensorInitAsym(float *data, size_t *dims, size_t numberOfDims, uint8_t qBits,
-                         roundingMode_t roundingMode, sparsity_t *sparsity) {
-    asymQConfig_t *asymQC = reserveMemory(sizeof(asymQConfig_t));
-    asymQC->qBits = qBits;
-    asymQC->roundingMode = roundingMode;
-    quantization_t *asymQ = reserveMemory(sizeof(quantization_t));
-    asymQ->type = ASYM;
-    asymQ->qConfig = asymQC;
-
-    return initTensorWithQAsym(data, dims, numberOfDims, asymQ, sparsity);
-}
-
-tensor_t *tensorInit(float *data, size_t *dims, size_t numberOfDims, quantization_t *quantization,
-                     sparsity_t *sparsity) {
-    switch (quantization->type) {
-    case FLOAT32:
-        return initTensorWithQFloat(data, dims, numberOfDims, quantization, sparsity);
-    case INT32:
-        size_t size = 0;
-        for (size_t i = 0; i < numberOfDims; i++) {
-            size += dims[i];
-        }
-        int32_t *dataInt = reserveMemory(size * sizeof(int32_t));
-        for (size_t i = 0; i < size; i++) {
-            dataInt[i] = (int32_t)data[i];
-        }
-        return initTensorWithQInt32(dataInt, dims, numberOfDims, quantization, sparsity);
-    case SYM_INT32:
-        return initTensorWithQSymInt32(data, dims, numberOfDims, quantization, sparsity);
-    case ASYM:
-        return initTensorWithQAsym(data, dims, numberOfDims, quantization, sparsity);
-    default:
-        PRINT_ERROR("Unknown QType");
-        exit(1);
-    }
-}
 
 tensor_t *initTensor(shape_t *shape, quantization_t *quantization, sparsity_t *sparsity) {
     tensor_t *tensor = reserveMemory(sizeof(tensor_t));
@@ -203,64 +139,6 @@ void initDistribution(tensor_t *tensor, const distribution_t *distribution) {
     }
 }
 
-tensor_t *tensorInitWithDistribution(distributionType_t distributionType, float *data, size_t *dims,
-                                     size_t numberOfDims, quantization_t *quantization,
-                                     sparsity_t *sparsity, size_t inputFeatures,
-                                     size_t outputFeatures) {
-    size_t numberOfValues = 1;
-    for (size_t i = 0; i < numberOfDims; i++) {
-        numberOfValues *= dims[i];
-    }
-
-    switch (distributionType) {
-    case ZEROS:
-        memset(data, 0, numberOfValues * sizeof(float));
-        break;
-    case ONES:
-        for (size_t i = 0; i < numberOfValues; i++) {
-            data[i] = 1.0f;
-        }
-        break;
-    case NORMAL:
-        for (size_t i = 0; i < numberOfValues; i++) {
-            data[i] = randomNormal(0.0f, 0.01f);
-        }
-        break;
-    case UNIFORM:
-        for (size_t i = 0; i < numberOfValues; i++) {
-            data[i] = randomUniform(-0.1f, 0.1f);
-        }
-        break;
-    case XAVIER_NORMAL:
-        for (size_t i = 0; i < numberOfValues; i++) {
-            data[i] = xavierNormal(1.0f, inputFeatures, outputFeatures);
-        }
-        break;
-    case XAVIER_UNIFORM:
-        for (size_t i = 0; i < numberOfValues; i++) {
-            data[i] = xavierUniform(1.0f, inputFeatures, outputFeatures);
-        }
-        break;
-    case KAIMING_NORMAL:
-        for (size_t i = 0; i < numberOfValues; i++) {
-            data[i] = kaimingNormal(sqrtf(2.0f), inputFeatures);
-        }
-        break;
-    case KAIMING_UNIFORM:
-        for (size_t i = 0; i < numberOfValues; i++) {
-            data[i] = kaimingUniform(sqrtf(2.0f), inputFeatures);
-        }
-        break;
-    default:
-        PRINT_ERROR("Unknown distribution type!");
-        exit(1);
-    }
-
-    tensor_t *tensor = tensorInit(data, dims, numberOfDims, quantization, sparsity);
-
-    return tensor;
-}
-
 // grad inits
 
 tensor_t *gradInitInt32(tensor_t *param, sparsity_t *sparsity) {
@@ -379,6 +257,8 @@ tensor_t *getTensorLike(tensor_t *tensor) {
 
 // Free Functions
 
+static void freeTensorPointer(tensor_t *tensor);
+
 parameter_t *parameterInit(tensor_t *param, tensor_t *grad) {
     parameter_t *parameter = reserveMemory(sizeof(parameter_t));
     parameter->param = param;
@@ -420,104 +300,6 @@ void freeParameter(parameter_t *parameter) {
         freeTensor(parameter->grad);
     }
     freeReservedMemory(parameter);
-}
-
-static tensor_t *initTensorWithQInt32(int32_t *data, size_t *dims, size_t numberOfDims,
-                                      quantization_t *quantization, sparsity_t *sparsity) {
-    tensor_t *tensor = malloc(sizeof(tensor_t));
-    tensor->data = (uint8_t *)data;
-    shape_t *shape = reserveMemory(sizeof(shape_t));
-    size_t *order = reserveMemory(numberOfDims * sizeof(size_t));
-    setOrderOfDimsForNewTensor(numberOfDims, order);
-    setShape(shape, dims, numberOfDims, order);
-    tensor->shape = shape;
-    tensor->quantization = quantization;
-    tensor->sparsity = sparsity;
-
-    return tensor;
-}
-
-static tensor_t *initTensorWithQFloat(float *data, size_t *dims, size_t numberOfDims,
-                                      quantization_t *quantization, sparsity_t *sparsity) {
-    tensor_t *tensor = reserveMemory(sizeof(tensor_t));
-
-    tensor->data = (uint8_t *)data;
-
-    shape_t *shape = reserveMemory(sizeof(shape_t));
-    size_t *order = reserveMemory(numberOfDims * sizeof(size_t));
-    setOrderOfDimsForNewTensor(numberOfDims, order);
-    setShape(shape, dims, numberOfDims, order);
-    tensor->shape = shape;
-    tensor->quantization = quantization;
-    tensor->sparsity = sparsity;
-
-    return tensor;
-}
-
-static tensor_t *initTensorWithQSymInt32(float *data, size_t *dims, size_t numberOfDims,
-                                         quantization_t *quantization, sparsity_t *sparsity) {
-
-    shape_t *shape = reserveMemory(sizeof(shape_t));
-    size_t *order = reserveMemory(numberOfDims * sizeof(size_t));
-    setOrderOfDimsForNewTensor(numberOfDims, order);
-    setShape(shape, dims, numberOfDims, order);
-
-    tensor_t floatTensor;
-    quantization_t floatQ;
-    initFloat32Quantization(&floatQ);
-
-    floatTensor.data = (uint8_t *)data;
-    floatTensor.shape = shape;
-    floatTensor.quantization = &floatQ;
-    floatTensor.sparsity = sparsity;
-
-    tensor_t *symInt32Tensor = reserveMemory(sizeof(tensor_t));
-
-    size_t numberOfValues = calcNumberOfElementsByTensor(&floatTensor);
-    int32_t *symInt32Data = reserveMemory(numberOfValues * sizeof(int32_t));
-
-    symInt32Tensor->data = (uint8_t *)symInt32Data;
-    symInt32Tensor->shape = shape;
-    symInt32Tensor->quantization = quantization;
-    convertTensor(&floatTensor, symInt32Tensor);
-    symInt32Tensor->sparsity = sparsity;
-
-    return symInt32Tensor;
-}
-
-static tensor_t *initTensorWithQAsym(float *data, size_t *dims, size_t numberOfDims,
-                                     quantization_t *quantization, sparsity_t *sparsity) {
-
-    shape_t *shape = reserveMemory(sizeof(shape_t));
-    size_t *order = reserveMemory(numberOfDims * sizeof(size_t));
-    setOrderOfDimsForNewTensor(numberOfDims, order);
-    setShape(shape, dims, numberOfDims, order);
-
-    tensor_t floatTensor;
-    quantization_t floatQ;
-    initFloat32Quantization(&floatQ);
-
-    floatTensor.data = (uint8_t *)data;
-    floatTensor.shape = shape;
-    floatTensor.quantization = &floatQ;
-    floatTensor.sparsity = sparsity;
-
-    tensor_t *asymTensor = reserveMemory(sizeof(tensor_t));
-
-    asymQConfig_t *asymQC = quantization->qConfig;
-    size_t bitsPerElement = asymQC->qBits;
-    size_t numberOfValues = calcNumberOfElementsByShape(shape);
-    size_t sizeData = ceilf((float)(numberOfValues * bitsPerElement / 8));
-    uint8_t *asymData = reserveMemory(sizeData);
-
-    asymTensor->data = asymData;
-    asymTensor->shape = shape;
-    asymTensor->quantization = quantization;
-    asymTensor->sparsity = sparsity;
-
-    convertTensor(&floatTensor, asymTensor);
-
-    return asymTensor;
 }
 
 static void freeTensorPointer(tensor_t *tensor) {

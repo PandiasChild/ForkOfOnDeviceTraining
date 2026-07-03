@@ -94,9 +94,9 @@ tensor_t *t   = initTensor(s, quantizationInitFloat(), NULL);
 tensorFillFromFloatBuffer(t, src, count);   /* or initDistribution(t, &d); */
 ```
 
-The deprecated `tensorInitFloat` / `tensorInitSymInt32` / `tensorInit*`
-family must not be used in new tests. Their attributes emit
-`-Wdeprecated-declarations` to surface accidental adoption.
+The `tensorInitFloat` / `tensorInitSymInt32` / `tensorInit*` family was
+removed in #182; it no longer exists, so new tests must use the Rule 1
+pattern above.
 
 A file-local factory like `makeFloatTensorForDistTest` in
 `test/unit/tensor/UnitTestTensorApi.c` is fine when 3+ tests in the same

@@ -1,9 +1,11 @@
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "AvgPool1d.h"
 #include "Layer.h"
 #include "QuantizationApi.h"
+#include "StorageApi.h"
 #include "TensorApi.h"
 #include "expected_avg_pool_1d.h"
 #include "unity.h"
@@ -14,6 +16,20 @@ typedef struct avgPool1dRunResult {
     tensor_t *output;
     quantization_t *q;
 } avgPool1dRunResult_t;
+
+static tensor_t *makeFloatTensor(size_t const *dims, size_t numDims, float const *data) {
+    size_t *ownedDims = reserveMemory(numDims * sizeof(size_t));
+    memcpy(ownedDims, dims, numDims * sizeof(size_t));
+    size_t *order = reserveMemory(numDims * sizeof(size_t));
+    setOrderOfDimsForNewTensor(numDims, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, ownedDims, numDims, order);
+    tensor_t *t = initTensor(shape, quantizationInitFloat(), NULL);
+    if (data != NULL) {
+        tensorFillFromFloatBuffer(t, data, calcNumberOfElementsByTensor(t));
+    }
+    return t;
+}
 
 static avgPool1dRunResult_t avgPool1dBuild(float const *inputData, size_t const *inputDims,
                                            size_t kSize, paddingType_t padding, size_t dilation,
@@ -35,8 +51,9 @@ static avgPool1dRunResult_t avgPool1dBuild(float const *inputData, size_t const 
 
     avgPool1dRunResult_t r = {0};
     r.layer = &layerStore;
-    r.input = tensorInitFloat((float *)inputData, (size_t *)inputDims, 3, NULL);
-    r.output = tensorInitFloat(outputBuf, (size_t *)outputDims, 3, NULL);
+    r.input = makeFloatTensor(inputDims, 3, inputData);
+    r.output = makeFloatTensor(outputDims, 3, NULL);
+    (void)outputBuf;
     r.q = q;
     return r;
 }
@@ -71,10 +88,9 @@ void testAvgPool1dBackwardBasic(void) {
     for (size_t i = 0; i < 3; i++) {
         lossGradData[i] = 1.0f;
     }
-    tensor_t *lossGrad = tensorInitFloat(lossGradData, (size_t *)outputDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outputDims, 3, lossGradData);
 
-    float propLossData[1 * 1 * 4] = {0};
-    tensor_t *propLoss = tensorInitFloat(propLossData, (size_t *)inputDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(inputDims, 3, NULL);
 
     avgPool1dBackward(r.layer, r.input, lossGrad, propLoss);
 
@@ -102,10 +118,9 @@ void testAvgPool1dMultiChannel(void) {
     for (size_t i = 0; i < 12; i++) {
         lossGradData[i] = 1.0f;
     }
-    tensor_t *lossGrad = tensorInitFloat(lossGradData, (size_t *)outputDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outputDims, 3, lossGradData);
 
-    float propLossData[1 * 3 * 5] = {0};
-    tensor_t *propLoss = tensorInitFloat(propLossData, (size_t *)inputDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(inputDims, 3, NULL);
 
     avgPool1dBackward(r.layer, r.input, lossGrad, propLoss);
     for (size_t i = 0; i < expectedPropLoss_avgPool1d_multiChannel_len; i++) {
@@ -132,10 +147,9 @@ void testAvgPool1dMultiBatch(void) {
     for (size_t i = 0; i < 24; i++) {
         lossGradData[i] = 1.0f;
     }
-    tensor_t *lossGrad = tensorInitFloat(lossGradData, (size_t *)outputDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outputDims, 3, lossGradData);
 
-    float propLossData[4 * 2 * 4] = {0};
-    tensor_t *propLoss = tensorInitFloat(propLossData, (size_t *)inputDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(inputDims, 3, NULL);
 
     avgPool1dBackward(r.layer, r.input, lossGrad, propLoss);
     for (size_t i = 0; i < expectedPropLoss_avgPool1d_multiBatch_len; i++) {
@@ -158,11 +172,9 @@ void testAvgPool1dWithStrideAndDilation(void) {
                                  ((float *)r.output->data)[i]);
     }
 
-    tensor_t *lossGrad = tensorInitFloat((float *)lossGrad_avgPool1d_withStrideAndDilation,
-                                         (size_t *)outputDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outputDims, 3, lossGrad_avgPool1d_withStrideAndDilation);
 
-    float propLossData[1 * 1 * 9] = {0};
-    tensor_t *propLoss = tensorInitFloat(propLossData, (size_t *)inputDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(inputDims, 3, NULL);
 
     avgPool1dBackward(r.layer, r.input, lossGrad, propLoss);
     for (size_t i = 0; i < expectedPropLoss_avgPool1d_withStrideAndDilation_len; i++) {
@@ -189,10 +201,9 @@ void testAvgPool1dWithSamePadding(void) {
     for (size_t i = 0; i < 5; i++) {
         lossGradData[i] = 1.0f;
     }
-    tensor_t *lossGrad = tensorInitFloat(lossGradData, (size_t *)outputDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outputDims, 3, lossGradData);
 
-    float propLossData[1 * 1 * 5] = {0};
-    tensor_t *propLoss = tensorInitFloat(propLossData, (size_t *)inputDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(inputDims, 3, NULL);
 
     avgPool1dBackward(r.layer, r.input, lossGrad, propLoss);
     for (size_t i = 0; i < expectedPropLoss_avgPool1d_withSamePadding_len; i++) {
@@ -217,10 +228,9 @@ void testAvgPool1dEdgeCases(void) {
     }
 
     float lossGradData[1] = {1.0f};
-    tensor_t *lossGrad = tensorInitFloat(lossGradData, (size_t *)outputDims, 3, NULL);
+    tensor_t *lossGrad = makeFloatTensor(outputDims, 3, lossGradData);
 
-    float propLossData[1 * 1 * 4] = {0};
-    tensor_t *propLoss = tensorInitFloat(propLossData, (size_t *)inputDims, 3, NULL);
+    tensor_t *propLoss = makeFloatTensor(inputDims, 3, NULL);
 
     avgPool1dBackward(r.layer, r.input, lossGrad, propLoss);
     // 1/K = 0.25 contribution to each of 4 input positions.
