@@ -26,6 +26,13 @@ hard-pinned `FLOAT32`, closing the gap described above by default. `SYM_INT32`
 parameter grads remain available and legitimate only via the explicit
 `weightGradStorage`/`biasGradStorage` knob on `layerQuant_t` (#261).
 
+## Packing / byte-count invariant (#172)
+
+- Payload sizing: byte counts for tensor data always ceiling-divide;
+  `calcNumberOfBytesForData(q, N)` is the single authority (allocation, copy,
+  zeroing, serialization). `calcBytesPerElement` is an unpacked per-element
+  stride — multiplying it by N over-counts packed sub-byte payloads (#172).
+
 ## SYM ↔ * conversion bridge (#227)
 
 `SYM` is the sub-byte bit-packed **storage** dtype; `SYM_INT32` is the int32-slot

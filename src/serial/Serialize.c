@@ -31,11 +31,13 @@
 
 void serializeTensor(tensor_t *tensor, FILE *f) {
     size_t numberOfValues = calcNumberOfElementsByTensor(tensor);
-    size_t bytesPerValue = calcBytesPerElement(tensor->quantization);
+    /* Data payload = packed size (calcNumberOfBytesForData) -- byte-identical to
+     * N * elementSize for byte-aligned dtypes, packed-tight for sub-byte (#172). */
+    size_t dataBytes = calcNumberOfBytesForData(tensor->quantization, numberOfValues);
 
     serializeShape(tensor->shape, f);
     serializeQuantization(tensor->quantization, f);
-    serializeData(tensor->data, numberOfValues, bytesPerValue, f);
+    serializeData(tensor->data, dataBytes, 1, f);
     serializeSparsity();
 }
 

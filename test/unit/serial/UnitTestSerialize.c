@@ -1,4 +1,6 @@
+#include <stdbool.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "AdaptiveAvgPool1d.h"
 #include "AdaptivePool1dApi.h"
@@ -1197,6 +1199,111 @@ static void testRoundTripQuantizationLayer(void) {
     TEST_ASSERT_EQUAL(capturedSerialPropLossZP, capturedDeserialPropLossZP);
 }
 
+/*! SYM sub-byte tensor DATA record: qBits=4, N=10 -> exactly ceil(40/8) = 5
+ *  packed data bytes on the wire. The u32 sentinel written right after the
+ *  record catches any sizing skew between writer and reader (one-sided
+ *  mutation -> misaligned sentinel).
+ *  Mutation guard: reverting BOTH sides to N * calcBytesPerElement makes
+ *  serialize fwrite 10 bytes from the 5-byte heap buffer and deserialize
+ *  fread 10 into it -> ASan RED (over-read + OOB write); reverting ONE side
+ *  misaligns the sentinel -> RED in plain debug too. */
+static void testSerializeTensorSymSubByteRoundTripsPackedData(void) {
+    size_t *dims = reserveMemory(2 * sizeof(size_t));
+    dims[0] = 2;
+    dims[1] = 5;
+    size_t *order = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, 2, order);
+    tensor_t *src = initTensor(shape, quantizationInitSym(4, HALF_AWAY), NULL);
+    tensorFillFromFloatBuffer(src, (float[]){1.f, -2.f, 3.f, -4.f, 5.f, -6.f, 7.f, -6.f, 5.f, -4.f},
+                              10);
+    float srcScale = ((symQConfig_t *)src->quantization->qConfig)->scale;
+    uint8_t srcBytes[5];
+    memcpy(srcBytes, src->data, 5);
+
+    FILE *f = fopen(FILE_PATH, "wb");
+    serializeTensor(src, f);
+    uint32_t sentinelOut = 0x53454E54u;
+    fwrite(&sentinelOut, sizeof(sentinelOut), 1, f);
+    fclose(f);
+
+    size_t *dDims = reserveMemory(2 * sizeof(size_t));
+    dDims[0] = 2;
+    dDims[1] = 5;
+    size_t *dOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, dOrder);
+    shape_t *dShape = reserveMemory(sizeof(shape_t));
+    setShape(dShape, dDims, 2, dOrder);
+    tensor_t *dst = initTensor(dShape, quantizationInitSym(4, HALF_AWAY), NULL);
+
+    f = fopen(FILE_PATH, "rb");
+    deserializeTensor(dst, f);
+    uint32_t sentinelIn = 0;
+    fread(&sentinelIn, sizeof(sentinelIn), 1, f);
+    fclose(f);
+
+    /* CAPTURE -> free -> assert (file convention). */
+    float dstScale = ((symQConfig_t *)dst->quantization->qConfig)->scale;
+    uint8_t dstBytes[5];
+    memcpy(dstBytes, dst->data, 5);
+    freeTensor(src);
+    freeTensor(dst);
+
+    TEST_ASSERT_EQUAL_HEX32(0x53454E54u, sentinelIn);
+    TEST_ASSERT_EQUAL_FLOAT(srcScale, dstScale);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(srcBytes, dstBytes, 5);
+}
+
+/*! BOOL tensor DATA record: N=12 bools -> 2 packed bytes on the wire
+ *  (pre-fix: 12). Same sentinel discipline as the SYM round trip. */
+static void testSerializeTensorBoolRoundTripsPackedData(void) {
+    size_t *dims = reserveMemory(2 * sizeof(size_t));
+    dims[0] = 3;
+    dims[1] = 4;
+    size_t *order = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, 2, order);
+    tensor_t *src = initTensor(shape, quantizationInitBool(), NULL);
+    bool pattern[12] = {true, false, true,  true, false, false,
+                        true, false, false, true, true,  false};
+    tensorFillFromBoolBuffer(src, pattern, 12);
+
+    FILE *f = fopen(FILE_PATH, "wb");
+    serializeTensor(src, f);
+    uint32_t sentinelOut = 0x53454E54u;
+    fwrite(&sentinelOut, sizeof(sentinelOut), 1, f);
+    fclose(f);
+
+    size_t *dDims = reserveMemory(2 * sizeof(size_t));
+    dDims[0] = 3;
+    dDims[1] = 4;
+    size_t *dOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, dOrder);
+    shape_t *dShape = reserveMemory(sizeof(shape_t));
+    setShape(dShape, dDims, 2, dOrder);
+    tensor_t *dst = initTensor(dShape, quantizationInitBool(), NULL);
+
+    f = fopen(FILE_PATH, "rb");
+    deserializeTensor(dst, f);
+    uint32_t sentinelIn = 0;
+    fread(&sentinelIn, sizeof(sentinelIn), 1, f);
+    fclose(f);
+
+    bool got[12];
+    for (size_t i = 0; i < 12; i++) {
+        got[i] = tensorBoolGet(dst, i);
+    }
+    freeTensor(src);
+    freeTensor(dst);
+
+    TEST_ASSERT_EQUAL_HEX32(0x53454E54u, sentinelIn);
+    for (size_t i = 0; i < 12; i++) {
+        TEST_ASSERT_EQUAL_INT(pattern[i], got[i]);
+    }
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testRoundTripLinear);
@@ -1211,5 +1318,7 @@ int main(void) {
     RUN_TEST(testRoundTripDropout);
     RUN_TEST(testRoundTripLayerNorm);
     RUN_TEST(testRoundTripQuantizationLayer);
+    RUN_TEST(testSerializeTensorSymSubByteRoundTripsPackedData);
+    RUN_TEST(testSerializeTensorBoolRoundTripsPackedData);
     return UNITY_END();
 }

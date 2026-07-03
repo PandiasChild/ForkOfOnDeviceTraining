@@ -31,9 +31,10 @@ void deserializeTensor(tensor_t *tensor, FILE *f) {
     deserializeQuantization(tensor->quantization, f);
 
     size_t numberOfValues = calcNumberOfElementsByShape(tensor->shape);
-    size_t bytesPerValue = calcBytesPerElement(tensor->quantization);
+    /* Mirrors Serialize.c: payload length is the packed size. */
+    size_t dataBytes = calcNumberOfBytesForData(tensor->quantization, numberOfValues);
 
-    deserializeData(tensor->data, numberOfValues, bytesPerValue, f);
+    deserializeData(tensor->data, dataBytes, 1, f);
     deserializeSparsity();
 }
 
