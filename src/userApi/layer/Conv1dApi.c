@@ -166,13 +166,19 @@ layer_t *conv1dLayerInit(conv1dInit_t *init, layerQuant_t *lq) {
 
     cfg->kernel = buildConv1dKernel(init);
     size_t fanIn = (init->inChannels / groups) * init->kernelSize;
-    quantization_t *gradQ = quantizationInitFloat(); /* Conv1d backward is FLOAT32-only */
+    /* Grad storage knob (#261): Conv1d backward is FLOAT32-only, so a NULL knob
+     * keeps the hard-pinned FLOAT32 default; a non-NULL weightGradStorage /
+     * biasGradStorage overrides it explicitly. */
+    quantization_t *floatGradQ = quantizationInitFloat();
+    quantization_t *weightGradQ =
+        lq->weightGradStorage != NULL ? lq->weightGradStorage : floatGradQ;
+    quantization_t *biasGradQ = lq->biasGradStorage != NULL ? lq->biasGradStorage : floatGradQ;
     cfg->weights =
         allocateConv1dWeights(init->outChannels, init->inChannels, groups, init->kernelSize,
-                              init->weightInit, lq->weightStorage, gradQ);
+                              init->weightInit, lq->weightStorage, weightGradQ);
     cfg->bias =
-        hasBias ? allocateConv1dBias(init->outChannels, fanIn, lq->biasStorage, gradQ) : NULL;
-    freeQuantization(gradQ);
+        hasBias ? allocateConv1dBias(init->outChannels, fanIn, lq->biasStorage, biasGradQ) : NULL;
+    freeQuantization(floatGradQ);
     cfg->groups = groups;
 
     /* Borrowing: store the forward-wire/dx-wire storage configs verbatim, no copy.
@@ -208,13 +214,19 @@ layer_t *conv1dLayerInitOwning(conv1dInit_t *init, layerQuant_t *lq) {
      * so the parameter tensors own their quantization_t — caller can drop
      * lq->weightStorage / lq->biasStorage immediately. */
     size_t fanIn = (init->inChannels / groups) * init->kernelSize;
-    quantization_t *gradQ = quantizationInitFloat(); /* Conv1d backward is FLOAT32-only */
+    /* Grad storage knob (#261): Conv1d backward is FLOAT32-only, so a NULL knob
+     * keeps the hard-pinned FLOAT32 default; a non-NULL weightGradStorage /
+     * biasGradStorage overrides it explicitly. */
+    quantization_t *floatGradQ = quantizationInitFloat();
+    quantization_t *weightGradQ =
+        lq->weightGradStorage != NULL ? lq->weightGradStorage : floatGradQ;
+    quantization_t *biasGradQ = lq->biasGradStorage != NULL ? lq->biasGradStorage : floatGradQ;
     cfg->weights =
         allocateConv1dWeights(init->outChannels, init->inChannels, groups, init->kernelSize,
-                              init->weightInit, lq->weightStorage, gradQ);
+                              init->weightInit, lq->weightStorage, weightGradQ);
     cfg->bias =
-        hasBias ? allocateConv1dBias(init->outChannels, fanIn, lq->biasStorage, gradQ) : NULL;
-    freeQuantization(gradQ);
+        hasBias ? allocateConv1dBias(init->outChannels, fanIn, lq->biasStorage, biasGradQ) : NULL;
+    freeQuantization(floatGradQ);
     cfg->groups = groups;
 
     /* Owning: same arithmetic as Borrowing; deep-copy the two storage configs

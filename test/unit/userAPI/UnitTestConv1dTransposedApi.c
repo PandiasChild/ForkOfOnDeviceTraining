@@ -225,6 +225,41 @@ void testConv1dTransposedLayerInitKeepsFloat32Grad(void) {
                                   "Conv1dTransposed bias grad must stay FLOAT32");
 }
 
+void testConv1dTransposedLayerInitOwningWeightGradStorageKnobOverridesFloatDefault(void) {
+    /* Default (knob == NULL) grad storage stays hard-pinned FLOAT32 (Conv1dTransposed
+     * backward is FLOAT32-only); a non-NULL weightGradStorage config must
+     * override that default end-to-end, through the same getQLike path
+     * gradInit already uses (mirrors Linear's #261 knob). */
+    quantization_t *q = quantizationInitFloat();
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, q);
+    quantization_t *gradKnob = quantizationInitSymInt32WithBits(HALF_AWAY, 16);
+    lq.weightGradStorage = gradKnob;
+
+    layer_t *layer = conv1dTransposedLayerInitOwning(
+        &(conv1dTransposedInit_t){
+            .inChannels = 8,
+            .outChannels = 4,
+            .kernelSize = 3,
+            .bias = BIAS_TRUE,
+        },
+        &lq);
+
+    conv1dTransposedConfig_t *cfg = layer->config->conv1dTransposed;
+    tensor_t *wGrad = getGradFromParameter(cfg->weights);
+    int gradType = wGrad->quantization->type;
+    uint8_t gradBits =
+        (gradType == SYM_INT32) ? ((symInt32QConfig_t *)wGrad->quantization->qConfig)->qMaxBits : 0;
+
+    freeConv1dTransposedLayer(layer);
+    freeQuantization(gradKnob);
+    freeQuantization(q);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(SYM_INT32, gradType,
+                                  "weightGradStorage knob must override the FLOAT32 default");
+    TEST_ASSERT_EQUAL_UINT8(16, gradBits);
+}
+
 void testConv1dTransposedLayerInitDefaultWeightsWithinPyTorchBound(void) {
     /* PyTorch default ConvTranspose1d init: weight ~ U(-1/sqrt(fan_in),
      * +1/sqrt(fan_in)), bias drawn from the same uniform; for the
@@ -312,6 +347,7 @@ int main(void) {
     RUN_TEST(testConv1dTransposedLayerInitOwningDeepCopiesQuantizations);
     RUN_TEST(testConv1dTransposedLayerInitOwningFreesAllAllocationsWithoutLeak);
     RUN_TEST(testConv1dTransposedLayerInitKeepsFloat32Grad);
+    RUN_TEST(testConv1dTransposedLayerInitOwningWeightGradStorageKnobOverridesFloatDefault);
     RUN_TEST(testConv1dTransposedLayerInitDefaultWeightsWithinPyTorchBound);
     RUN_TEST(testConv1dTransposedLayerInitKaimingUniformOverrideUsesHeBound);
     return UNITY_END();

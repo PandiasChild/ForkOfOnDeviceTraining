@@ -17,7 +17,7 @@ void sgdInit(sgd_t *sgd, float learningRate, float momentumFactor, float weightD
 }
 
 static void sgdStepFloat(optimizer_t *optim) {
-    sgd_t *sgd = (sgd_t *)optim->impl;
+    sgd_t *sgd = optim->impl->sgd;
 
     for (size_t stateIndex = 0; stateIndex < optim->sizeStates; stateIndex++) {
         parameter_t *param = optim->parameter[stateIndex];
@@ -33,7 +33,7 @@ static void sgdStepFloat(optimizer_t *optim) {
 }
 
 static void sgdStepSymInt32(optimizer_t *optim) {
-    sgd_t *sgd = (sgd_t *)optim->impl;
+    sgd_t *sgd = optim->impl->sgd;
 
     for (size_t stateIndex = 0; stateIndex < optim->sizeStates; stateIndex++) {
         parameter_t *param = optim->parameter[stateIndex];

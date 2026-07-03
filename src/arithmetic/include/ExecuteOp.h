@@ -7,7 +7,7 @@
 #include "Tensor.h"
 
 /* The one conversion funnel (design spec 2026-07-02, §3-§4). Every op runs:
- *   prologue   — operands whose dtype != arithmeticQ are converted into
+ *   prologue   — operands whose dtype != arithmetic are converted into
  *                transient stack scratch (sources are never mutated)
  *   kernel     — pure computation: operands (in arithmetic representation)
  *                -> raw intermediate (SYM kernels emit raw int32 mantissas)
@@ -35,8 +35,8 @@ void executeOp(opKernelFn_t kernel, tensor_t **inputs, size_t nInputs, arithmeti
                tensor_t *target, outputMode_t mode);
 
 /* Copies operand 0 into rawOut (data + SYM scale if applicable). For ops whose
- * increment is produced inline (LayerNorm dgamma/dbeta) and for the
- * Quantization layer (pure convert). */
+ * increment is produced inline (LayerNorm dgamma/dbeta only — the Quantization
+ * layer is a pure conversion node routed through executeConvert instead). */
 void executeOpIdentityKernel(tensor_t **operands, size_t nOperands, tensor_t *rawOut);
 
 /* Kernel-less funnel form: storage-to-storage conversion (1 input,

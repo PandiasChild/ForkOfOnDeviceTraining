@@ -1,5 +1,7 @@
 #define SOURCE_FILE "UNIT_TEST_LAYER_WEIGHTS_API"
 
+#include <string.h>
+
 #include "Conv1d.h"
 #include "Conv1dApi.h"
 #include "Conv1dTransposed.h"
@@ -12,8 +14,10 @@
 #include "Linear.h"
 #include "LinearApi.h"
 #include "QuantizationApi.h"
+#include "StorageApi.h"
 #include "Tensor.h"
 #include "TensorApi.h"
+#include "TensorConversion.h"
 #include "unity.h"
 
 void setUp() {}
@@ -69,6 +73,92 @@ void testLayerLoadWeightsLinearNoBiasAcceptsNullBiasData(void) {
     TEST_ASSERT_NULL(cfg->bias);
 
     freeLinearLayer(layer);
+}
+
+void testLayerLoadWeightsLinearQuantizesForSymStorage(void) {
+    /* linearLayerInit's KAIMING/uniform init requires FLOAT32-native weight
+     * storage (LayerCommon.c requireFloat32), so a SYM_INT32-native Linear
+     * layer must be hand-wired directly (Task-9 report pattern, mirroring
+     * buildBorrowedLinearLayer in UnitTestLinear.c) rather than built through
+     * the factory. This exercises the LINEAR arm of layerLoadWeights on
+     * non-FLOAT32 storage — only the LAYERNORM arm had an equivalent
+     * SYM-storage test (above); the Task-9 memcpy -> tensorFillFromFloatBuffer
+     * fix was otherwise untested here. */
+    size_t *weightDims = reserveMemory(2 * sizeof(size_t));
+    weightDims[0] = 2;
+    weightDims[1] = 3;
+    size_t *weightOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, weightOrder);
+    shape_t *weightShape = reserveMemory(sizeof(shape_t));
+    setShape(weightShape, weightDims, 2, weightOrder);
+    tensor_t *weightParam = initTensor(weightShape, quantizationInitSymInt32(HALF_AWAY), NULL);
+    parameter_t *weights = parameterInit(weightParam, NULL);
+
+    size_t *biasDims = reserveMemory(1 * sizeof(size_t));
+    biasDims[0] = 2;
+    size_t *biasOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, biasOrder);
+    shape_t *biasShape = reserveMemory(sizeof(shape_t));
+    setShape(biasShape, biasDims, 1, biasOrder);
+    tensor_t *biasParam = initTensor(biasShape, quantizationInitSymInt32(HALF_AWAY), NULL);
+    parameter_t *bias = parameterInit(biasParam, NULL);
+
+    linearConfig_t *cfg = reserveMemory(sizeof(linearConfig_t));
+    cfg->weights = weights;
+    cfg->bias = bias;
+    layerConfig_t *layerCfg = reserveMemory(sizeof(layerConfig_t));
+    layerCfg->linear = cfg;
+    layer_t *layer = reserveMemory(sizeof(layer_t));
+    initLayer(layer, LINEAR, layerCfg);
+
+    float weightData[6] = {-1.f, 2.f, -3.f, 4.f, 5.f, -6.f};
+    float biasData[2] = {-1.f, 3.f};
+    layerLoadWeights(layer, weightData, biasData);
+
+    int32_t loadedWeightMantissas[6];
+    memcpy(loadedWeightMantissas, weightParam->data, sizeof(loadedWeightMantissas));
+    float loadedWeightScale = ((symInt32QConfig_t *)weightParam->quantization->qConfig)->scale;
+    int32_t loadedBiasMantissas[2];
+    memcpy(loadedBiasMantissas, biasParam->data, sizeof(loadedBiasMantissas));
+    float loadedBiasScale = ((symInt32QConfig_t *)biasParam->quantization->qConfig)->scale;
+
+    /* Gold: convertTensor directly on the same float source, independent of
+     * layerLoadWeights's own dispatch (a reverted memcpy would reinterpret
+     * weightData's float bit patterns as int32 mantissas — nowhere near
+     * these absmax-derived golds). */
+    quantization_t floatQ;
+    initFloat32Quantization(&floatQ);
+
+    tensor_t *weightGold =
+        initTensor(getShapeLike(weightParam->shape), quantizationInitSymInt32(HALF_AWAY), NULL);
+    tensor_t weightSrcView;
+    setTensorValues(&weightSrcView, (uint8_t *)weightData, weightGold->shape, &floatQ, NULL);
+    convertTensor(&weightSrcView, weightGold);
+    int32_t goldWeightMantissas[6];
+    memcpy(goldWeightMantissas, weightGold->data, sizeof(goldWeightMantissas));
+    float goldWeightScale = ((symInt32QConfig_t *)weightGold->quantization->qConfig)->scale;
+
+    tensor_t *biasGold =
+        initTensor(getShapeLike(biasParam->shape), quantizationInitSymInt32(HALF_AWAY), NULL);
+    tensor_t biasSrcView;
+    setTensorValues(&biasSrcView, (uint8_t *)biasData, biasGold->shape, &floatQ, NULL);
+    convertTensor(&biasSrcView, biasGold);
+    int32_t goldBiasMantissas[2];
+    memcpy(goldBiasMantissas, biasGold->data, sizeof(goldBiasMantissas));
+    float goldBiasScale = ((symInt32QConfig_t *)biasGold->quantization->qConfig)->scale;
+
+    freeParameter(weights);
+    freeParameter(bias);
+    freeReservedMemory(cfg);
+    freeReservedMemory(layerCfg);
+    freeReservedMemory(layer);
+    freeTensor(weightGold);
+    freeTensor(biasGold);
+
+    TEST_ASSERT_EQUAL_INT32_ARRAY(goldWeightMantissas, loadedWeightMantissas, 6);
+    TEST_ASSERT_EQUAL_FLOAT(goldWeightScale, loadedWeightScale);
+    TEST_ASSERT_EQUAL_INT32_ARRAY(goldBiasMantissas, loadedBiasMantissas, 2);
+    TEST_ASSERT_EQUAL_FLOAT(goldBiasScale, loadedBiasScale);
 }
 
 void testLayerLoadWeightsConv1dOverwritesWeightAndBiasTensors(void) {
@@ -244,6 +334,7 @@ int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testLayerLoadWeightsLinearOverwritesWeightAndBiasTensors);
     RUN_TEST(testLayerLoadWeightsLinearNoBiasAcceptsNullBiasData);
+    RUN_TEST(testLayerLoadWeightsLinearQuantizesForSymStorage);
     RUN_TEST(testLayerLoadWeightsConv1dOverwritesWeightAndBiasTensors);
     RUN_TEST(testLayerLoadWeightsConv1dNoBiasAcceptsNullBiasData);
     RUN_TEST(testLayerLoadWeightsConv1dTransposedOverwritesWeightAndBiasTensors);

@@ -541,11 +541,13 @@ void testSgdStepSymInt32DoesNotRoundTripGrad(void) {
     sgd_t sgd;
     sgdInit(&sgd, 0.1f, 0.0f, 0.0f);
     parameter_t *params[1] = {param};
+    optimImpl_t impl;
+    impl.sgd = &sgd;
     optimizer_t optim;
     optim.parameter = params;
     optim.sizeStates = 1;
     optim.qtype = SYM_INT32;
-    optim.impl = (optimImpl_t *)&sgd;
+    optim.impl = &impl;
 
     sgdStep(&optim);
 

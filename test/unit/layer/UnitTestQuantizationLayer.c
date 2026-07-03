@@ -178,8 +178,9 @@ void testQuantLayerAbortsOnUnpopulatedConversionCell(void) {
     /* BOOL -> ASYM has no real conversionMatrix cell: every entry in the BOOL
      * row (other than BOOL->BOOL, which never reaches the matrix - convertTensor's
      * same-type branch short-circuits first) is unsupportedConversionTypes,
-     * which PRINT_ERRORs and exit(1)s (verified: git grep -n
-     * "conversionMatrix\[BOOL\]" src/tensor/). */
+     * which PRINT_ERRORs and exit(1)s (verified: the BOOL row's designated
+     * initializer in src/tensor/TensorConversion.c:511-515 assigns
+     * unsupportedConversionTypes to every non-BOOL column). */
     tensor_t *input = buildBool2D(1, 4);
     tensor_t *output = buildAsym2D(1, 4, 8);
     layer_t qLayer = {.type = QUANTIZATION, .config = NULL};

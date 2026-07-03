@@ -46,8 +46,8 @@ migration (PR1b.2), after which it becomes an optional storage node. Per-output-
 channel bias is refolded into the product scale via `rescaleIntoAccumulatorScale`
 (the #189 guarded helper); never raw-added.
 
-Conv1d backward dispatches on **three independent qConfigs** (`weightGradQ`,
-`biasGradQ`, `propLossQ`), like `linearBackward`:
+Conv1d backward declares **per-op arithmetic** (`weightGradMath`, `biasGradMath`,
+`propLossMath`, by-value `arithmetic_t`), like `linearBackward`:
 
 - **weightGrad (SYM)** = strategy A: integer gather into a fresh `reserveMemory`
   intermediate at scale `s_loss·s_in`, then `addSymInt32TensorsInplace` into the
@@ -56,7 +56,7 @@ Conv1d backward dispatches on **three independent qConfigs** (`weightGradQ`,
   channel, then `rescaleIntoAccumulatorScale(sum, s_loss, s_bg, mode)` at the
   bias-grad's fixed scale (the #218 scheme).
 - **dx / propLoss (SYM)** = `convTranspose1dKernelSymInt32(lossGrad, weights)`,
-  scale `s_loss·s_w`, guarded by the #187 fail-fast if `propLoss` is not SYM.
+  scale `s_loss·s_w`, guarded by the #187 fail-fast (produced propLoss tensor must be SYM).
 
 ### Operand bit-width: int12, not int16 (int32-accumulator soundness)
 
@@ -112,9 +112,10 @@ only the quantization configs change; the int32 accumulator (no int64) is kept.
   fixtures, which is expected and intentional.
 
 The training loop (`CalculateGradsSequential.c`) allocates each dx-wire buffer
-from the **producing layer's declared backward config** (`backwardWireQ`:
-`propLossQ` for Linear/Conv/pools, `backwardQ` for Relu/Softmax/Dropout/LayerNorm/
-Quantization; Flatten and the loss seed pass through the upstream dtype) — #221.
+from the **producing layer's declared backward config** (`backwardWireQ`: reads
+`propLossQ` storage uniformly for every layer type — Linear/Conv/pools/Relu/
+Softmax/Dropout/LayerNorm/Quantization all resolve through the same field;
+Flatten and the loss seed pass through the upstream dtype) — #221.
 Uniform chains behave exactly as before. The Conv→Quant→…→MSE chain
 wiring + FLOAT32-twin convergence check is PR3.
 
@@ -126,7 +127,7 @@ cores — no new kernels:
 - **forward** = `convTranspose1dKernelSymInt32` (the scatter core; its internal
   per-channel bias-seed refold gives ConvT bias for free). Pass `outputPadding`.
 - **dx / propLoss** = `conv1dKernelSymInt32` (the gather core, the VALID adjoint),
-  guarded by the #187 fail-fast if `propLoss` is not SYM_INT32.
+  guarded by the #187 fail-fast (produced propLoss tensor must be SYM).
 - **weightGrad** = strategy A: a scatter-style integer gather (ConvT weight layout
   `[Cin, Cout/groups, K]`, index `(ic·outChPerGroup + ocOffset)·K + k`) into a fresh
   `reserveMemory` int32 intermediate at scale `s_in·s_loss`, then
@@ -134,29 +135,48 @@ cores — no new kernels:
 - **biasGrad** = the same fixed-scale refold as Conv1d (`rescaleIntoAccumulatorScale`
   over the `batch × outputLength` int32 sum).
 
-Backward dispatches on three independent qConfigs (`weightGradQ`/`biasGradQ`/
-`propLossQ`), like `conv1dBackward`/`linearBackward`. Operands are int12, grad
+Backward declares per-op arithmetic (`weightGradMath`/`biasGradMath`/
+`propLossMath`, by-value `arithmetic_t`), like `conv1dBackward`/`linearBackward`. Operands are int12, grad
 accumulators int16, accumulators int32 — no int64. Conv1dTransposed is VALID-only
 (Phase 1), so the adjoint never hits a SAME/EXPLICIT padLeft.
 
+### Arithmetic vs. storage field roles — the executeConvert funnel
+
+As of PR1b (executeOp) and this design split, layer configs carry two conceptual
+roles for their quantization fields: **arithmetic** (by-value `arithmetic_t`,
+declares the compute representation `forwardMath`/`{weightGradMath, biasGradMath, propLossMath}`)
+and **storage** (pointer `quantization_t *`, specifies the dtype/scale/qMaxBits of
+produced wires: `outputQ`/`propLossQ`). The `executeOp` funnel reads arithmetic to
+dispatch float vs. SYM kernels and configure intermediate scratch; it then routes
+the result through `OUT_WRITE` or `OUT_ACC_*` epilogues that honor the storage config's
+dtype and qMaxBits on the produced wire. When input and output dtypes differ, a
+kernel-less form `executeConvert(input, target)` performs the storage-to-storage
+conversion for any populated `conversionMatrix` cell — including previously-aborting
+paths (ASYM, BOOL, SYM width-restore), unifying the Quantization layer into a pure
+conversion node (#266). This separation keeps arithmetic orthogonal to storage,
+enabling per-op compute-dtype divergence (#218 knobs) without ownership complexity.
+
 ### Validator (PR3)
 
-`producerForwardQ` (`ModelValidationApi.c`) now returns the conv layer's `forwardQ`
-for CONV1D and CONV1D_TRANSPOSED, bringing SYM-producing conv layers under the
-int16 inter-layer contract: a SYM conv producer must be followed by a Quantization
-layer (or sit in the last position).
+`isAccumulatorRangeSymProducer` (`ModelValidationApi.c`) now recognizes CONV1D and
+CONV1D_TRANSPOSED whose declared `layerForwardMath(layer).type` is `ARITH_SYM_INT32`,
+bringing SYM-producing conv layers under the int16 inter-layer contract: a SYM conv
+producer must be followed by a Quantization layer (or sit in the last position).
 
 ### SYM training chains
 
 The training loop allocates each dx-wire buffer from the **producing layer's
-declared backward config** (`backwardWireQ`: `propLossQ` for Linear/Conv/pools,
-`backwardQ` for Relu/Softmax/Dropout/LayerNorm/Quantization; Flatten and the
-loss seed pass through the upstream dtype) — #221. Uniform chains behave exactly
-as before: a uniformly-SYM chain (every `forwardQ` SYM_INT32) makes every grad
-tensor SYM_INT32 and every layer's `propLossQ` match — the #187 guard passes.
-SYM-trainable conv layers are built via the low-level
+declared backward config** (`backwardWireQ`: `propLossQ` storage uniformly for
+every layer type — Linear/Conv/pools/Relu/Softmax/Dropout/LayerNorm/Quantization
+all resolve through the same field; Flatten and the loss seed pass through the
+upstream dtype) — #221. Uniform chains behave exactly as before: a
+uniformly-SYM chain (every layer's `forwardMath` declaring `ARITH_SYM_INT32`)
+makes every grad tensor SYM_INT32 and every layer's `propLossQ` match — the #187
+guard passes. SYM-trainable conv layers are built via the low-level
 `initConv1dTransposedConfigWithWeightsAndBias` with SYM `parameter_t`s (the
-high-level factory keeps grads FLOAT32, matching the Linear KAIMING factory).
+high-level factory's KAIMING/uniform init still requires FLOAT32-native
+weight/bias storage; grad storage itself now follows `propLossQ`/the
+grad-storage knob like Linear, #261).
 `Conv1dTransposed → Quant → MSE` trains under
 `calculateGradsSequential` + `sgdStepM(SYM_INT32)`.
 
@@ -164,7 +184,8 @@ high-level factory keeps grads FLOAT32, matching the Linear KAIMING factory).
 
 As of the quantized-gradient prerequisite (`gradInit`, 2026-06-05) a trainable
 layer's parameter gradient can be stored in `param->grad->quantization`'s dtype
-(grad-storage axis); `backwardMath` is the declared backward *arithmetic*.
+(grad-storage axis); the three per-op fields `weightGradMath`/`biasGradMath`/
+`propLossMath` are the declared backward *arithmetic*.
 Accumulation is the `OUT_ACC_DYNAMIC_RESCALE` epilogue mode of `executeOp` (no
 longer inside kernels). For SYM_INT32 grads, the per-microbatch accumulation
 delegates to the funnel's rescaling epilogue, which dequantizes both the running
@@ -233,4 +254,5 @@ This is a research framework: deliberate scheme differences like this one
 MUST be documented here, so experimental design stays separable from
 accidental inconsistency. LayerNorm uses strategy A for BOTH gamma and beta
 per the 2026-06-05 LayerNorm spec.
+
 

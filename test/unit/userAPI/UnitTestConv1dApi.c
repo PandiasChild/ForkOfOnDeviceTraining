@@ -257,6 +257,44 @@ void testConv1dLayerInitKeepsFloat32GradEvenWithSymInt32BackwardMath(void) {
                                   "Conv1d bias grad must stay FLOAT32 (backward is FLOAT32-only)");
 }
 
+void testConv1dLayerInitOwningWeightGradStorageKnobOverridesFloatDefault(void) {
+    /* Default (knob == NULL) grad storage stays hard-pinned FLOAT32 (Conv1d
+     * backward is FLOAT32-only); a non-NULL weightGradStorage config must
+     * override that default end-to-end, through the same getQLike path
+     * gradInit already uses (mirrors Linear's #261 knob). */
+    quantization_t *q = quantizationInitFloat();
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, q);
+    quantization_t *gradKnob = quantizationInitSymInt32WithBits(HALF_AWAY, 16);
+    lq.weightGradStorage = gradKnob;
+
+    layer_t *layer = conv1dLayerInitOwning(
+        &(conv1dInit_t){
+            .inChannels = 3,
+            .outChannels = 4,
+            .kernelSize = 5,
+            .bias = BIAS_TRUE,
+        },
+        &lq);
+
+    conv1dConfig_t *cfg = layer->config->conv1d;
+    tensor_t *wGrad = getGradFromParameter(cfg->weights);
+    int gradType = wGrad->quantization->type;
+    /* Guard the qConfig dereference: a wrong-type grad (e.g. the knob silently
+     * ignored) has qConfig == NULL for FLOAT32 — asserting gradType first
+     * keeps that failure a clean assertion, not a NULL-deref crash. */
+    uint8_t gradBits =
+        (gradType == SYM_INT32) ? ((symInt32QConfig_t *)wGrad->quantization->qConfig)->qMaxBits : 0;
+
+    freeConv1dLayer(layer);
+    freeQuantization(gradKnob);
+    freeQuantization(q);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(SYM_INT32, gradType,
+                                  "weightGradStorage knob must override the FLOAT32 default");
+    TEST_ASSERT_EQUAL_UINT8(16, gradBits);
+}
+
 void testConv1dLayerInitDefaultWeightsWithinPyTorchBound(void) {
     /* PyTorch default Conv1d init: weight ~ U(-1/sqrt(fan_in), +1/sqrt(fan_in)),
      * bias ~ U(-1/sqrt(fan_in), +1/sqrt(fan_in)); fan_in = inPerGroup*kernelSize.
@@ -351,6 +389,7 @@ int main(void) {
     RUN_TEST(testConv1dLayerInitOwningDeepCopiesQuantizations);
     RUN_TEST(testConv1dLayerInitOwningFreesAllAllocationsWithoutLeak);
     RUN_TEST(testConv1dLayerInitKeepsFloat32GradEvenWithSymInt32BackwardMath);
+    RUN_TEST(testConv1dLayerInitOwningWeightGradStorageKnobOverridesFloatDefault);
     RUN_TEST(testConv1dLayerInitDefaultWeightsWithinPyTorchBound);
     RUN_TEST(testConv1dLayerInitKaimingUniformOverrideUsesHeBound);
     return UNITY_END();

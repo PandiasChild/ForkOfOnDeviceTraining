@@ -151,14 +151,20 @@ static layer_t *buildConv1dTransposedLayerSkeleton(conv1dTransposedInit_t *init,
 
     cfg->kernel = buildConv1dTransposedKernel(init);
     size_t fanIn = (init->outChannels / groups) * init->kernelSize;
-    quantization_t *gradQ = quantizationInitFloat(); /* Conv1dTransposed backward is FLOAT32-only */
+    /* Grad storage knob (#261): Conv1dTransposed backward is FLOAT32-only, so a
+     * NULL knob keeps the hard-pinned FLOAT32 default; a non-NULL
+     * weightGradStorage/biasGradStorage overrides it explicitly. */
+    quantization_t *floatGradQ = quantizationInitFloat();
+    quantization_t *weightGradQ =
+        lq->weightGradStorage != NULL ? lq->weightGradStorage : floatGradQ;
+    quantization_t *biasGradQ = lq->biasGradStorage != NULL ? lq->biasGradStorage : floatGradQ;
     cfg->weights = allocateConv1dTransposedWeights(init->inChannels, init->outChannels, groups,
                                                    init->kernelSize, init->weightInit,
-                                                   lq->weightStorage, gradQ);
-    cfg->bias = hasBias
-                    ? allocateConv1dTransposedBias(init->outChannels, fanIn, lq->biasStorage, gradQ)
-                    : NULL;
-    freeQuantization(gradQ);
+                                                   lq->weightStorage, weightGradQ);
+    cfg->bias =
+        hasBias ? allocateConv1dTransposedBias(init->outChannels, fanIn, lq->biasStorage, biasGradQ)
+                : NULL;
+    freeQuantization(floatGradQ);
     cfg->groups = groups;
     cfg->outputPadding = init->outputPadding;
     return layer;
