@@ -14,6 +14,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* File-internal helper of TensorConversion.c (external linkage, no header entry);
+ * declared locally to characterize its packed-size memset. */
+void zeroTensorData(tensor_t *tensor);
+
 /* PR-C pack tests verify the packed SYM output by unpacking it here in-test:
  * byteConversion zero-fills on widen, so sign-extend each value from qBits.
  * (The SYM->* unpack cells live on the parallel PR-B branch, not here.) */
@@ -25,6 +29,29 @@ static void symTestUnpackSignExtend(const uint8_t *packed, size_t qBits, int32_t
         int32_t v = out[i] & mask;
         out[i] = (v ^ signBit) - signBit;
     }
+}
+
+void testZeroTensorDataSymSubByteZeroesOnlyPackedBytes() {
+    /* SYM qBits=3, N=10 -> packed 4 bytes; the guard byte behind them must survive.
+     * Mutation guard: the pre-fix N * calcBytesPerElement memset (10 bytes) clobbers
+     * the canary -> RED (and stack-buffer-overflow under ASan). */
+    uint8_t data[5];
+    memset(data, 0xFF, sizeof(data));
+    size_t dims[] = {1, 10};
+    size_t order[] = {0, 1};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 2, .orderOfDimensions = order};
+    symQConfig_t cfg = {.scale = 1.0f, .qBits = 3, .roundingMode = HALF_AWAY};
+    quantization_t q;
+    initSymQuantization(&cfg, &q);
+    tensor_t t;
+    setTensorValues(&t, data, &shape, &q, NULL);
+
+    zeroTensorData(&t);
+
+    for (size_t i = 0; i < 4; i++) {
+        TEST_ASSERT_EQUAL_UINT8(0, data[i]);
+    }
+    TEST_ASSERT_EQUAL_UINT8(0xFF, data[4]);
 }
 
 void testConversionIntFloat() {
@@ -1484,6 +1511,7 @@ void tearDown() {}
 int main(void) {
     UNITY_BEGIN();
 
+    RUN_TEST(testZeroTensorDataSymSubByteZeroesOnlyPackedBytes);
     RUN_TEST(testConversionIntFloat);
     RUN_TEST(testConversionIntSymInt32);
     RUN_TEST(testConversionIntAsym);

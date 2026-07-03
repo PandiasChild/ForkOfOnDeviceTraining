@@ -19,8 +19,7 @@ static void quantizeFloatToAsym(const float *values, size_t n, asymQConfig_t *ou
 
 void zeroTensorData(tensor_t *tensor) {
     size_t numberOfElements = calcNumberOfElementsByTensor(tensor);
-    size_t bytesPerElement = calcBytesPerElement(tensor->quantization);
-    memset(tensor->data, 0, numberOfElements * bytesPerElement);
+    memset(tensor->data, 0, calcNumberOfBytesForData(tensor->quantization, numberOfElements));
 }
 
 void convertInt32TensorToFloatTensor(tensor_t *inputTensor, tensor_t *outputTensor) {

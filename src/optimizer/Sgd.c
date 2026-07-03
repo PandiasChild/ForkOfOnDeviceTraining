@@ -3,7 +3,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <tgmath.h>
 
 #include "Common.h"
 #include "Sgd.h"
@@ -167,8 +166,7 @@ void sgdZeroGrad(optimizer_t *optimizer) {
     for (size_t i = 0; i < optimizer->sizeStates; i++) {
         parameter_t *param = optimizer->parameter[i];
         size_t paramSize = calcNumberOfElementsByParameter(param);
-        size_t bitsPerElement = calcBitsPerElement(param->grad->quantization);
-        size_t totalNumberOfBytes = ceil(paramSize * bitsPerElement / 8);
+        size_t totalNumberOfBytes = calcNumberOfBytesForData(param->grad->quantization, paramSize);
 
         memset(param->grad->data, 0, totalNumberOfBytes);
 

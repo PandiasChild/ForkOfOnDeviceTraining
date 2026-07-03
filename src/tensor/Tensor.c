@@ -76,15 +76,9 @@ size_t calcBitsPerElement(quantization_t *quantization) {
     }
 }
 
-size_t calcBitsPerTensor(tensor_t *tensor) {
-    size_t bitsPerElement = calcBitsPerElement(tensor->quantization);
-    size_t numElements = calcNumberOfElementsByShape(tensor->shape);
-    return bitsPerElement * numElements;
-}
-
 size_t calcBytesPerTensor(tensor_t *tensor) {
-    size_t bitsPerTensor = calcBitsPerTensor(tensor);
-    return bitsPerTensor / 8;
+    size_t numberOfElements = calcNumberOfElementsByShape(tensor->shape);
+    return calcNumberOfBytesForData(tensor->quantization, numberOfElements);
 }
 
 size_t calcNumberOfBytesForData(quantization_t *q, size_t numberOfElements) {

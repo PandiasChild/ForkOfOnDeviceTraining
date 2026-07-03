@@ -1,5 +1,6 @@
 #define SOURCE_FILE "SGD-UTEST"
 #include <stdlib.h>
+#include <string.h>
 
 #include "ArithmeticType.h"
 #include "DeathTest.h"
@@ -570,6 +571,53 @@ void testSgdStepSymInt32DoesNotRoundTripGrad(void) {
     TEST_ASSERT_FLOAT_WITHIN(1e-9f, 0.05f, gScale);
 }
 
+void testSgdZeroGradAsymSubByteZeroesAllPackedBytes(void) {
+    /* ASYM qBits=3, N=10 grad -> packed ceil(30/8) = 4 bytes. Pre-fix sizing
+     * (size_t division inside ceil()) truncated to 3, leaving stale grad bits in
+     * the last packed byte. Mutation guard: reverting to the old formula leaves
+     * byte 3 == 0xFF -> RED. */
+    size_t *pDims = reserveMemory(2 * sizeof(size_t));
+    pDims[0] = 2;
+    pDims[1] = 5;
+    size_t *pOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, pOrder);
+    shape_t *pShape = reserveMemory(sizeof(shape_t));
+    setShape(pShape, pDims, 2, pOrder);
+    tensor_t *p = initTensor(pShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(p, (float[]){0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f}, 10);
+    tensor_t *g = gradInitAsym(p, 3, HALF_AWAY, NULL);
+    parameter_t *param = parameterInit(p, g);
+    memset(g->data, 0xFF, 4); /* poison all packed grad bytes */
+
+    /* Hand-built optimizer: sgdMCreateOptim rejects sub-byte grad storage until
+     * PR3, but sgdZeroGrad reads only sizeStates/parameter — this characterizes
+     * the primitive PR3 will rely on. */
+    sgd_t sgd;
+    sgdInit(&sgd, 0.1f, 0.0f, 0.0f);
+    parameter_t *params[1] = {param};
+    optimImpl_t impl;
+    impl.sgd = &sgd;
+    optimizer_t optim;
+    optim.parameter = params;
+    optim.sizeStates = 1;
+    optim.qtype = FLOAT32;
+    optim.impl = &impl;
+
+    sgdZeroGrad(&optim);
+
+    /* CAPTURE -> free -> assert (file convention). */
+    uint8_t b0 = g->data[0];
+    uint8_t b1 = g->data[1];
+    uint8_t b2 = g->data[2];
+    uint8_t b3 = g->data[3];
+    freeParameter(param);
+
+    TEST_ASSERT_EQUAL_UINT8(0, b0);
+    TEST_ASSERT_EQUAL_UINT8(0, b1);
+    TEST_ASSERT_EQUAL_UINT8(0, b2);
+    TEST_ASSERT_EQUAL_UINT8(0, b3);
+}
+
 void testSgdMCreateOptimRejectsSubByteGradStorage(void) {
     /* FLOAT32 weight param whose grad is allocated sub-byte SYM (int8) — the
      * not-yet-supported storage PR3 adds. Optimizer construction must abort. */
@@ -620,5 +668,6 @@ int main() {
     RUN_TEST(testSgdMCreateOptimRegistersLayerNormGammaAndBeta);
     RUN_TEST(testSgdStepSymInt32DoesNotRoundTripGrad);
     RUN_TEST(testSgdMCreateOptimRejectsSubByteGradStorage);
+    RUN_TEST(testSgdZeroGradAsymSubByteZeroesAllPackedBytes);
     return UNITY_END();
 }

@@ -266,6 +266,32 @@ void test_calcNumberOfBytesForData_Sym_qBits5_N4() {
     TEST_ASSERT_EQUAL_size_t(3, calcNumberOfBytesForData(&q, 4));
 }
 
+void test_calcBytesPerTensor_SymQBits3N10_Ceils() {
+    /* 10 x 3 bits = 30 bits -> 4 bytes. Pre-fix truncation gave 30/8 = 3 (#172).
+     * Mutation guard: reverting to bits/8 truncation returns 3 -> RED. */
+    size_t dims[] = {1, 10};
+    size_t order[] = {0, 1};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 2, .orderOfDimensions = order};
+    symQConfig_t cfg = {.scale = 1.0f, .qBits = 3, .roundingMode = HALF_AWAY};
+    quantization_t q;
+    initSymQuantization(&cfg, &q);
+    tensor_t t;
+    setTensorValues(&t, NULL, &shape, &q, NULL);
+    TEST_ASSERT_EQUAL_size_t(4, calcBytesPerTensor(&t));
+}
+
+void test_calcBytesPerTensor_BoolN3_CeilsTo1() {
+    /* 3 x 1 bit -> 1 byte; pre-fix truncation gave 0 (#172). */
+    size_t dims[] = {1, 3};
+    size_t order[] = {0, 1};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 2, .orderOfDimensions = order};
+    quantization_t q;
+    initBoolQuantization(&q);
+    tensor_t t;
+    setTensorValues(&t, NULL, &shape, &q, NULL);
+    TEST_ASSERT_EQUAL_size_t(1, calcBytesPerTensor(&t));
+}
+
 void testCopyTensorInt32CarriesTypeAndData() {
     /* Mutation guard: re-removing the INT32 arm makes copyQuantization exit(1)
      * ("Unknown QType!"), killing the test run — RED. */
@@ -432,5 +458,7 @@ int main(void) {
     RUN_TEST(test_calcBytesPerElement_Sym_qBits3);
     RUN_TEST(test_calcNumberOfBytesForData_Sym_qBits3_N10);
     RUN_TEST(test_calcNumberOfBytesForData_Sym_qBits5_N4);
+    RUN_TEST(test_calcBytesPerTensor_SymQBits3N10_Ceils);
+    RUN_TEST(test_calcBytesPerTensor_BoolN3_CeilsTo1);
     return UNITY_END();
 }
