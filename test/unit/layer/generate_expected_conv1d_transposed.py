@@ -9,6 +9,7 @@ ConvTranspose1d weight shape: [Cin, Cout/groups, K] — note the order
 vs. Conv1d's [Cout, Cin/groups, K].
 """
 import argparse
+import math
 import sys
 from pathlib import Path
 
@@ -255,6 +256,47 @@ def _requant_absmax_i12_f32(mac_int: torch.Tensor, in_scale: float):
     return q.to(torch.int32), scale.item()
 
 
+def _restore_tolerances(raw_q, raw_scale, mtol_before, base_q, base_scale):
+    """Empirically DERIVE (not hand-guess) the restored (mantissa,
+    scale-relative) tolerances for a raw producer wire PR1b.2 now restores via
+    _requant_absmax_i12_f32 — mirrors generate_expected_conv1d.py's
+    identically-named helper (same forward-restoration hazard applies to
+    ConvT1d) and the LayerNorm forward precedent
+    (generate_expected_layernorm_sym.py::_restore_tolerances, PR1b.2 Task 3).
+    Perturb the RAW pre-restoration mantissas by their own worst-case
+    C-vs-emulation noise band (+-mtol_before — the bias-seed rounding-
+    boundary ambiguity the forward fixture already carries pre-restoration),
+    applied elementwise AND concentrated at the argmax element (which drives
+    the requant's absmax renormalization), and measure how far the restored
+    mantissas/scale actually move under the SAME transform. A fixed 1.5x
+    safety margin is applied to the observed worst case."""
+    # Floor at 1e-4 relative: the pre-existing (pre-PR1b.2) convention for
+    # every SYM scale assertion in this file, kept as a defensive margin
+    # against ordinary float32 noise even when no bias-seed ambiguity exists
+    # (mtol_before == 0) to perturb against.
+    floor = 1e-4
+    if mtol_before == 0:
+        return 0, floor
+    idx = int(raw_q.abs().reshape(-1).argmax().item())
+    variants = [raw_q + mtol_before, raw_q - mtol_before]
+    for delta in (mtol_before, -mtol_before):
+        v = raw_q.clone()
+        v.reshape(-1)[idx] += delta
+        variants.append(v)
+    max_mdiff = 0
+    max_sdiff = 0.0
+    for variant in variants:
+        vq, vs = _requant_absmax_i12_f32(variant, raw_scale)
+        mdiff = int((vq.to(torch.int64) - base_q.to(torch.int64)).abs().max().item())
+        sdiff = abs(vs - base_scale) / base_scale
+        max_mdiff = max(max_mdiff, mdiff)
+        max_sdiff = max(max_sdiff, sdiff)
+    margin = 1.5
+    mantissa_tol_r = int(math.ceil(max_mdiff * margin)) + 1
+    scale_rel_tol_r = max(max_sdiff * margin, floor)
+    return mantissa_tol_r, scale_rel_tol_r
+
+
 def _autograd_ref_f64(q, p):
     """float64 torch-autograd on the EXACT dequantized inputs (q*s in f64) — the true grads."""
     x64 = (q["xq"].to(torch.float64) * q["s_in"]).requires_grad_(True)
@@ -278,22 +320,40 @@ def emulate_sym_convT(fx):
     p = _conv_params(fx)
     q = _quant_inputs(fx)
     fwd_mac, dw_mac, dx_mac = _int_mac(q, p)
-    out_scale = f32_mul(q["s_in"], q["s_w"])          # forward output scale
+    out_scale = f32_mul(q["s_in"], q["s_w"])          # RAW forward accumulator scale (s_in*s_w)
     dx_scale_raw = f32_mul(q["s_loss"], q["s_w"])     # propLoss RAW gather-adjoint scale (pre-PR1b.2)
     inter_scale = f32_mul(q["s_loss"], q["s_in"])     # weightGrad intermediate scale
 
-    # forward: int MAC + per-channel bias seed (float32 refold)
+    # forward: int MAC + per-channel bias seed (float32 refold), at the RAW
+    # s_in*s_w accumulator scale — matches convTranspose1dKernelSymInt32's own
+    # direct output today (pre-PR1b.2: this raw wire is what a downstream
+    # Quantization layer used to restore).
     out_channels = fwd_mac.shape[1]
     if q["bq"] is not None:
         seed = _round_away_f32(q["bq"].to(torch.float32)
                                * torch.tensor(q["s_b"], dtype=torch.float32)
                                / torch.tensor(out_scale, dtype=torch.float32)).to(torch.int64)
-        fwd_q = (fwd_mac + seed.reshape(1, out_channels, 1)).to(torch.int32)
-        fwd_mtol = 1
+        fwd_raw_q = (fwd_mac + seed.reshape(1, out_channels, 1)).to(torch.int32)
+        fwd_mtol_raw = 1
     else:
-        fwd_q = fwd_mac.to(torch.int32)
-        fwd_mtol = 0
-    fwd_deq = fwd_q.to(torch.float32) * torch.tensor(out_scale, dtype=torch.float32)
+        fwd_raw_q = fwd_mac.to(torch.int32)
+        fwd_mtol_raw = 0
+    # PR1b.2 (design D3): conv1dTransposedForward now routes through
+    # executeOp's OUT_WRITE epilogue; a SYM_INT32 target hits the
+    # conversionMatrix diagonal (requantSymInt32Tensor) instead of the raw
+    # direct kernel write above (pre-PR1b.2 behavior) — the same restoration
+    # propLoss already got in Task 2, at the same declared qMaxBits=12
+    # (_requant_absmax_i12_f32).
+    fwd_q, fwd_scale = _requant_absmax_i12_f32(fwd_raw_q, out_scale)
+    fwd_deq = fwd_q.to(torch.float32) * torch.tensor(fwd_scale, dtype=torch.float32)
+    # The restored scale is now itself derived from an absmax over the
+    # (float32, C-vs-Python-noisy) mantissas — sensitive to the same
+    # bias-seed rounding-boundary noise the mantissas are, unlike the old raw
+    # out_scale (a direct product of two independently-computed scales,
+    # insensitive to that noise). Empirically derive both tolerances instead
+    # of trusting the pre-restoration fwd_mtol_raw/hardcoded 1e-4 relative.
+    fwd_mtol, fwd_scale_tol = _restore_tolerances(fwd_raw_q, out_scale, fwd_mtol_raw, fwd_q,
+                                                  fwd_scale)
 
     # dx (propLoss): PR1b.2 (design D3) routes propLoss through executeOp's
     # OUT_WRITE epilogue; for a SYM_INT32 target this requants through the
@@ -320,11 +380,11 @@ def emulate_sym_convT(fx):
 
     # ---- self-checks (fail at generation time, not in C) ----
     _eps32 = float(torch.finfo(torch.float32).eps)
-    fwd_f32_prec = fwd_q.abs().max().item() * out_scale * _eps32
+    fwd_f32_prec = fwd_q.abs().max().item() * fwd_scale * _eps32
     dx_f32_prec = dx_q.abs().max().item() * dx_scale * _eps32
 
     fwd_err = (fwd_deq.to(torch.float64) - ref_y).abs().max().item()
-    fwd_tol = 8.0 * out_scale + fwd_f32_prec + 1e-9
+    fwd_tol = 8.0 * fwd_scale + fwd_f32_prec + 1e-9
     assert fwd_err <= fwd_tol, f"{fx['name']}: fwd emulation err {fwd_err} > tol {fwd_tol}"
     dx_err = (dx_deq.to(torch.float64) - ref_dx).abs().max().item()
     dx_tol = 8.0 * dx_scale + dx_f32_prec + 1e-9
@@ -341,8 +401,9 @@ def emulate_sym_convT(fx):
     return dict(
         name=fx["name"], has_bias=q["bq"] is not None,
         x_deq=q["x_deq"], w_deq=q["w_deq"], b_deq=q["b_deq"], gy_deq=q["gy_deq"],
-        fwd_q=fwd_q, fwd_scale=out_scale, fwd_deq=ref_y.to(torch.float32),
-        fwd_mtol=fwd_mtol, fwd_dtol=8.0 * out_scale + fwd_f32_prec + 1e-6,
+        fwd_q=fwd_q, fwd_scale=fwd_scale, fwd_deq=ref_y.to(torch.float32),
+        fwd_mtol=fwd_mtol, fwd_dtol=8.0 * fwd_scale + fwd_f32_prec + 1e-6,
+        fwd_scale_tol=fwd_scale_tol,
         dx_q=dx_q, dx_scale=dx_scale, dx_deq=ref_dx.to(torch.float32),
         dx_mtol=0, dx_dtol=8.0 * dx_scale + dx_f32_prec + 1e-6,
         dw_q=dw_q, dw_scale=dw_scale, dw_deq=ref_dw.to(torch.float32),
@@ -451,12 +512,13 @@ def emit_sym_fixture(parts, fx):
     if g["has_bias"]:
         parts.append(emit_float_array(f"bias_{pre}", g["b_deq"]))
     parts.append(emit_float_array(f"lossGrad_{pre}", g["gy_deq"]))
-    # forward
+    # forward (width-restored, as conv1dTransposedForward now writes it — design D3)
     parts.append(emit_int32_array(f"expectedForward_{pre}", g["fwd_q"]))
     parts.append(emit_float_scalar(f"expectedForwardScale_{pre}", g["fwd_scale"]))
     parts.append(emit_int32_scalar(f"forwardMantissaTol_{pre}", g["fwd_mtol"]))
     parts.append(emit_float_array(f"expectedForwardDequant_{pre}", g["fwd_deq"]))
     parts.append(emit_float_scalar(f"forwardDequantTol_{pre}", g["fwd_dtol"]))
+    parts.append(emit_float_scalar(f"forwardScaleTol_{pre}", g["fwd_scale_tol"]))
     # dx / propLoss
     parts.append(emit_int32_array(f"expectedPropLoss_{pre}", g["dx_q"]))
     parts.append(emit_float_scalar(f"expectedPropLossScale_{pre}", g["dx_scale"]))

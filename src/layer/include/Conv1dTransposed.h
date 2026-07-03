@@ -34,8 +34,6 @@ void initConv1dTransposedConfigWithWeightsAndBias(
     quantization_t *biasGradQ, quantization_t *propLossQ);
 
 void conv1dTransposedForward(layer_t *layer, tensor_t *input, tensor_t *output);
-void conv1dTransposedForwardFloat(layer_t *layer, tensor_t *input, tensor_t *output);
-void conv1dTransposedForwardSymInt32(layer_t *layer, tensor_t *input, tensor_t *output);
 
 void conv1dTransposedBackward(layer_t *layer, tensor_t *forwardInput, tensor_t *lossGrad,
                               tensor_t *propLoss);

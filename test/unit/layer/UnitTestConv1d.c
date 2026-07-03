@@ -794,6 +794,20 @@ void testConv1dBackwardExplicitPadding() {
     }
 }
 
+/* Re-gold (spec D5): conv1dForward now routes SYM through executeOp's
+ * OUT_WRITE epilogue, which requants the raw s_in*s_w accumulator wire
+ * through the conversionMatrix diagonal (requantSymInt32Tensor) instead of
+ * writing it unrestored (pre-PR1b.2 behavior — the fixture this test asserted
+ * against was the raw wire, characterizing exactly what a downstream
+ * Quantization layer used to restore). Dequant-equivalence: restored
+ * mantissa*restoredScale == raw mantissa*rawScale within representation
+ * tolerance (both are exact re-expressions of the same real value at a
+ * different int12 scale) — verified by generate_expected_conv1d.py's
+ * `emulate_sym_conv` self-check (fwd_err <= fwd_tol against the float64
+ * PyTorch-autograd reference, computed on the RESTORED fwd_deq/fwd_scale).
+ * Same re-gold class as Task 2's propLoss/Task 3's LayerNorm forward pins
+ * (ratified spec D5 principle, controller 2026-07-03). Applies identically
+ * to the 3 other testConv1dForwardSym* tests below. */
 void testConv1dForwardSymSingleChannelSingleBatch() {
     size_t weightDims[] = {1, 1, 2};
     size_t inputDims[] = {1, 1, 4};
@@ -816,7 +830,8 @@ void testConv1dForwardSymSingleChannelSingleBatch() {
                                expectedForward_conv1dSym_singleChannelSingleBatch[i], m[i]);
     }
     float scale = symScaleOf(output);
-    TEST_ASSERT_FLOAT_WITHIN(expectedForwardScale_conv1dSym_singleChannelSingleBatch * 1e-4f,
+    TEST_ASSERT_FLOAT_WITHIN(expectedForwardScale_conv1dSym_singleChannelSingleBatch *
+                                 forwardScaleTol_conv1dSym_singleChannelSingleBatch,
                              expectedForwardScale_conv1dSym_singleChannelSingleBatch, scale);
     for (size_t i = 0; i < expectedForwardDequant_conv1dSym_singleChannelSingleBatch_len; i++) {
         TEST_ASSERT_FLOAT_WITHIN(forwardDequantTol_conv1dSym_singleChannelSingleBatch,
@@ -849,7 +864,8 @@ void testConv1dForwardSymSingleChannelWithBias() {
                                expectedForward_conv1dSym_singleChannelWithBias[i], m[i]);
     }
     float scale = symScaleOf(output);
-    TEST_ASSERT_FLOAT_WITHIN(expectedForwardScale_conv1dSym_singleChannelWithBias * 1e-4f,
+    TEST_ASSERT_FLOAT_WITHIN(expectedForwardScale_conv1dSym_singleChannelWithBias *
+                                 forwardScaleTol_conv1dSym_singleChannelWithBias,
                              expectedForwardScale_conv1dSym_singleChannelWithBias, scale);
     for (size_t i = 0; i < expectedForwardDequant_conv1dSym_singleChannelWithBias_len; i++) {
         TEST_ASSERT_FLOAT_WITHIN(forwardDequantTol_conv1dSym_singleChannelWithBias,
@@ -882,7 +898,8 @@ void testConv1dForwardSymPointwise() {
                                expectedForward_conv1dSym_pointwise[i], m[i]);
     }
     float scale = symScaleOf(output);
-    TEST_ASSERT_FLOAT_WITHIN(expectedForwardScale_conv1dSym_pointwise * 1e-4f,
+    TEST_ASSERT_FLOAT_WITHIN(expectedForwardScale_conv1dSym_pointwise *
+                                 forwardScaleTol_conv1dSym_pointwise,
                              expectedForwardScale_conv1dSym_pointwise, scale);
     for (size_t i = 0; i < expectedForwardDequant_conv1dSym_pointwise_len; i++) {
         TEST_ASSERT_FLOAT_WITHIN(forwardDequantTol_conv1dSym_pointwise,
@@ -915,7 +932,8 @@ void testConv1dForwardSymExplicitPadding() {
                                expectedForward_conv1dSym_explicitPadding[i], m[i]);
     }
     float scale = symScaleOf(output);
-    TEST_ASSERT_FLOAT_WITHIN(expectedForwardScale_conv1dSym_explicitPadding * 1e-4f,
+    TEST_ASSERT_FLOAT_WITHIN(expectedForwardScale_conv1dSym_explicitPadding *
+                                 forwardScaleTol_conv1dSym_explicitPadding,
                              expectedForwardScale_conv1dSym_explicitPadding, scale);
     for (size_t i = 0; i < expectedForwardDequant_conv1dSym_explicitPadding_len; i++) {
         TEST_ASSERT_FLOAT_WITHIN(forwardDequantTol_conv1dSym_explicitPadding,

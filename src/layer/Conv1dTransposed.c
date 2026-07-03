@@ -52,32 +52,59 @@ void initConv1dTransposedConfigWithWeightsAndBias(
     cfg->propLossQ = propLossQ;
 }
 
-void conv1dTransposedForwardFloat(layer_t *layer, tensor_t *input, tensor_t *output) {
-    conv1dTransposedConfig_t *cfg = layer->config->conv1dTransposed;
-    tensor_t *weightTensor = cfg->weights->param;
-    tensor_t *biasTensor = cfg->bias ? cfg->bias->param : NULL;
-
-    convTranspose1dKernelFloat32(input, weightTensor, biasTensor, cfg->kernel, cfg->groups,
-                                 cfg->outputPadding, output);
+/* executeOp forward kernel adapters — ctx = conv1dTransposedConfig_t* for
+ * kernel_t/groups/outputPadding geometry (mirrors the backward adapters
+ * below and Conv1d.c's forward adapters). operands are {input, weights} or
+ * {input, weights, bias} (bias omitted, not NULL-padded, when the layer has
+ * no bias). */
+static void forwardKernelFloat(tensor_t **ops, size_t n, tensor_t *rawOut, tensor_t *auxOut,
+                               const void *ctx) {
+    (void)auxOut;
+    const conv1dTransposedConfig_t *cfg = ctx;
+    tensor_t *bias = (n > 2) ? ops[2] : NULL;
+    convTranspose1dKernelFloat32(ops[0], ops[1], bias, cfg->kernel, cfg->groups, cfg->outputPadding,
+                                 rawOut);
 }
-
-void conv1dTransposedForwardSymInt32(layer_t *layer, tensor_t *input, tensor_t *output) {
-    conv1dTransposedConfig_t *cfg = layer->config->conv1dTransposed;
-    tensor_t *weightTensor = cfg->weights->param;
-    tensor_t *biasTensor = cfg->bias ? cfg->bias->param : NULL;
-
-    convTranspose1dKernelSymInt32(input, weightTensor, biasTensor, cfg->kernel, cfg->groups,
-                                  cfg->outputPadding, output);
+static void forwardKernelSym(tensor_t **ops, size_t n, tensor_t *rawOut, tensor_t *auxOut,
+                             const void *ctx) {
+    (void)auxOut;
+    const conv1dTransposedConfig_t *cfg = ctx;
+    tensor_t *bias = (n > 2) ? ops[2] : NULL;
+    convTranspose1dKernelSymInt32(ops[0], ops[1], bias, cfg->kernel, cfg->groups,
+                                  cfg->outputPadding, rawOut);
 }
 
 void conv1dTransposedForward(layer_t *layer, tensor_t *input, tensor_t *output) {
     conv1dTransposedConfig_t *cfg = layer->config->conv1dTransposed;
+    tensor_t *weightTensor = cfg->weights->param;
+    tensor_t *biasTensor = cfg->bias ? cfg->bias->param : NULL;
+
     switch (cfg->forwardMath.type) {
     case ARITH_FLOAT32:
-        conv1dTransposedForwardFloat(layer, input, output);
+        executeOp(
+            &(opSpec_t){
+                .kernel = forwardKernelFloat,
+                .ctx = cfg,
+                .inputs = biasTensor != NULL ? (tensor_t *[]){input, weightTensor, biasTensor}
+                                             : (tensor_t *[]){input, weightTensor},
+                .nInputs = biasTensor != NULL ? 3 : 2,
+                .arithmetic = cfg->forwardMath,
+                .mode = OUT_WRITE,
+            },
+            output);
         break;
     case ARITH_SYM_INT32:
-        conv1dTransposedForwardSymInt32(layer, input, output);
+        executeOp(
+            &(opSpec_t){
+                .kernel = forwardKernelSym,
+                .ctx = cfg,
+                .inputs = biasTensor != NULL ? (tensor_t *[]){input, weightTensor, biasTensor}
+                                             : (tensor_t *[]){input, weightTensor},
+                .nInputs = biasTensor != NULL ? 3 : 2,
+                .arithmetic = cfg->forwardMath,
+                .mode = OUT_WRITE,
+            },
+            output);
         break;
     default:
         PRINT_ERROR("Conv1dTransposed forward: quantization type not implemented");
