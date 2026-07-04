@@ -37,8 +37,26 @@ void scaleOptimizerGradients(optimizer_t *optimizer, float factor) {
             gradQ->scale *= factor;
             break;
         }
+        case SYM: {
+            /* Packed-SYM dequant (mantissa * scale) is linear in scale exactly
+             * like the SYM_INT32 case above — fold the factor into the
+             * per-tensor scale, packed codes untouched (O(1), exact). */
+            symQConfig_t *gradQ = param->grad->quantization->qConfig;
+            gradQ->scale *= factor;
+            break;
+        }
+        case ASYM: {
+            /* Packed-ASYM dequant is (code + zeroPoint) * scale: still linear
+             * in scale, so the fold is exact the same way; zeroPoint is an
+             * additive offset on the code axis and is untouched. */
+            asymQConfig_t *gradQ = param->grad->quantization->qConfig;
+            gradQ->scale *= factor;
+            break;
+        }
         default:
-            PRINT_ERROR("scaleOptimizerGradients: unsupported gradient qtype");
+            PRINT_ERROR("scaleOptimizerGradients: unsupported gradient qtype "
+                        "(accepted: FLOAT32, SYM_INT32, SYM, ASYM; INT32/BOOL "
+                        "grad storage remains unsupported, #261)");
             exit(1);
         }
     }

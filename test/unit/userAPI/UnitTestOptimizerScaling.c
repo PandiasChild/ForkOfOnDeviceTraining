@@ -17,6 +17,7 @@
 #include "StorageApi.h"
 #include "Tensor.h"
 #include "TensorApi.h"
+#include "TensorConversion.h"
 #include "unity.h"
 
 void setUp() {}
@@ -416,6 +417,282 @@ void testScaleOptimizerGradients_SymInt32_MomentumSgdAppliesScaledGradient() {
     }
 }
 
+/* Dequantizes `grad` into a caller-owned float buffer via the same
+ * convertTensor read path the optimizer's grad-dtype-generic step reads use
+ * (PR3, Sgd.c). Works for any admitted grad dtype whose conversionMatrix cell
+ * to FLOAT32 exists (SYM_INT32/SYM/ASYM all do). */
+static void dequantGradToFloat(tensor_t *grad, float *out, size_t n) {
+    tensor_t floatView;
+    quantization_t floatQ;
+    initFloat32Quantization(&floatQ);
+    uint8_t floatBytes[n * sizeof(float)];
+    setTensorValuesForConversion(floatBytes, &floatQ, grad, &floatView);
+    convertTensor(grad, &floatView);
+    memcpy(out, floatView.data, n * sizeof(float));
+}
+
+/* SYM builder mirrors buildSymInt32OneLayerOptim but pins the grad tensors to
+ * packed sub-byte SYM (param stays FLOAT32 — packed grad storage is
+ * independent of param dtype, #261). Grad values are seeded via
+ * tensorFillFromFloatBuffer, which routes through convertFloatTensorToSymTensor
+ * (fresh absmax-derived scale + fit-guarded pack) — deterministic, and the
+ * exact codes/scale don't matter to these tests (they only check the fold's
+ * effect: bytes untouched, scale scaled, dequant equivalence). */
+static optimizer_t *buildSymOneLayerOptim(layer_t **modelOut, parameter_t **wOut,
+                                          parameter_t **bOut, const float *wInitialGradFloat,
+                                          const float *bInitialGradFloat, uint8_t qBits, float lr,
+                                          float momentum) {
+    tensor_t *wParam;
+    {
+        size_t *dims = reserveMemory(2 * sizeof(size_t));
+        dims[0] = 2;
+        dims[1] = 3;
+        size_t *order = reserveMemory(2 * sizeof(size_t));
+        setOrderOfDimsForNewTensor(2, order);
+        shape_t *shape = reserveMemory(sizeof(shape_t));
+        setShape(shape, dims, 2, order);
+        wParam = initTensor(shape, quantizationInitFloat(), NULL);
+        tensorFillFromFloatBuffer(wParam, (float[]){0.f, 0.f, 0.f, 0.f, 0.f, 0.f}, 6);
+    }
+    tensor_t *wGrad = gradInitSym(wParam, qBits, HALF_AWAY, NULL);
+    tensorFillFromFloatBuffer(wGrad, wInitialGradFloat, 6);
+    parameter_t *w = parameterInit(wParam, wGrad);
+
+    tensor_t *bParam;
+    {
+        size_t *dims = reserveMemory(2 * sizeof(size_t));
+        dims[0] = 1;
+        dims[1] = 2;
+        size_t *order = reserveMemory(2 * sizeof(size_t));
+        setOrderOfDimsForNewTensor(2, order);
+        shape_t *shape = reserveMemory(sizeof(shape_t));
+        setShape(shape, dims, 2, order);
+        bParam = initTensor(shape, quantizationInitFloat(), NULL);
+        tensorFillFromFloatBuffer(bParam, (float[]){0.f, 0.f}, 2);
+    }
+    tensor_t *bGrad = gradInitSym(bParam, qBits, HALF_AWAY, NULL);
+    tensorFillFromFloatBuffer(bGrad, bInitialGradFloat, 2);
+    parameter_t *b = parameterInit(bParam, bGrad);
+
+    quantization_t *layerQ = quantizationInitFloat();
+    layer_t *linear = buildBorrowedLinearLayer(w, b, layerQ);
+    modelOut[0] = linear;
+    *wOut = w;
+    *bOut = b;
+
+    return sgdMCreateOptim(lr, momentum, 0.f, modelOut, 1, FLOAT32);
+}
+
+void testScaleOptimizerGradients_Sym_ScalesScaleOnly(void) {
+    layer_t *model[1];
+    parameter_t *w;
+    parameter_t *b;
+    float wGradInit[6] = {1.f, -2.f, 3.f, -4.f, 5.f, -6.f};
+    float bGradInit[2] = {0.5f, -0.5f};
+    uint8_t qBits = 8;
+    float factor = 0.25f;
+
+    optimizer_t *sgd =
+        buildSymOneLayerOptim(model, &w, &b, wGradInit, bGradInit, qBits, 0.01f, 0.f);
+
+    size_t wBytes = calcNumberOfBytesForData(w->grad->quantization, 6);
+    size_t bBytes = calcNumberOfBytesForData(b->grad->quantization, 2);
+    uint8_t wBytesBefore[wBytes];
+    uint8_t bBytesBefore[bBytes];
+    memcpy(wBytesBefore, w->grad->data, wBytes);
+    memcpy(bBytesBefore, b->grad->data, bBytes);
+    float wScaleBefore = ((symQConfig_t *)w->grad->quantization->qConfig)->scale;
+    float bScaleBefore = ((symQConfig_t *)b->grad->quantization->qConfig)->scale;
+
+    scaleOptimizerGradients(sgd, factor);
+
+    /* CAPTURE before frees. */
+    uint8_t wBytesAfter[wBytes];
+    uint8_t bBytesAfter[bBytes];
+    memcpy(wBytesAfter, w->grad->data, wBytes);
+    memcpy(bBytesAfter, b->grad->data, bBytes);
+    float wScaleAfter = ((symQConfig_t *)w->grad->quantization->qConfig)->scale;
+    float bScaleAfter = ((symQConfig_t *)b->grad->quantization->qConfig)->scale;
+
+    freeOptimSgdM(sgd);
+    freeLinearLayerShellOnly(model[0]);
+
+    /* packed codes byte-for-byte unchanged. */
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(wBytesBefore, wBytesAfter, wBytes);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(bBytesBefore, bBytesAfter, bBytes);
+    /* scale absorbed the multiplicative factor. */
+    TEST_ASSERT_FLOAT_WITHIN(1e-7f, wScaleBefore * factor, wScaleAfter);
+    TEST_ASSERT_FLOAT_WITHIN(1e-7f, bScaleBefore * factor, bScaleAfter);
+}
+
+void testScaleOptimizerGradients_Sym_DequantEquivalence(void) {
+    layer_t *model[1];
+    parameter_t *w;
+    parameter_t *b;
+    float wGradInit[6] = {1.f, -2.f, 3.f, -4.f, 5.f, -6.f};
+    float bGradInit[2] = {0.5f, -0.5f};
+    uint8_t qBits = 8;
+    float factor = 0.5f;
+
+    optimizer_t *sgd =
+        buildSymOneLayerOptim(model, &w, &b, wGradInit, bGradInit, qBits, 0.01f, 0.f);
+
+    float wDequantBefore[6];
+    float bDequantBefore[2];
+    dequantGradToFloat(w->grad, wDequantBefore, 6);
+    dequantGradToFloat(b->grad, bDequantBefore, 2);
+
+    scaleOptimizerGradients(sgd, factor);
+
+    float wDequantAfter[6];
+    float bDequantAfter[2];
+    dequantGradToFloat(w->grad, wDequantAfter, 6);
+    dequantGradToFloat(b->grad, bDequantAfter, 2);
+
+    freeOptimSgdM(sgd);
+    freeLinearLayerShellOnly(model[0]);
+
+    for (size_t i = 0; i < 6; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(1e-5f, wDequantBefore[i] * factor, wDequantAfter[i]);
+    }
+    for (size_t i = 0; i < 2; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(1e-5f, bDequantBefore[i] * factor, bDequantAfter[i]);
+    }
+}
+
+/* ASYM builder mirrors buildSymOneLayerOptim (gradInitAsym instead of
+ * gradInitSym) — see that function's comment for the seeding rationale. */
+static optimizer_t *buildAsymOneLayerOptim(layer_t **modelOut, parameter_t **wOut,
+                                           parameter_t **bOut, const float *wInitialGradFloat,
+                                           const float *bInitialGradFloat, uint8_t qBits, float lr,
+                                           float momentum) {
+    tensor_t *wParam;
+    {
+        size_t *dims = reserveMemory(2 * sizeof(size_t));
+        dims[0] = 2;
+        dims[1] = 3;
+        size_t *order = reserveMemory(2 * sizeof(size_t));
+        setOrderOfDimsForNewTensor(2, order);
+        shape_t *shape = reserveMemory(sizeof(shape_t));
+        setShape(shape, dims, 2, order);
+        wParam = initTensor(shape, quantizationInitFloat(), NULL);
+        tensorFillFromFloatBuffer(wParam, (float[]){0.f, 0.f, 0.f, 0.f, 0.f, 0.f}, 6);
+    }
+    tensor_t *wGrad = gradInitAsym(wParam, qBits, HALF_AWAY, NULL);
+    tensorFillFromFloatBuffer(wGrad, wInitialGradFloat, 6);
+    parameter_t *w = parameterInit(wParam, wGrad);
+
+    tensor_t *bParam;
+    {
+        size_t *dims = reserveMemory(2 * sizeof(size_t));
+        dims[0] = 1;
+        dims[1] = 2;
+        size_t *order = reserveMemory(2 * sizeof(size_t));
+        setOrderOfDimsForNewTensor(2, order);
+        shape_t *shape = reserveMemory(sizeof(shape_t));
+        setShape(shape, dims, 2, order);
+        bParam = initTensor(shape, quantizationInitFloat(), NULL);
+        tensorFillFromFloatBuffer(bParam, (float[]){0.f, 0.f}, 2);
+    }
+    tensor_t *bGrad = gradInitAsym(bParam, qBits, HALF_AWAY, NULL);
+    tensorFillFromFloatBuffer(bGrad, bInitialGradFloat, 2);
+    parameter_t *b = parameterInit(bParam, bGrad);
+
+    quantization_t *layerQ = quantizationInitFloat();
+    layer_t *linear = buildBorrowedLinearLayer(w, b, layerQ);
+    modelOut[0] = linear;
+    *wOut = w;
+    *bOut = b;
+
+    return sgdMCreateOptim(lr, momentum, 0.f, modelOut, 1, FLOAT32);
+}
+
+void testScaleOptimizerGradients_Asym_ScalesScaleOnly(void) {
+    layer_t *model[1];
+    parameter_t *w;
+    parameter_t *b;
+    float wGradInit[6] = {1.f, -2.f, 3.f, -4.f, 5.f, -6.f};
+    float bGradInit[2] = {0.5f, -0.5f};
+    uint8_t qBits = 8;
+    float factor = 0.25f;
+
+    optimizer_t *sgd =
+        buildAsymOneLayerOptim(model, &w, &b, wGradInit, bGradInit, qBits, 0.01f, 0.f);
+
+    size_t wBytes = calcNumberOfBytesForData(w->grad->quantization, 6);
+    size_t bBytes = calcNumberOfBytesForData(b->grad->quantization, 2);
+    uint8_t wBytesBefore[wBytes];
+    uint8_t bBytesBefore[bBytes];
+    memcpy(wBytesBefore, w->grad->data, wBytes);
+    memcpy(bBytesBefore, b->grad->data, bBytes);
+    asymQConfig_t *wQ = w->grad->quantization->qConfig;
+    asymQConfig_t *bQ = b->grad->quantization->qConfig;
+    float wScaleBefore = wQ->scale;
+    float bScaleBefore = bQ->scale;
+    int16_t wZeroPointBefore = wQ->zeroPoint;
+    int16_t bZeroPointBefore = bQ->zeroPoint;
+
+    scaleOptimizerGradients(sgd, factor);
+
+    /* CAPTURE before frees. */
+    uint8_t wBytesAfter[wBytes];
+    uint8_t bBytesAfter[bBytes];
+    memcpy(wBytesAfter, w->grad->data, wBytes);
+    memcpy(bBytesAfter, b->grad->data, bBytes);
+    float wScaleAfter = wQ->scale;
+    float bScaleAfter = bQ->scale;
+    int16_t wZeroPointAfter = wQ->zeroPoint;
+    int16_t bZeroPointAfter = bQ->zeroPoint;
+
+    freeOptimSgdM(sgd);
+    freeLinearLayerShellOnly(model[0]);
+
+    /* packed codes byte-for-byte unchanged. */
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(wBytesBefore, wBytesAfter, wBytes);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(bBytesBefore, bBytesAfter, bBytes);
+    /* scale absorbed the multiplicative factor; zeroPoint is untouched (an
+     * additive offset on the code axis, not part of the multiplicative fold). */
+    TEST_ASSERT_FLOAT_WITHIN(1e-7f, wScaleBefore * factor, wScaleAfter);
+    TEST_ASSERT_FLOAT_WITHIN(1e-7f, bScaleBefore * factor, bScaleAfter);
+    TEST_ASSERT_EQUAL_INT16(wZeroPointBefore, wZeroPointAfter);
+    TEST_ASSERT_EQUAL_INT16(bZeroPointBefore, bZeroPointAfter);
+}
+
+void testScaleOptimizerGradients_Asym_DequantEquivalence(void) {
+    layer_t *model[1];
+    parameter_t *w;
+    parameter_t *b;
+    float wGradInit[6] = {1.f, -2.f, 3.f, -4.f, 5.f, -6.f};
+    float bGradInit[2] = {0.5f, -0.5f};
+    uint8_t qBits = 8;
+    float factor = 0.5f;
+
+    optimizer_t *sgd =
+        buildAsymOneLayerOptim(model, &w, &b, wGradInit, bGradInit, qBits, 0.01f, 0.f);
+
+    float wDequantBefore[6];
+    float bDequantBefore[2];
+    dequantGradToFloat(w->grad, wDequantBefore, 6);
+    dequantGradToFloat(b->grad, bDequantBefore, 2);
+
+    scaleOptimizerGradients(sgd, factor);
+
+    float wDequantAfter[6];
+    float bDequantAfter[2];
+    dequantGradToFloat(w->grad, wDequantAfter, 6);
+    dequantGradToFloat(b->grad, bDequantAfter, 2);
+
+    freeOptimSgdM(sgd);
+    freeLinearLayerShellOnly(model[0]);
+
+    for (size_t i = 0; i < 6; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(1e-5f, wDequantBefore[i] * factor, wDequantAfter[i]);
+    }
+    for (size_t i = 0; i < 2; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(1e-5f, bDequantBefore[i] * factor, bDequantAfter[i]);
+    }
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testScaleOptimizerGradients_DoublesGradients);
@@ -424,5 +701,9 @@ int main(void) {
     RUN_TEST(testScaleOptimizerGradients_SymInt32_ScalesScaleOnly);
     RUN_TEST(testScaleOptimizerGradients_SymInt32_DequantEquivalence);
     RUN_TEST(testScaleOptimizerGradients_SymInt32_MomentumSgdAppliesScaledGradient);
+    RUN_TEST(testScaleOptimizerGradients_Sym_ScalesScaleOnly);
+    RUN_TEST(testScaleOptimizerGradients_Sym_DequantEquivalence);
+    RUN_TEST(testScaleOptimizerGradients_Asym_ScalesScaleOnly);
+    RUN_TEST(testScaleOptimizerGradients_Asym_DequantEquivalence);
     return UNITY_END();
 }

@@ -163,21 +163,21 @@ optimizer_t *sgdMCreateOptim(float learningRate, float momentumFactor, float wei
             exit(1);
         }
     }
-    /* #261, PR1c: grads may be stored FLOAT32 (default) or SYM_INT32
-     * (legitimate low-level path via the explicit grad-storage knob). INT32/
-     * SYM/ASYM/BOOL grad storage is not implemented yet - fail fast rather
-     * than silently misread bytes in an unsupported layout. Non-trainable
-     * params carry no grad: skip. */
+    /* #261, PR3: grads may be stored FLOAT32 (default), SYM_INT32 (explicit
+     * low-level knob), or packed SYM/ASYM (explicit grad-storage knob,
+     * memory-constrained targets). INT32/BOOL grad storage remains
+     * unimplemented - fail fast rather than silently misread bytes in an
+     * unsupported layout. Non-trainable params carry no grad: skip. */
     for (size_t s = 0; s < optim->sizeStates; s++) {
         tensor_t *grad = optim->parameter[s]->grad;
         if (grad == NULL) {
             continue;
         }
         qtype_t gradType = grad->quantization->type;
-        if (gradType != FLOAT32 && gradType != SYM_INT32) {
+        if (gradType != FLOAT32 && gradType != SYM_INT32 && gradType != SYM && gradType != ASYM) {
             PRINT_ERROR("sgdMCreateOptim: gradient storage dtype %d not supported "
-                        "(accepted: FLOAT32, SYM_INT32; INT32/SYM/ASYM/BOOL grad storage "
-                        "lands in PR3, #261)",
+                        "(accepted: FLOAT32, SYM_INT32, SYM, ASYM; INT32/BOOL grad "
+                        "storage remains unsupported, #261)",
                         (int)gradType);
             exit(1);
         }

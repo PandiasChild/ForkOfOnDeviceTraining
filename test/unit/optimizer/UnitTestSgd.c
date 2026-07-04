@@ -17,6 +17,7 @@
 #include "StorageApi.h"
 #include "Tensor.h"
 #include "TensorApi.h"
+#include "TensorConversion.h"
 #include "unity.h"
 
 #include <ReluApi.h>
@@ -588,6 +589,12 @@ void testSgdZeroGradAsymSubByteZeroesAllPackedBytes(void) {
     tensor_t *g = gradInitAsym(p, 3, HALF_AWAY, NULL);
     parameter_t *param = parameterInit(p, g);
     memset(g->data, 0xFF, 4); /* poison all packed grad bytes */
+    /* Poison the config too (PR3, spec §5.3): byte-zero alone is not
+     * VALUE-zero for ASYM (code 0 decodes to zeroPoint*scale) — the config
+     * reset asserted below is the fix for the PR2 watch-list item. */
+    asymQConfig_t *gAsymQ = g->quantization->qConfig;
+    gAsymQ->scale = 0.42f;
+    gAsymQ->zeroPoint = 5;
 
     /* Hand-built optimizer: sgdMCreateOptim rejects sub-byte grad storage until
      * PR3, but sgdZeroGrad reads only sizeStates/parameter — this characterizes
@@ -610,17 +617,80 @@ void testSgdZeroGradAsymSubByteZeroesAllPackedBytes(void) {
     uint8_t b1 = g->data[1];
     uint8_t b2 = g->data[2];
     uint8_t b3 = g->data[3];
+    float scaleAfter = gAsymQ->scale;
+    int16_t zeroPointAfter = gAsymQ->zeroPoint;
     freeParameter(param);
 
     TEST_ASSERT_EQUAL_UINT8(0, b0);
     TEST_ASSERT_EQUAL_UINT8(0, b1);
     TEST_ASSERT_EQUAL_UINT8(0, b2);
     TEST_ASSERT_EQUAL_UINT8(0, b3);
+    /* ADDITIVE (PR3): value-zero, not just byte-zero — code 0 must decode to
+     * exactly 0.0f, which requires zeroPoint==0 (scale is irrelevant to that
+     * particular identity, but reset for hygiene/consistency with SYM/SYM_INT32). */
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.0f, scaleAfter);
+    TEST_ASSERT_EQUAL_INT16(0, zeroPointAfter);
 }
 
-void testSgdMCreateOptimRejectsSubByteGradStorage(void) {
-    /* FLOAT32 weight param whose grad is allocated sub-byte SYM (int8) — the
-     * not-yet-supported storage PR3 adds. Optimizer construction must abort. */
+void testSgdZeroGradSymSubByteZeroesAllPackedBytesAndResetsScale(void) {
+    /* SYM sibling of the ASYM test above (PR3, spec §5.3). qBits=3, N=10 grad
+     * -> packed ceil(30/8)=4 bytes. SYM's all-zero-mantissa state is already
+     * the first-store trigger for accumulateFloatIntoSymTensorFixedGrid, so
+     * correctness does not depend on the scale reset — this asserts the
+     * hygiene/consistency reset the spec calls for anyway. */
+    size_t *pDims = reserveMemory(2 * sizeof(size_t));
+    pDims[0] = 2;
+    pDims[1] = 5;
+    size_t *pOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, pOrder);
+    shape_t *pShape = reserveMemory(sizeof(shape_t));
+    setShape(pShape, pDims, 2, pOrder);
+    tensor_t *p = initTensor(pShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(p, (float[]){0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f}, 10);
+    tensor_t *g = gradInitSym(p, 3, HALF_AWAY, NULL);
+    parameter_t *param = parameterInit(p, g);
+    memset(g->data, 0xFF, 4); /* poison all packed grad bytes */
+    symQConfig_t *gSymQ = g->quantization->qConfig;
+    gSymQ->scale = 0.42f; /* poison the scale too */
+
+    sgd_t sgd;
+    sgdInit(&sgd, 0.1f, 0.0f, 0.0f);
+    parameter_t *params[1] = {param};
+    optimImpl_t impl;
+    impl.sgd = &sgd;
+    optimizer_t optim;
+    optim.parameter = params;
+    optim.sizeStates = 1;
+    optim.qtype = FLOAT32;
+    optim.impl = &impl;
+
+    sgdZeroGrad(&optim);
+
+    /* CAPTURE -> free -> assert (file convention). */
+    uint8_t b0 = g->data[0];
+    uint8_t b1 = g->data[1];
+    uint8_t b2 = g->data[2];
+    uint8_t b3 = g->data[3];
+    float scaleAfter = gSymQ->scale;
+    freeParameter(param);
+
+    TEST_ASSERT_EQUAL_UINT8(0, b0);
+    TEST_ASSERT_EQUAL_UINT8(0, b1);
+    TEST_ASSERT_EQUAL_UINT8(0, b2);
+    TEST_ASSERT_EQUAL_UINT8(0, b3);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.0f, scaleAfter);
+}
+
+void testSgdMCreateOptimAdmitsPackedSymGradStorage(void) {
+    /* CONTRACT FLIP (second of exactly two sanctioned in this PR — spec §5.1;
+     * pr3-autonomous-decisions.md item 5. The other is Task 3's ExecuteOp
+     * `testAccIntoSubByteTargetAborts` -> `testAccFixedIntoPackedSymDerivesThenCarriesGrid`).
+     * This test used to be `testSgdMCreateOptimRejectsSubByteGradStorage`,
+     * pinning "packed SYM grad storage aborts optimizer construction". PR3
+     * deliberately admits SYM (and ASYM) grads at the optimizer gate, so
+     * construction of the exact same fixture must now SUCCEED. The BOOL-grad
+     * rejection sibling below takes over this test's former negative-coverage
+     * role (BOOL remains unsupported). */
     size_t *wDims = reserveMemory(2 * sizeof(size_t));
     wDims[0] = 2;
     wDims[1] = 3;
@@ -630,8 +700,55 @@ void testSgdMCreateOptimRejectsSubByteGradStorage(void) {
     setShape(wShape, wDims, 2, wOrder);
     tensor_t *wParam = initTensor(wShape, quantizationInitFloat(), NULL);
     tensorFillFromFloatBuffer(wParam, (float[]){0.f, 0.f, 0.f, 0.f, 0.f, 0.f}, 6);
-    tensor_t *wGrad =
-        initTensor(getShapeLike(wParam->shape), quantizationInitSym(8, HALF_AWAY), NULL);
+    tensor_t *wGrad = gradInitSym(wParam, 8, HALF_AWAY, NULL);
+    parameter_t *weights = parameterInit(wParam, wGrad);
+
+    size_t *bDims = reserveMemory(1 * sizeof(size_t));
+    bDims[0] = 2;
+    size_t *bOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, bOrder);
+    shape_t *bShape = reserveMemory(sizeof(shape_t));
+    setShape(bShape, bDims, 1, bOrder);
+    tensor_t *bParam = initTensor(bShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(bParam, (float[]){0.f, 0.f}, 2);
+    tensor_t *bGrad = gradInitFloat(bParam, NULL);
+    parameter_t *bias = parameterInit(bParam, bGrad);
+
+    quantization_t *fQ = quantizationInitFloat();
+    layer_t *layer = buildBorrowedLinearLayer(weights, bias, fQ);
+    layer_t *model[1] = {layer};
+
+    optimizer_t *optim = sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 1, FLOAT32);
+
+    /* CAPTURE before frees. */
+    qtype_t capturedWGradType = weights->grad->quantization->type;
+    size_t capturedSizeStates = optim->sizeStates;
+
+    /* freeOptimSgdM cascades to the registered parameters (weights, bias). */
+    freeOptimSgdM(optim);
+    freeLinearLayerShellOnly(layer);
+    freeQuantization(fQ);
+
+    TEST_ASSERT_EQUAL_INT(SYM, capturedWGradType);
+    TEST_ASSERT_EQUAL_size_t(2, capturedSizeStates);
+}
+
+void testSgdMCreateOptimRejectsBoolGradStorage(void) {
+    /* New negative fixture (replaces the flipped test's old rejection role):
+     * FLOAT32 weight param whose grad is allocated BOOL — never a legitimate
+     * grad dtype (no meaningful gradient value fits one bit). Optimizer
+     * construction must abort. Hand-built per the old fixture's pattern
+     * (initTensor + explicit quantization, no factory). */
+    size_t *wDims = reserveMemory(2 * sizeof(size_t));
+    wDims[0] = 2;
+    wDims[1] = 3;
+    size_t *wOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, wOrder);
+    shape_t *wShape = reserveMemory(sizeof(shape_t));
+    setShape(wShape, wDims, 2, wOrder);
+    tensor_t *wParam = initTensor(wShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(wParam, (float[]){0.f, 0.f, 0.f, 0.f, 0.f, 0.f}, 6);
+    tensor_t *wGrad = initTensor(getShapeLike(wParam->shape), quantizationInitBool(), NULL);
     parameter_t *weights = parameterInit(wParam, wGrad);
 
     size_t *bDims = reserveMemory(1 * sizeof(size_t));
@@ -658,6 +775,82 @@ void testSgdMCreateOptimRejectsSubByteGradStorage(void) {
     freeQuantization(fQ);
 }
 
+void testSgdStepMFloatReadsPackedSymGradGeneric(void) {
+    /* Packed-SYM grad through the momentum step (generic-read guard, PR3
+     * #261). Hand-built optimizer (UnitTestSgd.c:545-556 stack pattern):
+     * FLOAT32 param, grad = SYM@8 seeded via ONE
+     * accumulateFloatIntoSymTensorFixedGrid call. The grad starts fresh
+     * (all-zero mantissa from initTensor's zero-fill), so the call triggers
+     * first-store grid derivation (spec §4.1): scale = absmax(inc)/qMax,
+     * qMax = 2^(8-1)-1 = 127. inc = {2.0, -1.5, 0.5} -> absmax = 2.0 ->
+     * scale = 2.0/127. codes = round(inc/scale):
+     *   2.0  / scale =  127.0   (exact) -> code  127
+     *  -1.5  / scale =  -95.25          -> code  -95
+     *   0.5  / scale =   31.75          -> code   32
+     * (no rounding ties: HALF_AWAY only matters at x.5, none of these land
+     * on one). momentumFactor=0 and weightDecay=0 collapse the momentum
+     * update to state=grad, param -= lr*dequant(grad).
+     * Mutation: reverting the generic read (raw float-cast of the packed SYM
+     * bytes, i.e. dropping the FLOAT32/else branch in sgdStepMFloat) misreads
+     * the storage as raw floats -> garbage grad values -> RED. */
+    size_t *pDims = reserveMemory(1 * sizeof(size_t));
+    pDims[0] = 3;
+    size_t *pOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, pOrder);
+    shape_t *pShape = reserveMemory(sizeof(shape_t));
+    setShape(pShape, pDims, 1, pOrder);
+    tensor_t *p = initTensor(pShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(p, (float[]){1.f, 2.f, -3.f}, 3);
+    tensor_t *g = gradInitSym(p, 8, HALF_AWAY, NULL);
+    parameter_t *param = parameterInit(p, g);
+
+    float inc[] = {2.0f, -1.5f, 0.5f};
+    accumulateFloatIntoSymTensorFixedGrid(g, inc, 3);
+
+    tensor_t *stateBuf = getTensorLike(p);
+
+    /* Minimal stack optimizer around one parameter (file convention,
+     * UnitTestSgd.c:545-556): sgdStepM reads only impl/sizeStates/parameter/
+     * states (+ sgd learningRate/momentumFactor/weightDecay). */
+    sgd_t sgd;
+    sgdInit(&sgd, 0.1f, 0.0f, 0.0f);
+    parameter_t *params[1] = {param};
+    tensor_t *stateBuffers[1] = {stateBuf};
+    states_t states0 = {.stateBuffers = stateBuffers, .statesPerParameter = 1};
+    states_t *states[1] = {&states0};
+    optimImpl_t impl;
+    impl.sgd = &sgd;
+    optimizer_t optim;
+    optim.parameter = params;
+    optim.states = states;
+    optim.sizeStates = 1;
+    optim.qtype = FLOAT32;
+    optim.impl = &impl;
+
+    sgdStepM(&optim);
+
+    /* CAPTURE -> free -> assert: derive expected with the SAME formula the
+     * comment above walks through (float scale = 2.0f/127.f), not hardcoded
+     * decimals, so the tolerance below is only absorbing FP-order noise, not
+     * a hand-rounding mismatch. */
+    float p0 = ((float *)p->data)[0];
+    float p1 = ((float *)p->data)[1];
+    float p2 = ((float *)p->data)[2];
+
+    freeTensor(stateBuf);
+    freeParameter(param);
+
+    float lr = 0.1f;
+    float scale = 2.0f / 127.f;
+    float expected0 = 1.f - lr * (127.f * scale);
+    float expected1 = 2.f - lr * (-95.f * scale);
+    float expected2 = -3.f - lr * (32.f * scale);
+
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, expected0, p0);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, expected1, p1);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, expected2, p2);
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(testSgdMCreateOptim);
@@ -667,7 +860,10 @@ int main() {
     RUN_TEST(testLayerNormContributesTwoOptimizerStates);
     RUN_TEST(testSgdMCreateOptimRegistersLayerNormGammaAndBeta);
     RUN_TEST(testSgdStepSymInt32DoesNotRoundTripGrad);
-    RUN_TEST(testSgdMCreateOptimRejectsSubByteGradStorage);
+    RUN_TEST(testSgdMCreateOptimAdmitsPackedSymGradStorage);
+    RUN_TEST(testSgdMCreateOptimRejectsBoolGradStorage);
+    RUN_TEST(testSgdStepMFloatReadsPackedSymGradGeneric);
     RUN_TEST(testSgdZeroGradAsymSubByteZeroesAllPackedBytes);
+    RUN_TEST(testSgdZeroGradSymSubByteZeroesAllPackedBytesAndResetsScale);
     return UNITY_END();
 }

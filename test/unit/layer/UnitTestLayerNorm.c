@@ -1947,6 +1947,52 @@ void testFactoryFullSymProfileTrainsSymGrads(void) {
     TEST_ASSERT_TRUE(dxScale > 0.0f && dxScale != 1.0f);
 }
 
+/* PR3 §7: the FLOAT32-backward path (layerNormBackwardFloat) bypasses the
+ * executeOp funnel and raw-casts cfg->gamma->grad->data / cfg->beta->grad->data
+ * to float*. Hand-wire gamma's grad as a packed SYM@8 tensor (the shape the
+ * grad-storage knob can now legitimately produce, PR3) while everything else
+ * (forwardInput/loss/gamma param/beta param+grad) stays FLOAT32 -- the
+ * existing pre-guard checks (line ~630) only look at forwardInput/loss/
+ * gamma->param, so they let this through unchallenged.
+ * Mutation guard: without the added gamma/beta grad dtype check, the raw
+ * float* cast in layerNormBackwardFloat reinterprets the packed SYM byte
+ * buffer as floats and writes dgamma silently into it -- corrupting the
+ * packed bytes with no visible error, and the (forked) child then _exit(0)s
+ * from falling off the end of the statement, not exit(1). Dropping the guard
+ * flips this test from GREEN back to that RED. */
+void testBackwardFloatGuardsNonFloat32GammaGrad(void) {
+    size_t dims[] = {4};
+    tensor_t *fwdIn = buildFloatTensorND(1, dims, (float[]){1.f, -1.f, 1.f, -1.f});
+    tensor_t *loss = buildFloatTensorND(1, dims, (float[]){1.f, 2.f, 3.f, 4.f});
+    tensor_t *propLoss = buildFloatTensorND(1, dims, NULL);
+
+    size_t ns[] = {4};
+    tensor_t *gammaParam = buildFloatTensorND(1, ns, (float[]){1.f, 1.f, 1.f, 1.f});
+    tensor_t *gammaGrad = gradInitSym(gammaParam, 8, HALF_AWAY, NULL);
+    parameter_t *gamma = parameterInit(gammaParam, gammaGrad);
+    parameter_t *beta = buildFloatParam(1, ns, NULL);
+    size_t *normShape = reserveMemory(sizeof(size_t));
+    normShape[0] = 4;
+
+    quantization_t *fq = quantizationInitFloat();
+    quantization_t *bq = quantizationInitFloat();
+    layerNormConfig_t cfg;
+    initLayerNormConfig(&cfg, gamma, beta, normShape, 1, 1e-5f, fq, bq);
+    layerConfig_t lcfg;
+    layer_t layer = makeLayerNormLayer(&cfg, &lcfg);
+
+    ASSERT_EXITS_WITH_FAILURE(layerNormBackward(&layer, fwdIn, loss, propLoss));
+
+    freeQuantization(bq);
+    freeQuantization(fq);
+    freeReservedMemory(normShape);
+    freeParameter(beta);
+    freeParameter(gamma);
+    freeTensor(propLoss);
+    freeTensor(loss);
+    freeTensor(fwdIn);
+}
+
 /* layerNormValidateSymTensor is static; exercise it through layerNormForward.
  * The INPUT tensor is built with qMaxBits=13, which exceeds the int12 operand
  * contract (ODT_SYM_OPERAND_QMAXBITS=12); the forward must exit(1). */
@@ -2032,6 +2078,7 @@ int main(void) {
     RUN_TEST(testSymBackwardDivergentLayoutsBitIdentical);
     RUN_TEST(testFactoryDefaultGradStorageIsFloat32DespiteFullSymProfile);
     RUN_TEST(testFactoryFullSymProfileTrainsSymGrads);
+    RUN_TEST(testBackwardFloatGuardsNonFloat32GammaGrad);
     RUN_TEST(testLayerNormSymRejectsOperandWiderThanInt12);
     return UNITY_END();
 }

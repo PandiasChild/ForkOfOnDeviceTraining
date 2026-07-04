@@ -634,6 +634,23 @@ void layerNormBackward(layer_t *layer, tensor_t *forwardInput, tensor_t *loss, t
                         "use SYM_INT32 backwardMath to train)");
             exit(1);
         }
+        /* layerNormBackwardFloat raw-casts cfg->gamma->grad->data /
+         * cfg->beta->grad->data to float* (it bypasses the executeOp funnel,
+         * unlike the SYM_INT32 path's dgamma/dbeta identity-kernel executeOp
+         * calls above). A packed (SYM/ASYM) grad tensor read/written that way
+         * is silent memory corruption, not garbage values — fail fast instead.
+         * PR3 (#261): routing float dgamma/dbeta through the funnel like the
+         * SYM_INT32 path is a follow-up issue; this guard only closes the gap
+         * until then. */
+        if (cfg->gamma->grad->quantization->type != FLOAT32 ||
+            cfg->beta->grad->quantization->type != FLOAT32) {
+            PRINT_ERROR("LayerNorm backward: FLOAT32 backward writes gamma/beta grads via a raw "
+                        "float* cast — packed grad storage requires the funnel route (follow-up "
+                        "issue, #261) — got gamma grad dtype %d, beta grad dtype %d",
+                        (int)cfg->gamma->grad->quantization->type,
+                        (int)cfg->beta->grad->quantization->type);
+            exit(1);
+        }
         layerNormBackwardFloat(cfg, forwardInput, loss, propLoss);
         break;
     case ARITH_SYM_INT32:
