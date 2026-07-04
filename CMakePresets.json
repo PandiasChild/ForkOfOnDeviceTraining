@@ -43,7 +43,8 @@
       "displayName": "Unit-Test-Debug",
       "inherits": "host",
       "cacheVariables": {
-        "DEBUG_MODE_DEBUG": "ON"
+        "DEBUG_MODE_DEBUG": "ON",
+        "ODT_MEM_PROFILE": "ON"
       }
     },
     {
@@ -52,7 +53,8 @@
       "inherits": "host",
       "cacheVariables": {
         "CMAKE_C_FLAGS": "-fsanitize=address,undefined -fno-sanitize=function -fno-omit-frame-pointer -fno-sanitize-recover=all -g -O1",
-        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined"
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined",
+        "ODT_MEM_PROFILE": "ON"
       }
     },
     {

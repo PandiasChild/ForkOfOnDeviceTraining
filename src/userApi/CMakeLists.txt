@@ -35,6 +35,7 @@ target_link_libraries(InferenceApi PRIVATE
 
 add_library(StorageApi StorageApi.c)
 target_include_directories(StorageApi PUBLIC include)
+target_compile_definitions(StorageApi PUBLIC $<$<BOOL:${ODT_MEM_PROFILE}>:ODT_MEM_PROFILE>)
 target_link_libraries(StorageApi PRIVATE
         Tensor
         Rounding
