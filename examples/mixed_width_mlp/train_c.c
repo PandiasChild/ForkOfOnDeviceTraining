@@ -23,6 +23,7 @@
 #include "QuantLayerApi.h"
 #include "Quantization.h"
 #include "QuantizationApi.h"
+#include "RNG.h"
 #include "ReluApi.h"
 #include "Rounding.h"
 #include "SgdApi.h"
@@ -61,11 +62,19 @@
 #define QUANT1_IDX 4
 #define SOFTMAX_IDX 5
 
-/* Pinned widths (spec §7). */
+/* Pinned widths (spec §7; grad storage flipped to packed SYM by PR3, spec §8:
+ * docs/superpowers/specs/2026-07-03-pr3-packed-grad-storage-design.md). */
 #define WEIGHT_QMAXBITS 8
 #define BIAS_QMAXBITS 16
-#define GRAD_QMAXBITS 16
+#define GRAD_QBITS 8     /* packed SYM (was GRAD_QMAXBITS 16 SYM_INT32 pre-PR3) */
 #define WIRE_QMAXBITS 12 /* matches ODT_SYM_OPERAND_QMAXBITS (Quantization.h) */
+
+/* Byte gate expected total (spec §8, derived): Linear0 weight 784*64=50176
+ * elements + bias 64 elements, Linear1 weight 64*10=640 elements + bias 10
+ * elements, all packed SYM@GRAD_QBITS — calcBytesPerTensor ceils
+ * qBits*N/8 per tensor => 50176 + 64 + 640 + 10 = 50890 bytes at qBits=8
+ * (vs 203,560 B at FLOAT32/SYM_INT32 pre-PR3 — recon-pack §5). */
+#define EXPECTED_GRAD_BYTES 50890
 
 static dataset_t g_trainDataset;
 
@@ -148,7 +157,8 @@ typedef struct mixedWidthQuant {
     quantization_t *floatInitQ; /* FLOAT32 — temporary weight/bias storage, see buildModel() */
     quantization_t *weightQ;    /* SYM_INT32 @8  — weightStorage (post-construction fixup) */
     quantization_t *biasQ;      /* SYM_INT32 @16 — biasStorage   (post-construction fixup) */
-    quantization_t *gradQ;      /* SYM_INT32 @16 — weightGradStorage/biasGradStorage knob */
+    quantization_t *gradQ;      /* SYM @8 (packed) — weightGradStorage/biasGradStorage knob,
+                                   PR3 grad-storage flip (was SYM_INT32 @16) */
     quantization_t *operandQ; /* SYM_INT32 @12 — Linear0/Linear1 outputQ (producer-restored wire) */
     quantization_t *wireQ;    /* SYM_INT32 @12 — Relu outputQ + every layer's propLossQ */
     quantization_t *floatQ;   /* FLOAT32 — Quant1/Softmax outputQ */
@@ -162,20 +172,32 @@ static void buildModel(layer_t **model, mixedWidthQuant_t *mq) {
     /* Linear0/Linear1 share the identical pinned profile (spec §7): forward
      * ARITH_SYM_INT32 (native); weightGrad/propLoss ARITH_FLOAT32 — routed
      * through the executeOp funnel (Task 1), which dequantizes SYM operands
-     * on the fly and (OUT_ACC_DYNAMIC_RESCALE / OUT_WRITE) re-quantizes the
-     * FLOAT32 intermediate into the SYM_INT32 target, unlike the
+     * on the fly and re-quantizes the FLOAT32 intermediate into the packed
+     * SYM grad target (weightGradAccMode/biasGradAccMode below), unlike the
      * raw/unmigrated forward kernel below.
      *
-     * biasGradMath is ARITH_SYM_INT32, not FLOAT32: Linear.c's linearBackward
-     * always runs the bias-grad accumulate under OUT_ACC_FIXED_SCALE
-     * (hardcoded, independent of biasGradMath), and executeOp's
-     * OUT_ACC_FIXED_SCALE arm has no FLOAT32-intermediate-into-SYM-target
-     * bridge (ExecuteOp.c accumulateOut: "OUT_ACC_FIXED_SCALE needs a SYM
-     * intermediate for a SYM target" — verified empirically, PRINT_ERROR +
-     * exit(1) otherwise). Since biasGradStorage is SYM_INT32@16, biasGradMath
-     * must match. weightGradMath (OUT_ACC_DYNAMIC_RESCALE) and propLossMath
-     * (OUT_WRITE) both DO support a FLOAT32 intermediate into a SYM target,
-     * so those two stay FLOAT32 per the pinned config.
+     * weightGradAccMode/biasGradAccMode are both set explicitly to
+     * OUT_ACC_FIXED_SCALE: lqLinear is a hand-written literal (not built via
+     * layerQuantInitUniform), so these fields have no implicit default —
+     * leaving them at the zero-init OUT_WRITE would trip the PR3 hazard
+     * guard (executeOpValidateAccMode) at the first grad accumulate. Setting
+     * both to FIXED_SCALE (the fit-preserving carried-grid scheme, spec
+     * §4.1) rather than the Linear.c hardcode split
+     * (weight=DYNAMIC_RESCALE/bias=FIXED_SCALE) is this acceptance run's
+     * deliberate choice: it exercises the new packed-target FIXED_SCALE path
+     * on both weight and bias grads at once.
+     *
+     * biasGradMath stays ARITH_SYM_INT32 — a kept choice now, not a forced
+     * one. Pre-PR3, executeOp's OUT_ACC_FIXED_SCALE epilogue had no
+     * FLOAT32-intermediate-into-SYM-target bridge, so biasGradStorage being
+     * SYM_INT32@16 forced biasGradMath to match. PR3 closes that gap for
+     * packed SYM targets (spec §4.1: the SYM epilogue's FIXED_SCALE arm now
+     * accepts BOTH FLOAT32 and SYM_INT32 intermediates), so biasGradMath
+     * could switch to FLOAT32 like weightGradMath/propLossMath — SYM_INT32
+     * is retained here as the minimal diff, not because the funnel still
+     * demands it. weightGradMath and propLossMath already used a FLOAT32
+     * intermediate before PR3 (both bridges pre-date this change) and stay
+     * FLOAT32 per the pinned config.
      *
      * weightStorage/biasStorage are TEMPORARILY mq->floatInitQ: the factory's
      * PyTorch-parity init (initWeightTensor/initBiasTensor, LayerCommon.c
@@ -187,7 +209,7 @@ static void buildModel(layer_t **model, mixedWidthQuant_t *mq) {
      * via requantizeTensorInPlace() before the first forward pass. Grad
      * tensors are unaffected: gradInit derives their dtype from
      * weightGradStorage/biasGradStorage (mq->gradQ) independent of the
-     * param's own storage, so they are already correctly SYM_INT32@16
+     * param's own storage, so they are already correctly packed SYM@GRAD_QBITS
      * straight out of the factory. */
     layerQuant_t lqLinear = {
         .forwardMath = (arithmetic_t){ARITH_SYM_INT32, HALF_AWAY},
@@ -200,6 +222,8 @@ static void buildModel(layer_t **model, mixedWidthQuant_t *mq) {
         .biasStorage = mq->floatInitQ,
         .weightGradStorage = mq->gradQ,
         .biasGradStorage = mq->gradQ,
+        .weightGradAccMode = OUT_ACC_FIXED_SCALE,
+        .biasGradAccMode = OUT_ACC_FIXED_SCALE,
     };
     model[LINEAR0_IDX] =
         linearLayerInit(&(linearInit_t){.inFeatures = 28 * 28, .outFeatures = HIDDEN}, &lqLinear);
@@ -274,16 +298,34 @@ typedef struct paramGateCtx {
 
 /* Fired via traceModelWeights/traceModelGrads: asserts every LINEAR layer's
  * weight/bias PARAM tensor is SYM_INT32@8 / SYM_INT32@16 respectively, and
- * both its GRAD tensors are SYM_INT32@16 (the grad knob, spec §7). */
+ * both its GRAD tensors are packed SYM@GRAD_QBITS (the grad knob, PR3 spec
+ * §8 — grads are no longer SYM_INT32, so they need their own dtype/width
+ * arm instead of sharing the PARAM branch below). */
 static void paramGateSink(void *ctxVoid, size_t layerIdx, layerType_t layerType, const char *phase,
                           tensor_t *tensor) {
     if (layerType != LINEAR) {
         return;
     }
     paramGateCtx_t *ctx = ctxVoid;
+
+    if (ctx->isGrad) {
+        if (tensor->quantization->type != SYM) {
+            PRINT_ERROR("gate: layer %zu %s expected SYM, got qtype %d", layerIdx, phase,
+                        (int)tensor->quantization->type);
+            exit(1);
+        }
+        symQConfig_t *qc = tensor->quantization->qConfig;
+        if (qc->qBits != GRAD_QBITS) {
+            PRINT_ERROR("gate: layer %zu %s expected qBits %u, got %u", layerIdx, phase,
+                        (unsigned)GRAD_QBITS, (unsigned)qc->qBits);
+            exit(1);
+        }
+        ctx->count++;
+        return;
+    }
+
     bool isWeight = strstr(phase, ".weight") != NULL;
-    uint8_t expectedBits =
-        ctx->isGrad ? GRAD_QMAXBITS : (isWeight ? WEIGHT_QMAXBITS : BIAS_QMAXBITS);
+    uint8_t expectedBits = isWeight ? WEIGHT_QMAXBITS : BIAS_QMAXBITS;
 
     if (tensor->quantization->type != SYM_INT32) {
         PRINT_ERROR("gate: layer %zu %s expected SYM_INT32, got qtype %d", layerIdx, phase,
@@ -299,6 +341,25 @@ static void paramGateSink(void *ctxVoid, size_t layerIdx, layerType_t layerType,
     ctx->count++;
 }
 
+typedef struct gradBytesGateCtx {
+    size_t totalBytes;
+} gradBytesGateCtx_t;
+
+/* Fired via traceModelGrads: sums calcBytesPerTensor across every LINEAR
+ * layer's grad tensors and asserts the packed-SYM total against
+ * EXPECTED_GRAD_BYTES (spec §8) — the memory-shrink claim measured in-binary
+ * rather than left as a comment. */
+static void gradBytesGateSink(void *ctxVoid, size_t layerIdx, layerType_t layerType,
+                              const char *phase, tensor_t *tensor) {
+    (void)layerIdx;
+    (void)phase;
+    if (layerType != LINEAR) {
+        return;
+    }
+    gradBytesGateCtx_t *ctx = ctxVoid;
+    ctx->totalBytes += calcBytesPerTensor(tensor);
+}
+
 int main(void) {
     initDataSets();
 
@@ -306,13 +367,15 @@ int main(void) {
         .floatInitQ = quantizationInitFloat(),
         .weightQ = quantizationInitSymInt32WithBits(HALF_AWAY, WEIGHT_QMAXBITS),
         .biasQ = quantizationInitSymInt32WithBits(HALF_AWAY, BIAS_QMAXBITS),
-        .gradQ = quantizationInitSymInt32WithBits(HALF_AWAY, GRAD_QMAXBITS),
+        .gradQ = quantizationInitSym(GRAD_QBITS, HALF_AWAY),
         .operandQ = quantizationInitSymInt32WithBits(HALF_AWAY, WIRE_QMAXBITS),
         .wireQ = quantizationInitSymInt32WithBits(HALF_AWAY, WIRE_QMAXBITS),
         .floatQ = quantizationInitFloat(),
     };
 
     layer_t *model[MODEL_SIZE];
+    rngSetSeed(1); /* fixed seed, sed-able literal: the 10-seed sweep harness
+                    * patches this integer per run (spec §8) */
     buildModel(model, &mq);
 
     /* Fix up Linear0/Linear1's weight/bias PARAM tensors to the pinned
@@ -390,10 +453,18 @@ int main(void) {
                 exit(1);
             }
 
+            gradBytesGateCtx_t bytesCtx = {.totalBytes = 0};
+            traceModelGrads(model, MODEL_SIZE, "gate", gradBytesGateSink, &bytesCtx);
+            if (bytesCtx.totalBytes != EXPECTED_GRAD_BYTES) {
+                PRINT_ERROR("gate: expected %d packed grad bytes total, saw %zu",
+                            EXPECTED_GRAD_BYTES, bytesCtx.totalBytes);
+                exit(1);
+            }
+
             fprintf(stdout,
-                    "GATES PASS: weight=SYM_INT32@%d bias=SYM_INT32@%d grads=SYM_INT32@%d "
-                    "Linear0-wire=SYM_INT32@%d\n",
-                    WEIGHT_QMAXBITS, BIAS_QMAXBITS, GRAD_QMAXBITS, WIRE_QMAXBITS);
+                    "GATES PASS: weight=SYM_INT32@%d bias=SYM_INT32@%d grads=SYM@%d "
+                    "Linear0-wire=SYM_INT32@%d grad_bytes=%zu\n",
+                    WEIGHT_QMAXBITS, BIAS_QMAXBITS, GRAD_QBITS, WIRE_QMAXBITS, bytesCtx.totalBytes);
         }
     }
 

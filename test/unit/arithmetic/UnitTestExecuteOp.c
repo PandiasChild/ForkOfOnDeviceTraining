@@ -427,8 +427,9 @@ void testAccFixedSymIntoSymRescalesIntoExistingScale(void) {
  * SYM@8 target derives its grid from the first increment, then a second
  * accumulate carries that grid verbatim (fit-preserving, spec D1/D2). One of
  * exactly two sanctioned contract-flip test edits in this PR (spec §4.1/§9;
- * the other is the PR2 ASYM-zero test's config-reset extension, out of scope
- * here). Parity oracle: a twin target driven directly through
+ * the other is UnitTestSgd's admission flip — the PR2 ASYM-zero test's
+ * config-reset extension is additive, not a flip). Parity oracle: a twin
+ * target driven directly through
  * accumulateFloatIntoSymTensorFixedGrid must end up bit-identical to the
  * executeOp-driven target. inc2 deliberately SHRINKS the element that hit the
  * grid boundary on call 1 (index 0, derived to exactly +127) while nudging

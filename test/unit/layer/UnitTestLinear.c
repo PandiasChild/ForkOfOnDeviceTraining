@@ -930,7 +930,8 @@ void testLinearBackwardZeroInitAccModeDies(void) {
 
     quantization_t *test = quantizationInitFloat();
     layer_t *linearLayer = buildBorrowedLinearLayer(weights, bias, test);
-    linearLayer->config->linear->weightGradAccMode = (outputMode_t)0; /* == OUT_WRITE, forgotten knob */
+    linearLayer->config->linear->weightGradAccMode =
+        (outputMode_t)0; /* == OUT_WRITE, forgotten knob */
 
     ASSERT_EXITS_WITH_FAILURE(linearBackward(linearLayer, forwardInput, loss, propLoss));
 

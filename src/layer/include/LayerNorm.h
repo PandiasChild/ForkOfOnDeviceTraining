@@ -18,12 +18,12 @@ typedef struct layerNormConfig {
     float eps;               /* default 1e-5 */
     arithmetic_t forwardMath;
     arithmetic_t propLossMath;
-    quantization_t *outputQ;   /* produced forward-wire storage */
-    quantization_t *propLossQ; /* produced dx-wire storage */
+    quantization_t *outputQ;        /* produced forward-wire storage */
+    quantization_t *propLossQ;      /* produced dx-wire storage */
     outputMode_t weightGradAccMode; /* dgamma executeOp accumulate mode (PR3 spec D1) */
     outputMode_t biasGradAccMode;   /* dbeta executeOp accumulate mode (PR3 spec D1) */
-    bool ownsQuantizations;    /* true → freeLayerNormLayer tears down outputQ/propLossQ
-                                * (Owning factory); false → caller owns them (Borrowing). */
+    bool ownsQuantizations;         /* true → freeLayerNormLayer tears down outputQ/propLossQ
+                                     * (Owning factory); false → caller owns them (Borrowing). */
 } layerNormConfig_t;
 
 void initLayerNormConfig(layerNormConfig_t *cfg, parameter_t *gamma, parameter_t *beta,

@@ -54,7 +54,7 @@ void executeConvert(tensor_t *input, tensor_t *target) {
  * the same idiom the FLOAT32 target arm already uses for its SYM_INT32
  * intermediate (above). Returns a pointer into either `intermediate->data`
  * or `scratch`, never both. */
-static const float *incrementAsFloatView(tensor_t *intermediate, size_t n, uint8_t *scratch) {
+static const float *incrementAsFloatView(tensor_t *intermediate, uint8_t *scratch) {
     if (intermediate->quantization->type == FLOAT32) {
         return (const float *)intermediate->data;
     }
@@ -144,7 +144,7 @@ static void accumulateOut(tensor_t *intermediate, tensor_t *target, outputMode_t
             exit(1);
         }
         uint8_t incFloatData[(n > 0 ? n : 1) * sizeof(float)];
-        const float *inc = incrementAsFloatView(intermediate, n, incFloatData);
+        const float *inc = incrementAsFloatView(intermediate, incFloatData);
         if (mode == OUT_ACC_FIXED_SCALE) {
             accumulateFloatIntoSymTensorFixedGrid(target, inc, n);
         } else {
@@ -165,7 +165,7 @@ static void accumulateOut(tensor_t *intermediate, tensor_t *target, outputMode_t
             exit(1);
         }
         uint8_t incFloatData[(n > 0 ? n : 1) * sizeof(float)];
-        const float *inc = incrementAsFloatView(intermediate, n, incFloatData);
+        const float *inc = incrementAsFloatView(intermediate, incFloatData);
         accumulateFloatIntoAsymTensorRescale(target, inc, n);
         return;
     }

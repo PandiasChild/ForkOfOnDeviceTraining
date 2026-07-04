@@ -1,5 +1,35 @@
 # Unit-test conventions
 
+## Test-driven discipline (RED before implementation)
+
+Every feature and bugfix is written test-first: the failing test (RED) is
+authored and **its failure is observed and captured before** the
+implementation exists. This is a hard house rule, not a preference.
+
+- **Capture RED live.** The evidence that a test discriminates is its
+  observed failure *against absent or unimplemented code* — a link error, an
+  assertion failure, a death-test exit mismatch — recorded at the time,
+  before the implementation is written.
+- **Post-hoc reconstruction is not acceptable as primary evidence.**
+  Reverting a finished implementation, running the already-written tests to
+  manufacture a RED, then reapplying the code, is *not* test-first. A test
+  authored after seeing the implementation can silently encode "what the code
+  does" instead of "what the spec requires" — the exact failure mode TDD
+  exists to prevent. If test-first was skipped, the remedy is to redo the
+  tests from the spec, not to reconstruct a RED.
+- **Mutation testing is required but is not a substitute.** Each test must be
+  shown to catch a real defect: temporarily break the code, observe the
+  specific test go RED, restore, confirm GREEN. This proves the test is not
+  vacuous — but a non-vacuous test written post-hoc can still assert the wrong
+  contract. Mutation evidence complements live-RED; it does not replace it.
+
+Rationale of record: PR #276 shipped one optimizer task implemented before
+its tests, with RED reconstructed post-hoc (source-revert + targeted
+mutations, byte-identical reapply). It was accepted *that once* — a redo of
+already-green, mutation-verified code was judged not worth the cost —
+explicitly not as precedent. This section is the go-forward rule that keeps
+it from recurring.
+
 ## Sanitizer-driven memory bug detection
 
 The C unit-test suite is run twice in CI: once normally (`c-build-and-test`),
