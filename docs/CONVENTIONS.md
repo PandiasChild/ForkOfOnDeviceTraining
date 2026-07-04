@@ -5,6 +5,9 @@ live under `docs/conventions/`; this file is the index and the cross-cutting
 vision. (Claude sessions receive each subsystem's conventions
 path-scoped automatically via `.claude/rules/`.)
 
+For *what the framework can do today* (layer/optimizer/serialization feature
+matrix), see [`FEATURES.md`](FEATURES.md).
+
 ## Vision: memory over float accuracy
 
 ODT is a memory-light on-device-training research framework. SYM_INT32 paths
