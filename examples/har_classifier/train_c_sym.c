@@ -70,7 +70,13 @@
 #include "TraceApi.h"
 #include "TrainingLoopApi.h"
 
-#define BATCH 64
+#include "mem_instrument.h"
+
+#define BATCH 64 /* macro-batch: loader groups 64 samples per optimizer step */
+/* Micro-batch = concurrent samples per forward/backward. The training loop
+ * streams the macro-batch one sample at a time (loss.md B=1), so peak activation
+ * memory is ONE sample's worth — this is what the analytic footprint must use. */
+#define MICRO_BATCH 1
 #define NUM_CLASSES 6
 
 #define IN_CHANNELS 9
@@ -407,11 +413,33 @@ int main(void) {
     fprintf(stdout, "CONFIG sym_bits=%d lr=%.5f momentum=%.3f epochs=%d seed=%u shuffle_seed=%u\n",
             g_symBits, (double)g_lr, (double)g_momentum, g_epochs, g_seed, g_shuffleSeed);
 
+#ifdef ODT_MEM_PROFILE
+    /* Reset the heap counter to 0 BEFORE the first allocation so dataset_b is
+     * counted from a clean baseline; env reads / printf above allocate nothing
+     * via reserveMemory. */
+    memProfileReset();
+#endif
+
     initDataSets();
+
+#ifdef ODT_MEM_PROFILE
+    size_t markDataset = memProfileMark(); /* dataset_b */
+#endif
+
+    /* Stochastic rounding (SR_HALF_AWAY) on the packed-SYM param storage is the
+     * optimizer epic's dead-zone escape (#279): a FLOAT32 grad step smaller than
+     * one SYM level would deterministically round back to the same int under
+     * HALF_AWAY and vanish; SR_HALF_AWAY rounds it up with probability equal to
+     * the fractional part, so sub-ULP updates move the weight IN EXPECTATION.
+     * SYM_ROUNDING=det forces deterministic HALF_AWAY to A/B the dead-zone claim
+     * (the numerics hypothesis this example exists to test). */
+    const char *roundingEnv = getenv("SYM_ROUNDING");
+    roundingMode_t symRounding =
+        (roundingEnv != NULL && strcmp(roundingEnv, "det") == 0) ? HALF_AWAY : SR_HALF_AWAY;
 
     symQuant_t sq = {
         .floatQ = quantizationInitFloat(),
-        .symQ = quantizationInitSym((uint8_t)g_symBits, HALF_AWAY),
+        .symQ = quantizationInitSym((uint8_t)g_symBits, symRounding),
     };
 
     layerQuant_t lqFloat;
@@ -419,8 +447,14 @@ int main(void) {
 
     layer_t *model[MODEL_SIZE];
     rngSetSeed(g_seed);
+#ifdef ODT_MEM_PROFILE
+    size_t markBeforeModel = memProfileMark();
+#endif
     buildModel(model, &sq, &lqFloat);
     requantizeParamsToSym(model, &sq);
+#ifdef ODT_MEM_PROFILE
+    size_t markAfterModel = memProfileMark(); /* params_grads_b = delta */
+#endif
 
     /* ---- Gate: param + grad storage dtypes -------------------------------- */
     paramGateCtx_t wCtx = {.isGrad = false, .expectBits = g_symBits, .count = 0, .fails = 0};
@@ -457,12 +491,24 @@ int main(void) {
     }
 
     /* qType tag SYM_INT32 -> sgdStepMSymInt32, the dtype-generic
-     * dequant->float-update->requant path. convertTensor dispatches on the
-     * ACTUAL param dtype (packed SYM here), so the SYM param + SYM momentum
-     * state round-trip SYM<->FLOAT32 each step; the FLOAT32 grad is read
-     * directly. */
-    optimizer_t *sgd =
-        sgdMCreateOptim(g_lr, g_momentum, /*weightDecay*/ 0.0f, model, MODEL_SIZE, SYM_INT32);
+     * dequant->float-update->requant path. convertTensor dispatches on each
+     * tensor's ACTUAL dtype: the packed-SYM weights round-trip SYM<->FLOAT32 per
+     * step (write-back stochastic via symRounding), while the FLOAT32 grad and
+     * the FLOAT32 momentum state (below) are read/written directly. */
+#ifdef ODT_MEM_PROFILE
+    size_t markBeforeOpt = memProfileMark();
+#endif
+    /* Momentum accumulator is FLOAT32, DECOUPLED from the packed-SYM params via
+     * the epic's own-config knob. A packed-SYM momentum would requantize the
+     * running velocity to the same coarse levels as the weights and reinstate a
+     * dead-zone in the accumulator; a FLOAT32 accumulator keeps velocity precise
+     * so ONLY the weights carry the memory win. */
+    quantization_t *momentumQ = quantizationInitFloat();
+    optimizer_t *sgd = sgdMCreateOptim(g_lr, g_momentum, /*weightDecay*/ 0.0f, model, MODEL_SIZE,
+                                       SYM_INT32, momentumQ);
+#ifdef ODT_MEM_PROFILE
+    size_t markAfterOpt = memProfileMark(); /* optstate_b = delta */
+#endif
 
     if (logPath != NULL && logPath[0] != '\0') {
         g_log_file = fopen(logPath, "w");
@@ -493,24 +539,71 @@ int main(void) {
             (double)testStats.accuracy);
     fflush(stdout);
 
+#ifdef ODT_MEM_PROFILE
+    /* Honest per-run memory breakdown. The stack probe below runs one REAL
+     * training step (mutating model + momentum), but no evaluation / output
+     * follows, so the mutation is inert. */
+    memReport_t report = {0};
+    report.sym_bits = g_symBits;
+    report.dataset_b = markDataset;
+    report.params_grads_b = markAfterModel - markBeforeModel;
+    report.optstate_b = markAfterOpt - markBeforeOpt;
+    report.params_b = memInstrumentParamBytes(sgd);
+    report.grads_b = memInstrumentGradBytes(sgd);
+    report.optstate_analytic_b = memInstrumentOptStateBytes(sgd);
+    report.activations_b = memInstrumentHarActivationBytes(MICRO_BATCH);
+    report.io_b = memInstrumentHarIoBytes(MICRO_BATCH);
+
+    sample_t *stepSample = getTrainSample(0);
+    memStepCtx_t stepCtx = {
+        .model = model,
+        .modelSize = MODEL_SIZE,
+        .lossConfig = (lossConfig_t){.funcType = CROSS_ENTROPY,
+                                     .backwardReduction = REDUCTION_MEAN,
+                                     .classWeights = NULL},
+        .input = stepSample->item,
+        .label = stepSample->label,
+        .optim = sgd,
+    };
+    report.stack_peak_b = memInstrumentStackPeakBytes(&stepCtx, 1u << 20);
+    freeSample(stepSample);
+
+    report.heap_peak_b = memProfilePeakBytes();
+    report.rss_peak_kb = memProfileRssPeakKb();
+    memInstrumentFinalize(&report);
+    memInstrumentPrintReconciliation(&report);
+#endif
+
     if (g_log_file != NULL) {
-        fprintf(g_log_file, "\n  ],\n  \"final\": {\"test_loss\": %.6f, \"test_acc\": %.6f}\n}\n",
+        fprintf(g_log_file, "\n  ],\n  \"final\": {\"test_loss\": %.6f, \"test_acc\": %.6f}",
                 (double)testStats.loss, (double)testStats.accuracy);
+#ifdef ODT_MEM_PROFILE
+        fprintf(g_log_file, ",\n  \"memory\": ");
+        memInstrumentEmitJson(g_log_file, &report);
+#endif
+        fprintf(g_log_file, "\n}\n");
         fclose(g_log_file);
     }
 
-    /* ---- Gate: train loss decreased across the run ------------------------ */
+    /* ---- Convergence DIAGNOSTIC (advisory, never fatal) ------------------- */
+    /* Whether train loss descends is the very quantity this sweep MEASURES: at
+     * coarse widths (e.g. SYM@4) a config may legitimately fail to descend, and
+     * that is a FINDING to record, not a run to crash (integrity rule). This is
+     * a printed diagnostic only — per-epoch train_loss is already in the JSON,
+     * and compare_memory.py reports convergence as k/N across seeds. The fatal
+     * build-sanity gates are the dtype checks + the initial-loss gate above;
+     * those still hard-fail on a genuinely broken build. */
     fprintf(stdout, "train_loss first=%.6f last=%.6f\n", (double)g_firstTrainLoss,
             (double)g_lastTrainLoss);
-    if (!(g_lastTrainLoss < g_firstTrainLoss)) {
+    if (g_lastTrainLoss < g_firstTrainLoss) {
+        fprintf(stdout, "CONVERGENCE OK: train loss decreased (%.6f -> %.6f)\n",
+                (double)g_firstTrainLoss, (double)g_lastTrainLoss);
+    } else {
         fprintf(stderr,
-                "GATE FAIL: train loss did not decrease (first=%.6f last=%.6f) — SYM@%d params "
-                "too coarse to descend at lr=%.4f?\n",
+                "CONVERGENCE WARN: train loss did not decrease (first=%.6f last=%.6f) — SYM@%d "
+                "may be too coarse to descend at lr=%.4f (recorded, not fatal)\n",
                 (double)g_firstTrainLoss, (double)g_lastTrainLoss, g_symBits, (double)g_lr);
-        return 3;
     }
-    fprintf(stdout, "GATE PASS: train loss decreased (%.6f -> %.6f)\n", (double)g_firstTrainLoss,
-            (double)g_lastTrainLoss);
 
     return 0;
 }

@@ -73,6 +73,15 @@
       "cacheVariables": {
         "BUILD_EXAMPLES": "ON"
       }
+    },
+    {
+      "name": "examples_memprofile",
+      "displayName": "Examples + memory profiling (ODT_MEM_PROFILE=ON)",
+      "inherits": "host",
+      "cacheVariables": {
+        "BUILD_EXAMPLES": "ON",
+        "ODT_MEM_PROFILE": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -121,6 +130,10 @@
     {
       "name": "examples",
       "configurePreset": "examples"
+    },
+    {
+      "name": "examples_memprofile",
+      "configurePreset": "examples_memprofile"
     }
   ],
   "testPresets": [

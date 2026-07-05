@@ -183,3 +183,155 @@ def plot_anomaly_score_hist(
     fig.tight_layout(rect=(0, 0, 1, 0.95))
     fig.savefig(out_path, dpi=120)
     plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# HAR memory-sweep pictograms (consume compare_memory.py's aggregate dict).
+#
+# These three are theme-aware (accept dark=) — the older five above are not, so
+# theming is opt-in and additive. Colors are the Okabe-Ito colorblind-safe set.
+# The aggregate `agg` shape is {"per_config": {cfg: {"stats": {metric:
+# {"mean","std"}}, ...}}, "comparisons": {cfg: {"weight_bytes_drop_pct", ...}}}.
+# ---------------------------------------------------------------------------
+
+_MEM_CONFIG_ORDER = ["float", "sym16", "sym12", "sym8", "sym4"]
+_MEM_CATEGORIES = ["params_b", "grads_b", "optstate_analytic_b", "activations_b", "io_b"]
+# Okabe-Ito palette, one per analytic category (colorblind-safe, distinguishable).
+_MEM_CAT_COLORS = {
+    "params_b": "#0072B2",             # blue   — the category that shrinks
+    "grads_b": "#E69F00",              # orange
+    "optstate_analytic_b": "#009E73",  # green
+    "activations_b": "#CC79A7",        # pink   — dominates at batch 64
+    "io_b": "#999999",                 # grey
+}
+
+
+def _mem_theme(dark: bool) -> tuple[str, str, str]:
+    """Return (figure/axes facecolor, foreground text/line color, grid color)."""
+    if dark:
+        return "#1e1e1e", "#e0e0e0", "#555555"
+    return "#ffffff", "#222222", "#cccccc"
+
+
+def _mem_configs_present(agg: dict) -> list[str]:
+    per = agg["per_config"]
+    ordered = [c for c in _MEM_CONFIG_ORDER if c in per]
+    return ordered + [c for c in per if c not in _MEM_CONFIG_ORDER]
+
+
+def _mem_apply_theme(fig, ax, bg: str, fg: str, grid: str) -> None:
+    fig.patch.set_facecolor(bg)
+    ax.set_facecolor(bg)
+    for spine in ax.spines.values():
+        spine.set_color(fg)
+    ax.tick_params(colors=fg)
+    ax.xaxis.label.set_color(fg)
+    ax.yaxis.label.set_color(fg)
+    ax.title.set_color(fg)
+    ax.grid(True, alpha=0.3, color=grid)
+
+
+def plot_peak_ram_stacked_bar(out_path: Path | str, agg: dict, dark: bool = False) -> None:
+    """One stacked bar per config: analytic MCU footprint by category (mean bytes).
+
+    Activations are sized at micro-batch B=1 (the loop streams the macro-batch one
+    sample at a time), so the categories are roughly balanced — params/grads/
+    momentum each carry ~a third — and the packed-SYM weight cut is a visible slice
+    of the whole bar (the weight-compression bar shows that slice on its own axis).
+    """
+    bg, fg, grid = _mem_theme(dark)
+    configs = _mem_configs_present(agg)
+    per = agg["per_config"]
+
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    x = np.arange(len(configs))
+    bottom = np.zeros(len(configs))
+    for cat in _MEM_CATEGORIES:
+        vals = np.array([per[c]["stats"][cat]["mean"] for c in configs])
+        ax.bar(x, vals, bottom=bottom, width=0.62,
+               color=_MEM_CAT_COLORS[cat], label=cat.replace("_b", ""))
+        bottom += vals
+    for xi, total in zip(x, bottom):
+        ax.text(xi, total, f"{total / (1 << 20):.2f}MB", ha="center", va="bottom",
+                fontsize=8, color=fg)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(configs)
+    ax.set_ylabel("bytes")
+    ax.set_ylim(0, bottom.max() * 1.12)
+    ax.set_title("HAR MCU memory footprint by category (mean over seeds, micro-batch B=1)")
+    _mem_apply_theme(fig, ax, bg, fg, grid)
+    leg = ax.legend(fontsize=8, ncol=5, loc="upper center", framealpha=0.3)
+    for text in leg.get_texts():
+        text.set_color(fg)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=120, facecolor=bg)
+    plt.close(fig)
+
+
+def plot_accuracy_vs_memory_scatter(out_path: Path | str, agg: dict, dark: bool = False) -> None:
+    """Test accuracy vs total on-device footprint (mcu_total_b) — the memory/accuracy Pareto.
+
+    x is the analytic on-device footprint (params+grads+momentum+activations+io at
+    micro-batch B=1) — the honest 'how much RAM' axis, which moves materially once
+    activations are sized per-sample. Mean point per config with +/- std error bars.
+    (The weight-compression bar shows the weight category alone.)
+    """
+    bg, fg, grid = _mem_theme(dark)
+    configs = _mem_configs_present(agg)
+    per = agg["per_config"]
+
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    cmap = plt.get_cmap("viridis")
+    for i, c in enumerate(configs):
+        st = per[c]["stats"]
+        xm, xs = st["mcu_total_b"]["mean"], st["mcu_total_b"]["std"]
+        ym, ys = st["test_acc"]["mean"], st["test_acc"]["std"]
+        color = cmap(i / max(len(configs) - 1, 1))
+        ax.errorbar(xm / 1024.0, ym, xerr=xs / 1024.0, yerr=ys, fmt="o", markersize=8,
+                    color=color, ecolor=color, capsize=3, elinewidth=1)
+        ax.annotate(c, (xm / 1024.0, ym), textcoords="offset points", xytext=(8, 4),
+                    fontsize=9, color=fg)
+
+    ax.set_xlabel("total on-device footprint (KB, micro-batch B=1)")
+    ax.set_ylabel("test accuracy")
+    ax.set_title("Accuracy vs on-device memory (packed SYM@x vs FLOAT32)")
+    _mem_apply_theme(fig, ax, bg, fg, grid)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=120, facecolor=bg)
+    plt.close(fig)
+
+
+def plot_weight_compression_bar(out_path: Path | str, agg: dict, dark: bool = False) -> None:
+    """Weight storage (params_b) per config, with %-drop vs FLOAT32 annotated.
+
+    The compression 'money shot' on its own axis — invisible inside the
+    activation-dominated stacked bar. Bars annotated with the mean weight bytes
+    and (for SYM configs) the percent reduction vs FLOAT32.
+    """
+    bg, fg, grid = _mem_theme(dark)
+    configs = _mem_configs_present(agg)
+    per = agg["per_config"]
+    comps = agg.get("comparisons", {})
+
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    x = np.arange(len(configs))
+    means = np.array([per[c]["stats"]["params_b"]["mean"] for c in configs])
+    stds = np.array([per[c]["stats"]["params_b"]["std"] for c in configs])
+    ax.bar(x, means, yerr=stds, width=0.6, color=_MEM_CAT_COLORS["params_b"],
+           capsize=3, error_kw={"ecolor": fg})
+    for xi, c, m in zip(x, configs, means):
+        label = f"{m / 1024:.1f}KB"
+        if c in comps:
+            label += f"\n-{comps[c]['weight_bytes_drop_pct']:.0f}%"
+        ax.text(xi, m, label, ha="center", va="bottom", fontsize=8, color=fg)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(configs)
+    ax.set_ylabel("weight storage (bytes)")
+    ax.set_title("Weight-storage compression (packed SYM@x vs FLOAT32)")
+    ax.set_ylim(0, means.max() * 1.18)
+    _mem_apply_theme(fig, ax, bg, fg, grid)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=120, facecolor=bg)
+    plt.close(fig)

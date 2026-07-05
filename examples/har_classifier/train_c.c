@@ -24,6 +24,7 @@
 #include "Pool1dApi.h"
 #include "Quantization.h"
 #include "QuantizationApi.h"
+#include "RNG.h"
 #include "ReluApi.h"
 #include "SgdApi.h"
 #include "SoftmaxApi.h"
@@ -33,14 +34,14 @@
 #include "TensorApi.h"
 #include "TrainingLoopApi.h"
 
+#include "mem_instrument.h"
 #include "npy_writer.h"
 
-#define EPOCHS 20
-#define BATCH 64
-#define LR 0.01f
-#define MOMENTUM 0.9f
-#define SEED 42
-#define SHUFFLE_SEED 42
+#define BATCH 64 /* macro-batch: loader groups 64 samples per optimizer step */
+/* Micro-batch = concurrent samples per forward/backward. The training loop
+ * streams the macro-batch one sample at a time (loss.md B=1), so peak activation
+ * memory is ONE sample's worth — this is what the analytic footprint must use. */
+#define MICRO_BATCH 1
 #define NUM_CLASSES 6
 
 #define IN_CHANNELS 9
@@ -59,6 +60,22 @@
 static dataset_t g_trainDataset;
 static dataset_t g_valDataset;
 static dataset_t g_testDataset;
+
+/* Runtime config (env-overridable); defaults match the historical #defines. */
+static int g_epochs = 20;
+static float g_lr = 0.01f;
+static float g_momentum = 0.9f;
+static unsigned g_seed = 42;
+static unsigned g_shuffleSeed = 42;
+
+static float envFloat(const char *name, float dflt) {
+    const char *v = getenv(name);
+    return (v != NULL && v[0] != '\0') ? strtof(v, NULL) : dflt;
+}
+static int envInt(const char *name, int dflt) {
+    const char *v = getenv(name);
+    return (v != NULL && v[0] != '\0') ? (int)strtol(v, NULL, 10) : dflt;
+}
 
 static void reshapeItemsAddBatchDim(tensorArray_t *items) {
     for (size_t i = 0; i < items->size; ++i) {
@@ -284,7 +301,24 @@ int main(void) {
         return 1;
     }
 
+    g_epochs = envInt("EPOCHS", g_epochs);
+    g_lr = envFloat("LR", g_lr);
+    g_momentum = envFloat("MOMENTUM", g_momentum);
+    g_seed = (unsigned)envInt("SEED", (int)g_seed);
+    g_shuffleSeed = (unsigned)envInt("SHUFFLE_SEED", (int)g_shuffleSeed);
+    const char *logPath = getenv("LOG_PATH");
+
+#ifdef ODT_MEM_PROFILE
+    /* Reset the heap counter before the first reserveMemory so dataset_b starts
+     * from a clean baseline. */
+    memProfileReset();
+#endif
+
     initDataSets();
+
+#ifdef ODT_MEM_PROFILE
+    size_t markDataset = memProfileMark(); /* dataset_b */
+#endif
 
     dataLoader_t *testLoader = dataLoaderInit(getTestSample, getTestSize, 1, NULL, NULL,
                                               /*shuffle*/ false, /*shuffleSeed*/ 0,
@@ -293,8 +327,22 @@ int main(void) {
     layerQuant_t lq;
     layerQuantInitUniform(&lq, quantizationInitFloat());
 
+    /* Seed the RNG so weight init is reproducible AND matches the seed recorded
+     * in the run log (previously the config claimed seed 42 but the RNG was
+     * never seeded — it ran from its default state=1). BIT_PARITY overwrites
+     * these weights from the state_dict, so this does not perturb the CI gate. */
+    rngSetSeed(g_seed);
+
     layer_t *model[MODEL_SIZE];
+#ifdef ODT_MEM_PROFILE
+    size_t markBeforeModel = memProfileMark();
+#endif
     buildModel(model, &lq);
+#ifdef ODT_MEM_PROFILE
+    size_t markAfterModel = memProfileMark(); /* params_grads_b = delta */
+    size_t markBeforeOpt = 0, markAfterOpt = 0;
+#endif
+    optimizer_t *sgd = NULL;
 
     const char *bitParity = getenv("BIT_PARITY");
     if (bitParity != NULL && bitParity[0] != '\0') {
@@ -306,17 +354,29 @@ int main(void) {
         }
         fprintf(stdout, "BIT_PARITY: loaded state_dict from %s\n", wDir);
     } else {
-        dataLoader_t *trainLoader = dataLoaderInit(getTrainSample, getTrainSize, BATCH, NULL, NULL,
-                                                   /*shuffle*/ true, /*shuffleSeed*/ SHUFFLE_SEED,
-                                                   /*dropLast*/ true);
+        dataLoader_t *trainLoader =
+            dataLoaderInit(getTrainSample, getTrainSize, BATCH, NULL, NULL,
+                           /*shuffle*/ true, /*shuffleSeed*/ g_shuffleSeed, /*dropLast*/ true);
         dataLoader_t *valLoader = dataLoaderInit(getValSample, getValSize, 1, NULL, NULL,
                                                  /*shuffle*/ false, /*shuffleSeed*/ 0,
                                                  /*dropLast*/ true);
 
-        optimizer_t *sgd = sgdMCreateOptim(LR, MOMENTUM, /*weightDecay*/ 0.0f, model, MODEL_SIZE,
-                                           FLOAT32, quantizationInitFloat());
+#ifdef ODT_MEM_PROFILE
+        markBeforeOpt = memProfileMark();
+#endif
+        /* FLOAT32 momentum accumulator (the conventional default). The optimizer
+         * clones this config per state via getQLike and does NOT take ownership. */
+        quantization_t *momentumQ = quantizationInitFloat();
+        sgd = sgdMCreateOptim(g_lr, g_momentum, /*weightDecay*/ 0.0f, model, MODEL_SIZE, FLOAT32,
+                              momentumQ);
+#ifdef ODT_MEM_PROFILE
+        markAfterOpt = memProfileMark(); /* optstate_b = delta */
+#endif
 
-        g_log_file = fopen("examples/har_classifier/logs/c.json", "w");
+        const char *outLog = (logPath != NULL && logPath[0] != '\0')
+                                 ? logPath
+                                 : "examples/har_classifier/logs/c.json";
+        g_log_file = fopen(outLog, "w");
         if (!g_log_file) {
             fprintf(stderr, "ERROR: cannot open log file for writing\n");
             return 1;
@@ -326,9 +386,9 @@ int main(void) {
                 "  \"impl\": \"c\",\n"
                 "  \"example\": \"har_classifier\",\n"
                 "  \"config\": {\"epochs\": %d, \"batch\": %d, \"lr\": %.6f, "
-                "\"momentum\": %.6f, \"seed\": %d, \"shuffle_seed\": %d},\n"
+                "\"momentum\": %.6f, \"seed\": %u, \"shuffle_seed\": %u},\n"
                 "  \"epochs\": [\n",
-                EPOCHS, BATCH, (double)LR, (double)MOMENTUM, SEED, SHUFFLE_SEED);
+                g_epochs, BATCH, (double)g_lr, (double)g_momentum, g_seed, g_shuffleSeed);
         fflush(g_log_file);
 
         clock_gettime(CLOCK_MONOTONIC, &g_epoch_t0);
@@ -338,20 +398,20 @@ int main(void) {
                         (lossConfig_t){.funcType = CROSS_ENTROPY,
                                        .backwardReduction = REDUCTION_MEAN,
                                        .classWeights = NULL},
-                        trainLoader, valLoader, sgd, EPOCHS, calculateGradsSequential,
+                        trainLoader, valLoader, sgd, g_epochs, calculateGradsSequential,
                         inferenceWithLoss, epochCallback);
         (void)result;
 
         epochStats_t testStats = evaluationEpochWithMetrics(
             model, MODEL_SIZE, CROSS_ENTROPY, testLoader, inferenceWithLoss, REDUCTION_MEAN);
 
+        /* Leave the JSON object OPEN (no closing brace): the "memory" block, if
+         * profiling is enabled, is appended after predictions are written. */
         fprintf(g_log_file,
                 "\n  ],\n"
-                "  \"final\": {\"test_loss\": %.6f, \"test_acc\": %.6f, "
-                "\"test_auc\": null}\n"
-                "}\n",
+                "  \"final\": {\"test_loss\": %.6f, \"test_acc\": %.6f, \"test_auc\": null}",
                 (double)testStats.loss, (double)testStats.accuracy);
-        fclose(g_log_file);
+        fflush(g_log_file);
 
         fprintf(stdout, "FINAL test_loss=%.4f test_acc=%.4f\n", (double)testStats.loss,
                 (double)testStats.accuracy);
@@ -391,6 +451,49 @@ int main(void) {
         status = 1;
     }
     free(predictions);
+
+    /* Training mode left the run-log JSON object open. Append the memory block
+     * (if profiling is enabled) after predictions are written — the stack probe
+     * runs one REAL step and mutates the model, so it must follow the inference
+     * loop above — then close the object. */
+    if (g_log_file != NULL) {
+#ifdef ODT_MEM_PROFILE
+        memReport_t report = {0};
+        report.sym_bits = -1; /* float binary: no SYM width */
+        report.dataset_b = markDataset;
+        report.params_grads_b = markAfterModel - markBeforeModel;
+        report.optstate_b = markAfterOpt - markBeforeOpt;
+        report.params_b = memInstrumentParamBytes(sgd);
+        report.grads_b = memInstrumentGradBytes(sgd);
+        report.optstate_analytic_b = memInstrumentOptStateBytes(sgd);
+        report.activations_b = memInstrumentHarActivationBytes(MICRO_BATCH);
+        report.io_b = memInstrumentHarIoBytes(MICRO_BATCH);
+
+        sample_t *stepSample = getTrainSample(0);
+        memStepCtx_t stepCtx = {
+            .model = model,
+            .modelSize = MODEL_SIZE,
+            .lossConfig = (lossConfig_t){.funcType = CROSS_ENTROPY,
+                                         .backwardReduction = REDUCTION_MEAN,
+                                         .classWeights = NULL},
+            .input = stepSample->item,
+            .label = stepSample->label,
+            .optim = sgd,
+        };
+        report.stack_peak_b = memInstrumentStackPeakBytes(&stepCtx, 1u << 20);
+        freeSample(stepSample);
+
+        report.heap_peak_b = memProfilePeakBytes();
+        report.rss_peak_kb = memProfileRssPeakKb();
+        memInstrumentFinalize(&report);
+        memInstrumentPrintReconciliation(&report);
+
+        fprintf(g_log_file, ",\n  \"memory\": ");
+        memInstrumentEmitJson(g_log_file, &report);
+#endif
+        fprintf(g_log_file, "\n}\n");
+        fclose(g_log_file);
+    }
 
     return status;
 }
