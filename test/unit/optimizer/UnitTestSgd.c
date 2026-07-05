@@ -12,6 +12,7 @@
 #include "Optimizer.h"
 #include "OptimizerApi.h"
 #include "QuantizationApi.h"
+#include "RNG.h"
 #include "Sgd.h"
 #include "SgdApi.h"
 #include "StorageApi.h"
@@ -1021,6 +1022,130 @@ void testSgdStepMMixedDtypeMovesBothParamsCorrectly(void) {
     TEST_ASSERT_FLOAT_WITHIN(0.01f, -0.6f, bAfter[1]);
 }
 
+/* #279 SRHTE dead-zone fixture (optimizer epic #277, Task 3): shape-[2]
+ * SYM_INT32 param. Index 0 is a large "anchor" (grad=0, weightDecay=0) whose
+ * decoded value always equals the tensor's absmax by construction -- writeOut's
+ * FLOAT32->SYM_INT32 requant (convertFloatTensorToSymInt32Tensor) RE-DERIVES
+ * the per-tensor scale from the current decoded values on every OUT_WRITE
+ * (there is no hidden full-precision accumulator), so pinning the absmax
+ * pins the scale essentially constant across iterations too. Index 1 is the
+ * "target": its constant grad produces a per-step update of exactly
+ * fraction*scale (fraction=0.25, comfortably sub-ULP: < the 0.5 half-grid
+ * boundary round-to-nearest needs to move a code). Caller owns freeing the
+ * returned parameter_t (freeParameter cascades param+grad). */
+static parameter_t *buildSymDeadZoneFixture(roundingMode_t roundingMode, float lr) {
+    size_t *pDims = reserveMemory(1 * sizeof(size_t));
+    pDims[0] = 2;
+    size_t *pOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, pOrder);
+    shape_t *pShape = reserveMemory(sizeof(shape_t));
+    setShape(pShape, pDims, 1, pOrder);
+    tensor_t *p = initTensor(pShape, quantizationInitSymInt32(roundingMode), NULL);
+
+    const float anchorVal = 100.f;
+    tensorFillFromFloatBuffer(p, (float[]){anchorVal, 0.f}, 2);
+
+    /* qMax for the default 12-bit SYM_INT32 operand width (ODT_SYM_OPERAND_QMAXBITS,
+     * #227): 2^(12-1) - 1. Mirrors convertFloatTensorToSymInt32Tensor's own
+     * derivation so `scale` here matches what the OUT_WRITE epilogue computes. */
+    const float qMax = 2047.f;
+    const float scale = anchorVal / qMax;
+    const float fraction = 0.25f;
+    const float delta = fraction * scale;
+    const float targetGrad = delta / lr; /* so that lr*targetGrad == delta */
+
+    tensor_t *g = gradInitFloat(p, NULL);
+    tensorFillFromFloatBuffer(g, (float[]){0.f, targetGrad}, 2);
+
+    return parameterInit(p, g);
+}
+
+void testSgdStepHalfAwayNeverEscapesSymDeadZone(void) {
+    /* #279 control: HALF_AWAY (round-to-nearest) on the target's own qConfig.
+     * Every sgdStep re-decodes the target from its (unchanged) integer code,
+     * applies the same sub-ULP delta, and requants -- landing back on the
+     * exact same code every time. Mutation guard: if writeOut ever stopped
+     * re-deriving the target's value from its stored code (e.g. a latent
+     * float accumulator were added), this would go RED (code would drift and
+     * eventually move), so this test also pins that absence of hidden state. */
+    const float lr = 0.1f;
+    parameter_t *param = buildSymDeadZoneFixture(HALF_AWAY, lr);
+
+    int32_t initialTargetCode = ((int32_t *)param->param->data)[1];
+    TEST_ASSERT_EQUAL_INT(0, initialTargetCode); /* fixture guard */
+
+    sgd_t sgd;
+    sgdInit(&sgd, lr, 0.f, 0.f);
+    parameter_t *params[1] = {param};
+    optimImpl_t impl;
+    impl.sgd = &sgd;
+    optimizer_t optim;
+    optim.parameter = params;
+    optim.sizeStates = 1;
+    optim.qtype = SYM_INT32; /* vestigial post-#278: irrelevant to per-tensor funnel dispatch */
+    optim.impl = &impl;
+
+    int codeEverMoved = 0;
+    for (int i = 0; i < 500; i++) {
+        sgdStep(&optim);
+        if (((int32_t *)param->param->data)[1] != initialTargetCode) {
+            codeEverMoved = 1;
+        }
+    }
+    int32_t finalTargetCode = ((int32_t *)param->param->data)[1];
+
+    freeParameter(param);
+
+    TEST_ASSERT_FALSE_MESSAGE(codeEverMoved, "#279 dead-zone: HALF_AWAY must never move a sub-ULP "
+                                             "SYM_INT32 code across 500 identical updates");
+    TEST_ASSERT_EQUAL_INT(0, finalTargetCode);
+}
+
+void testSgdStepSrHalfAwayEscapesSymDeadZone(void) {
+    /* #279 treatment: same fixture, but the param's own qConfig carries
+     * SR_HALF_AWAY. executeOp's OUT_WRITE epilogue requants by the TARGET
+     * tensor's roundingMode (ExecuteOp.c writeOut -> convertTensor ->
+     * convertFloatTensorToSymInt32Tensor(..., outputSymInt32QC->roundingMode)),
+     * so a SYM param that opts into SR_HALF_AWAY gets a stochastic write-back
+     * "for free" -- no optimizer-side numerics change (Task 1 already routed
+     * the update through executeOp). Per-step P(code moves) == fraction ==
+     * 0.25 (stochastic rounding is unbiased: jitter ~ Uniform[-0.5, 0.5) added
+     * before round-half-away), so P(never escapes in 500 iterations) =
+     * 0.75^500 -- astronomically small; seeded for reproducibility. */
+    rngSetSeed(12345u);
+
+    const float lr = 0.1f;
+    parameter_t *param = buildSymDeadZoneFixture(SR_HALF_AWAY, lr);
+
+    int32_t initialTargetCode = ((int32_t *)param->param->data)[1];
+    TEST_ASSERT_EQUAL_INT(0, initialTargetCode); /* fixture guard */
+
+    sgd_t sgd;
+    sgdInit(&sgd, lr, 0.f, 0.f);
+    parameter_t *params[1] = {param};
+    optimImpl_t impl;
+    impl.sgd = &sgd;
+    optimizer_t optim;
+    optim.parameter = params;
+    optim.sizeStates = 1;
+    optim.qtype = SYM_INT32;
+    optim.impl = &impl;
+
+    int codeEverMoved = 0;
+    for (int i = 0; i < 500; i++) {
+        sgdStep(&optim);
+        if (((int32_t *)param->param->data)[1] != initialTargetCode) {
+            codeEverMoved = 1;
+        }
+    }
+
+    freeParameter(param);
+
+    TEST_ASSERT_TRUE_MESSAGE(codeEverMoved,
+                             "#279 mechanism: SR_HALF_AWAY must escape the SYM_INT32 "
+                             "dead-zone within 500 iterations");
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(testSgdMCreateOptim);
@@ -1037,5 +1162,7 @@ int main() {
     RUN_TEST(testSgdZeroGradAsymSubByteZeroesAllPackedBytes);
     RUN_TEST(testSgdZeroGradSymSubByteZeroesAllPackedBytesAndResetsScale);
     RUN_TEST(testSgdStepMMixedDtypeMovesBothParamsCorrectly);
+    RUN_TEST(testSgdStepHalfAwayNeverEscapesSymDeadZone);
+    RUN_TEST(testSgdStepSrHalfAwayEscapesSymDeadZone);
     return UNITY_END();
 }
