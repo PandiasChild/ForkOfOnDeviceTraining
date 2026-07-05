@@ -14,6 +14,8 @@ target_link_libraries(Sgd PRIVATE
         DTypes
         Tensor
         Arithmetic
+        ArithmeticType
+        ExecuteOp
         Layer
         Common
 )

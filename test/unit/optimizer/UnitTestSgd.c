@@ -851,6 +851,102 @@ void testSgdStepMFloatReadsPackedSymGradGeneric(void) {
     TEST_ASSERT_FLOAT_WITHIN(1e-6f, expected2, p2);
 }
 
+void testSgdStepMMixedDtypeMovesBothParamsCorrectly(void) {
+    /* TDD RED (Task 1, optimizer epic #277, closes #278): sgdStep{,M} dispatch
+     * on optim->qtype today, so a model with BOTH a FLOAT32 and a SYM_INT32
+     * parameter cannot be trained correctly in one call -- sgdStepMFloat
+     * (the FLOAT32 arm) raw-casts param->param->data/state->data to float*
+     * unconditionally, so a SYM_INT32 param/state gets its int32 mantissas
+     * reinterpreted as float bit patterns (garbage). This must fail today;
+     * the executeOp-funnel rewrite (per-tensor dtype dispatch via the
+     * funnel's own conversionMatrix lookups, no qtype switch) is what makes
+     * it pass. */
+
+    /* Parameter A: FLOAT32 param + grad, shape [2]. */
+    size_t *aDims = reserveMemory(1 * sizeof(size_t));
+    aDims[0] = 2;
+    size_t *aOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, aOrder);
+    shape_t *aShape = reserveMemory(sizeof(shape_t));
+    setShape(aShape, aDims, 1, aOrder);
+    tensor_t *paramA = initTensor(aShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(paramA, (float[]){1.f, 2.f}, 2);
+    tensor_t *gradA = gradInitFloat(paramA, NULL);
+    tensorFillFromFloatBuffer(gradA, (float[]){1.f, 1.f}, 2);
+    parameter_t *A = parameterInit(paramA, gradA);
+
+    /* Parameter B: SYM_INT32 param + grad, shape [2]. */
+    size_t *bDims = reserveMemory(1 * sizeof(size_t));
+    bDims[0] = 2;
+    size_t *bOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, bOrder);
+    shape_t *bShape = reserveMemory(sizeof(shape_t));
+    setShape(bShape, bDims, 1, bOrder);
+    tensor_t *paramB = initTensor(bShape, quantizationInitSymInt32(HALF_AWAY), NULL);
+    tensorFillFromFloatBuffer(paramB, (float[]){0.5f, -0.5f}, 2);
+    tensor_t *gradB = gradInitSymInt32(paramB, HALF_AWAY, NULL);
+    tensorFillFromFloatBuffer(gradB, (float[]){1.f, 1.f}, 2);
+    parameter_t *B = parameterInit(paramB, gradB);
+
+    tensor_t *stateA = getTensorLike(paramA);
+    tensor_t *stateB = getTensorLike(paramB);
+
+    /* Minimal stack optimizer around two heterogeneous-dtype parameters (file
+     * convention, UnitTestSgd.c:545-556 pattern extended to 2 params). */
+    sgd_t sgd;
+    sgdInit(&sgd, 0.1f, 0.0f, 0.0f);
+    parameter_t *params[2] = {A, B};
+    tensor_t *stateBuffersA[1] = {stateA};
+    tensor_t *stateBuffersB[1] = {stateB};
+    states_t statesA = {.stateBuffers = stateBuffersA, .statesPerParameter = 1};
+    states_t statesB = {.stateBuffers = stateBuffersB, .statesPerParameter = 1};
+    states_t *states[2] = {&statesA, &statesB};
+    optimImpl_t impl;
+    impl.sgd = &sgd;
+    optimizer_t optim;
+    optim.parameter = params;
+    optim.states = states;
+    optim.sizeStates = 2;
+    optim.qtype = FLOAT32; /* vestigial post-#278: irrelevant to per-tensor funnel dispatch */
+    optim.impl = &impl;
+
+    sgdStepM(&optim);
+
+    /* CAPTURE -> free -> assert (file convention). */
+    float aAfter[2];
+    aAfter[0] = ((float *)paramA->data)[0];
+    aAfter[1] = ((float *)paramA->data)[1];
+
+    float bBefore[2] = {0.5f, -0.5f};
+    tensor_t bAfterFloat;
+    quantization_t bAfterFloatQ;
+    initFloat32Quantization(&bAfterFloatQ);
+    uint8_t bAfterFloatData[2 * sizeof(float)];
+    setTensorValuesForConversion(bAfterFloatData, &bAfterFloatQ, paramB, &bAfterFloat);
+    convertTensor(paramB, &bAfterFloat);
+    float bAfter[2];
+    bAfter[0] = ((float *)bAfterFloat.data)[0];
+    bAfter[1] = ((float *)bAfterFloat.data)[1];
+
+    freeTensor(stateA);
+    freeTensor(stateB);
+    freeParameter(A);
+    freeParameter(B);
+
+    /* A: pure FLOAT32 arithmetic, no quantization noise -- state = grad
+     * (momentum=0), param -= lr*state = param - 0.1*1.0. */
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.9f, aAfter[0]);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.9f, aAfter[1]);
+
+    /* B: SYM_INT32 param must move in the gradient-descent direction (param
+     * decreases where grad > 0), within int12 quantization noise
+     * (qMaxBits=12 -> scale ~ 0.6/2047, error << 0.01). */
+    TEST_ASSERT_TRUE_MESSAGE(bAfter[0] < bBefore[0], "SYM_INT32 param[0] must decrease");
+    TEST_ASSERT_TRUE_MESSAGE(bAfter[1] < bBefore[1], "SYM_INT32 param[1] must decrease");
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.4f, bAfter[0]);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, -0.6f, bAfter[1]);
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(testSgdMCreateOptim);
@@ -865,5 +961,6 @@ int main() {
     RUN_TEST(testSgdStepMFloatReadsPackedSymGradGeneric);
     RUN_TEST(testSgdZeroGradAsymSubByteZeroesAllPackedBytes);
     RUN_TEST(testSgdZeroGradSymSubByteZeroesAllPackedBytesAndResetsScale);
+    RUN_TEST(testSgdStepMMixedDtypeMovesBothParamsCorrectly);
     return UNITY_END();
 }

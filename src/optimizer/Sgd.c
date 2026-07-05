@@ -1,13 +1,14 @@
+#define SOURCE_FILE "SGD"
+
 #include <stddef.h>
 #include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
+#include "ArithmeticType.h"
 #include "Common.h"
+#include "ExecuteOp.h"
 #include "Sgd.h"
 #include "Tensor.h"
-#include "TensorConversion.h"
 
 void sgdInit(sgd_t *sgd, float learningRate, float momentumFactor, float weightDecay) {
     sgd->learningRate = learningRate;
@@ -15,185 +16,120 @@ void sgdInit(sgd_t *sgd, float learningRate, float momentumFactor, float weightD
     sgd->weightDecay = weightDecay;
 }
 
-static void sgdStepFloatCore(sgd_t *sgd, const float *gradArr, float *dataArr,
-                             size_t numberOfValues) {
-    for (size_t elementIndex = 0; elementIndex < numberOfValues; ++elementIndex) {
-        float grad = gradArr[elementIndex] + sgd->weightDecay * dataArr[elementIndex];
-        dataArr[elementIndex] -= sgd->learningRate * grad;
+typedef struct {
+    float lr, weightDecay;
+} sgdUpdateCtx_t; /* plain SGD */
+typedef struct {
+    float momentum, weightDecay;
+} sgdMStateCtx_t; /* momentum: state */
+typedef struct {
+    float lr;
+} sgdMParamCtx_t; /* momentum: param */
+
+/* executeOp update kernels (design spec 2026-07-03 PR1b.2, D1): arithmetic is
+ * always ARITH_FLOAT32, so the funnel prologue dequants every operand to
+ * float and the epilogue requants rawOut into the target's own dtype
+ * (OUT_WRITE) -- this is what gives the SGD update per-parameter dtype
+ * dispatch without a qtype switch here. */
+
+/* operands {param, grad} -> rawOut = param - lr*(grad + wd*param) */
+static void sgdUpdateKernel(tensor_t **op, size_t n, tensor_t *rawOut, tensor_t *aux,
+                            const void *ctxv) {
+    (void)n;
+    (void)aux;
+    const sgdUpdateCtx_t *ctx = ctxv;
+    size_t numberOfValues = calcNumberOfElementsByTensor(rawOut);
+    float *param = (float *)op[0]->data;
+    float *grad = (float *)op[1]->data;
+    float *out = (float *)rawOut->data;
+    for (size_t i = 0; i < numberOfValues; i++) {
+        float g = grad[i] + ctx->weightDecay * param[i];
+        out[i] = param[i] - ctx->lr * g;
     }
 }
 
-static void sgdStepFloat(optimizer_t *optim) {
-    sgd_t *sgd = optim->impl->sgd;
-
-    for (size_t stateIndex = 0; stateIndex < optim->sizeStates; stateIndex++) {
-        parameter_t *param = optim->parameter[stateIndex];
-        size_t numberOfValues = calcNumberOfElementsByParameter(param);
-        float *dataArr = (float *)param->param->data;
-
-        /* Grad-dtype-generic read (PR3, #261): FLOAT32 keeps the raw-cast fast
-         * path (no conversion, no scratch); any other admitted grad dtype
-         * (SYM_INT32/SYM/ASYM) is dequantized into a float VLA scoped to this
-         * branch only, mirroring the SYM_INT32 step arms below. */
-        if (param->grad->quantization->type == FLOAT32) {
-            sgdStepFloatCore(sgd, (float *)param->grad->data, dataArr, numberOfValues);
-        } else {
-            tensor_t gradFloat;
-            quantization_t gradFloatQ;
-            initFloat32Quantization(&gradFloatQ);
-            float gradFloatData[numberOfValues];
-            uint8_t *gradFloatDataBytes = (uint8_t *)gradFloatData;
-            setTensorValuesForConversion(gradFloatDataBytes, &gradFloatQ, param->grad, &gradFloat);
-            convertTensor(param->grad, &gradFloat);
-            sgdStepFloatCore(sgd, (float *)gradFloat.data, dataArr, numberOfValues);
-        }
+/* operands {state, grad, param} -> rawOut = mom*state + grad + wd*param */
+static void sgdMStateKernel(tensor_t **op, size_t n, tensor_t *rawOut, tensor_t *aux,
+                            const void *ctxv) {
+    (void)n;
+    (void)aux;
+    const sgdMStateCtx_t *ctx = ctxv;
+    size_t numberOfValues = calcNumberOfElementsByTensor(rawOut);
+    float *state = (float *)op[0]->data;
+    float *grad = (float *)op[1]->data;
+    float *param = (float *)op[2]->data;
+    float *out = (float *)rawOut->data;
+    for (size_t i = 0; i < numberOfValues; i++) {
+        float g = grad[i] + ctx->weightDecay * param[i];
+        out[i] = ctx->momentum * state[i] + g;
     }
 }
 
-static void sgdStepSymInt32(optimizer_t *optim) {
-    sgd_t *sgd = optim->impl->sgd;
-
-    for (size_t stateIndex = 0; stateIndex < optim->sizeStates; stateIndex++) {
-        parameter_t *param = optim->parameter[stateIndex];
-        size_t numberOfValues = calcNumberOfElementsByParameter(param);
-
-        tensor_t paramFloat;
-        quantization_t paramFloatQ;
-        initFloat32Quantization(&paramFloatQ);
-        uint8_t paramFloatData[numberOfValues * sizeof(float)];
-        setTensorValuesForConversion(paramFloatData, &paramFloatQ, param->param, &paramFloat);
-        convertTensor(param->param, &paramFloat);
-
-        float *paramFloatArr = (float *)paramFloat.data;
-
-        tensor_t gradFloat;
-        quantization_t gradFloatQ;
-        initFloat32Quantization(&gradFloatQ);
-        float gradFloatData[numberOfValues];
-        uint8_t *gradFloatDataBytes = (uint8_t *)gradFloatData;
-        setTensorValuesForConversion(gradFloatDataBytes, &gradFloatQ, param->grad, &gradFloat);
-        convertTensor(param->grad, &gradFloat);
-
-        float *gradFloatArr = (float *)gradFloat.data;
-
-        for (size_t j = 0; j < numberOfValues; ++j) {
-            float grad = gradFloatArr[j] + sgd->weightDecay * paramFloatArr[j];
-            paramFloatArr[j] -= sgd->learningRate * grad;
-        }
-
-        convertTensor(&paramFloat, param->param);
+/* operands {param, state} -> rawOut = param - lr*state */
+static void sgdMParamKernel(tensor_t **op, size_t n, tensor_t *rawOut, tensor_t *aux,
+                            const void *ctxv) {
+    (void)n;
+    (void)aux;
+    const sgdMParamCtx_t *ctx = ctxv;
+    size_t numberOfValues = calcNumberOfElementsByTensor(rawOut);
+    float *param = (float *)op[0]->data;
+    float *state = (float *)op[1]->data;
+    float *out = (float *)rawOut->data;
+    for (size_t i = 0; i < numberOfValues; i++) {
+        out[i] = param[i] - ctx->lr * state[i];
     }
 }
 
-void sgdStep(optimizer_t *optimizer) {
-    switch (optimizer->qtype) {
-    case FLOAT32:
-        sgdStepFloat(optimizer);
-        break;
-    case SYM_INT32:
-        sgdStepSymInt32(optimizer);
-        break;
-    default:
-        PRINT_ERROR("Unknown Layer Type!");
-        exit(1);
-    }
-}
-
-static void sgdStepMFloatCore(sgd_t *sgd, const float *gradArr, float *paramArr, float *stateArr,
-                              size_t numberOfValues) {
-    for (size_t elementIndex = 0; elementIndex < numberOfValues; ++elementIndex) {
-        float grad = gradArr[elementIndex] + sgd->weightDecay * paramArr[elementIndex];
-        stateArr[elementIndex] = sgd->momentumFactor * stateArr[elementIndex] + grad;
-        paramArr[elementIndex] -= sgd->learningRate * stateArr[elementIndex];
-    }
-}
-
-static void sgdStepMFloat(optimizer_t *optim) {
+void sgdStep(optimizer_t *optim) {
     sgd_t *sgd = optim->impl->sgd;
     for (size_t i = 0; i < optim->sizeStates; i++) {
-        parameter_t *param = optim->parameter[i];
-        size_t numberOfValues = calcNumberOfElementsByParameter(param);
-        float *paramArr = (float *)param->param->data;
-
-        states_t *states = optim->states[i];
-        tensor_t *state = states->stateBuffers[0];
-        float *stateArr = (float *)state->data;
-
-        /* Grad-dtype-generic read (PR3, #261) - see sgdStepFloat for the
-         * fast-path/VLA rationale. */
-        if (param->grad->quantization->type == FLOAT32) {
-            sgdStepMFloatCore(sgd, (float *)param->grad->data, paramArr, stateArr, numberOfValues);
-        } else {
-            tensor_t gradFloat;
-            quantization_t gradFloatQ;
-            initFloat32Quantization(&gradFloatQ);
-            float gradFloatData[numberOfValues];
-            uint8_t *gradFloatDataBytes = (uint8_t *)gradFloatData;
-            setTensorValuesForConversion(gradFloatDataBytes, &gradFloatQ, param->grad, &gradFloat);
-            convertTensor(param->grad, &gradFloat);
-            sgdStepMFloatCore(sgd, (float *)gradFloat.data, paramArr, stateArr, numberOfValues);
-        }
+        parameter_t *p = optim->parameter[i];
+        sgdUpdateCtx_t ctx = {.lr = sgd->learningRate, .weightDecay = sgd->weightDecay};
+        executeOp(
+            &(opSpec_t){
+                .kernel = sgdUpdateKernel,
+                .ctx = &ctx,
+                .inputs = (tensor_t *[]){p->param, p->grad},
+                .nInputs = 2,
+                .arithmetic = (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY},
+                .mode = OUT_WRITE,
+                .auxOut = NULL,
+            },
+            p->param);
     }
 }
 
-static void sgdStepMSymInt32(optimizer_t *optim) {
+void sgdStepM(optimizer_t *optim) {
     sgd_t *sgd = optim->impl->sgd;
-
     for (size_t i = 0; i < optim->sizeStates; i++) {
-        parameter_t *param = optim->parameter[i];
-        size_t numberOfValues = calcNumberOfElementsByParameter(param);
+        parameter_t *p = optim->parameter[i];
+        tensor_t *state = optim->states[i]->stateBuffers[0];
 
-        tensor_t paramFloat;
-        quantization_t paramFloatQ;
-        initFloat32Quantization(&paramFloatQ);
-        uint8_t paramFloatData[numberOfValues * sizeof(float)];
-        setTensorValuesForConversion(paramFloatData, &paramFloatQ, param->param, &paramFloat);
-        convertTensor(param->param, &paramFloat);
-        float *paramFloatArr = (float *)paramFloat.data;
+        sgdMStateCtx_t sc = {.momentum = sgd->momentumFactor, .weightDecay = sgd->weightDecay};
+        executeOp(
+            &(opSpec_t){
+                .kernel = sgdMStateKernel,
+                .ctx = &sc,
+                .inputs = (tensor_t *[]){state, p->grad, p->param},
+                .nInputs = 3,
+                .arithmetic = (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY},
+                .mode = OUT_WRITE,
+                .auxOut = NULL,
+            },
+            state);
 
-        tensor_t gradFloat;
-        quantization_t gradFloatQ;
-        initFloat32Quantization(&gradFloatQ);
-        float gradFloatData[numberOfValues];
-        uint8_t *gradFloatDataBytes = (uint8_t *)gradFloatData;
-        setTensorValuesForConversion(gradFloatDataBytes, &gradFloatQ, param->grad, &gradFloat);
-        convertTensor(param->grad, &gradFloat);
-        float *gradFloatArr = (float *)gradFloat.data;
-
-        states_t *states = optim->states[i];
-
-        tensor_t *state = states->stateBuffers[0];
-
-        tensor_t stateFloat;
-        quantization_t stateFloatQ;
-        initFloat32Quantization(&stateFloatQ);
-        uint8_t stateFloatData[numberOfValues * sizeof(float)];
-        setTensorValuesForConversion(stateFloatData, &stateFloatQ, state, &stateFloat);
-        convertTensor(state, &stateFloat);
-        float *stateFloatArr = (float *)stateFloat.data;
-
-        for (size_t j = 0; j < numberOfValues; ++j) {
-            float grad = gradFloatArr[j] + sgd->weightDecay * paramFloatArr[j];
-            stateFloatArr[j] = sgd->momentumFactor * stateFloatArr[j] + grad;
-            paramFloatArr[j] -= sgd->learningRate * stateFloatArr[j];
-        }
-
-        convertTensor(&stateFloat, state);
-        convertTensor(&paramFloat, param->param);
-    }
-}
-
-void sgdStepM(optimizer_t *optimizer) {
-    switch (optimizer->qtype) {
-    case FLOAT32:
-        sgdStepMFloat(optimizer);
-        break;
-    case SYM_INT32:
-        sgdStepMSymInt32(optimizer);
-        break;
-    default:
-        PRINT_ERROR("Unknown Layer Type!");
-        exit(1);
+        sgdMParamCtx_t pc = {.lr = sgd->learningRate};
+        executeOp(
+            &(opSpec_t){
+                .kernel = sgdMParamKernel,
+                .ctx = &pc,
+                .inputs = (tensor_t *[]){p->param, state},
+                .nInputs = 2,
+                .arithmetic = (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY},
+                .mode = OUT_WRITE,
+                .auxOut = NULL,
+            },
+            p->param);
     }
 }
 
