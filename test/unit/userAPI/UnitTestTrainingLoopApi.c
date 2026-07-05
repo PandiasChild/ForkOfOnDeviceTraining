@@ -102,7 +102,8 @@ void testCalculateGradsSequential_MatchesPyTorch() {
     tensor_t *label1 = buildFloatTensor2D(1, 2, (float[]){43.f, 249.f}, 2);
     tensor_t *label2 = buildFloatTensor2D(1, 2, (float[]){23.f, 457.f}, 2);
 
-    optimizer_t *sgd = sgdMCreateOptim(0.01f, 0.f, 0.f, model, sizeModel, FLOAT32);
+    quantization_t *momentumQ = quantizationInitFloat();
+    optimizer_t *sgd = sgdMCreateOptim(0.01f, 0.f, 0.f, model, sizeModel, FLOAT32, momentumQ);
     optimizerFunctions_t sgdFns = optimizerFunctions[SGD_M];
     /* Pre-existing test hack: only step weights, leaving bias unchanged across
      * iterations. We restore sizeStates to 2 before the free below so
@@ -151,6 +152,7 @@ void testCalculateGradsSequential_MatchesPyTorch() {
      * to both weights and bias parameters + their state buffers. */
     sgd->sizeStates = 2;
     freeOptimSgdM(sgd);
+    freeQuantization(momentumQ);
     freeTensor(label2);
     freeTensor(label1);
     freeTensor(label0);
@@ -541,7 +543,8 @@ void testTrainingEpochDefault_DoesOptimizerStepPerBatch() {
         initWeights[i] = wInitData[i];
     }
 
-    optimizer_t *sgd = sgdMCreateOptim(0.01f, 0.f, 0.f, model, sizeModel, FLOAT32);
+    quantization_t *momentumQ = quantizationInitFloat();
+    optimizer_t *sgd = sgdMCreateOptim(0.01f, 0.f, 0.f, model, sizeModel, FLOAT32, momentumQ);
 
     /* Use epoch dataset (batchSize=1 → 4 batches) */
     initEpochDataset();
@@ -568,6 +571,7 @@ void testTrainingEpochDefault_DoesOptimizerStepPerBatch() {
     /* FREE. freeOptimSgdM cascades to w and b parameters; do NOT also free
      * those (would double-free). */
     freeOptimSgdM(sgd);
+    freeQuantization(momentumQ);
     freeDataLoader(dl);
     freeLinearLayerShellOnly(linear);
     freeEpochDataset();
@@ -603,7 +607,8 @@ void testTrainingEpochDefault_MinibatchStepsOncePerMinibatch() {
         initWeights[i] = wInitData[i];
     }
 
-    optimizer_t *sgd = sgdMCreateOptim(0.01f, 0.f, 0.f, model, sizeModel, FLOAT32);
+    quantization_t *momentumQ = quantizationInitFloat();
+    optimizer_t *sgd = sgdMCreateOptim(0.01f, 0.f, 0.f, model, sizeModel, FLOAT32, momentumQ);
 
     initEpochDataset();
     dataLoader_t *dl =
@@ -628,6 +633,7 @@ void testTrainingEpochDefault_MinibatchStepsOncePerMinibatch() {
 
     /* FREE. */
     freeOptimSgdM(sgd);
+    freeQuantization(momentumQ);
     freeDataLoader(dl);
     freeLinearLayerShellOnly(linear);
     freeEpochDataset();
@@ -651,7 +657,8 @@ void testTrainingRun_ReturnsResult() {
     layer_t *linear = buildBorrowedLinearLayer(w, b, &testQ);
     layer_t *model[] = {linear};
 
-    optimizer_t *sgd = sgdMCreateOptim(0.01f, 0.f, 0.f, model, 1, FLOAT32);
+    quantization_t *momentumQ = quantizationInitFloat();
+    optimizer_t *sgd = sgdMCreateOptim(0.01f, 0.f, 0.f, model, 1, FLOAT32, momentumQ);
 
     initEpochDataset();
     dataLoader_t *trainDl =
@@ -670,6 +677,7 @@ void testTrainingRun_ReturnsResult() {
 
     /* FREE. */
     freeOptimSgdM(sgd);
+    freeQuantization(momentumQ);
     freeDataLoader(evalDl);
     freeDataLoader(trainDl);
     freeLinearLayerShellOnly(linear);
@@ -713,7 +721,8 @@ void testTrainingRun_CallsCallbackEachEpochWithStats() {
     layer_t *linear = buildBorrowedLinearLayer(w, b, &testQ);
     layer_t *model[] = {linear};
 
-    optimizer_t *sgd = sgdMCreateOptim(0.01f, 0.f, 0.f, model, 1, FLOAT32);
+    quantization_t *momentumQ = quantizationInitFloat();
+    optimizer_t *sgd = sgdMCreateOptim(0.01f, 0.f, 0.f, model, 1, FLOAT32, momentumQ);
 
     initEpochDataset();
     dataLoader_t *trainDl =
@@ -738,6 +747,7 @@ void testTrainingRun_CallsCallbackEachEpochWithStats() {
 
     /* FREE. */
     freeOptimSgdM(sgd);
+    freeQuantization(momentumQ);
     freeDataLoader(evalDl);
     freeDataLoader(trainDl);
     freeLinearLayerShellOnly(linear);
@@ -882,7 +892,8 @@ void testTrainingEpochDefault_MeanScalesGradByOneOverNF() {
     layer_t *model[] = {linear};
 
     /* momentumFactor=0 makes SGD_M behave like plain SGD. */
-    optimizer_t *sgd = sgdMCreateOptim(0.01f, 0.f, 0.f, model, 1, FLOAT32);
+    quantization_t *momentumQ = quantizationInitFloat();
+    optimizer_t *sgd = sgdMCreateOptim(0.01f, 0.f, 0.f, model, 1, FLOAT32, momentumQ);
 
     initSingleSampleDataset();
     dataLoader_t *dl =
@@ -898,6 +909,7 @@ void testTrainingEpochDefault_MeanScalesGradByOneOverNF() {
     float capturedW01 = ((float *)wParam->data)[1];
 
     freeOptimSgdM(sgd);
+    freeQuantization(momentumQ);
     freeDataLoader(dl);
     freeLinearLayerShellOnly(linear);
     freeSingleSampleDataset();
@@ -1242,7 +1254,8 @@ void testTrainingEpochDefault_SumBackwardSkipsOptimizerScaling() {
 
     /* Use a very small learning rate so SUM doesn't NaN — SUM gradients are
      * larger by N*F than MEAN gradients on the same data. */
-    optimizer_t *sgd = sgdMCreateOptim(0.001f, 0.f, 0.f, model, 1, FLOAT32);
+    quantization_t *momentumQ = quantizationInitFloat();
+    optimizer_t *sgd = sgdMCreateOptim(0.001f, 0.f, 0.f, model, 1, FLOAT32, momentumQ);
 
     initEpochDataset();
     dataLoader_t *dl =
@@ -1269,6 +1282,7 @@ void testTrainingEpochDefault_SumBackwardSkipsOptimizerScaling() {
     float capturedEpochLoss = epochLoss;
 
     freeOptimSgdM(sgd);
+    freeQuantization(momentumQ);
     freeDataLoader(dl);
     freeLinearLayerShellOnly(linear);
     freeEpochDataset();
@@ -1297,7 +1311,8 @@ void testTrainingEpochDefault_MeanForwardSumBackward_MixedCombination() {
     layer_t *linear = buildBorrowedLinearLayer(w, b, &testQ);
     layer_t *model[] = {linear};
 
-    optimizer_t *sgd = sgdMCreateOptim(0.001f, 0.f, 0.f, model, 1, FLOAT32);
+    quantization_t *momentumQ = quantizationInitFloat();
+    optimizer_t *sgd = sgdMCreateOptim(0.001f, 0.f, 0.f, model, 1, FLOAT32, momentumQ);
 
     initEpochDataset();
     dataLoader_t *dl =
@@ -1324,6 +1339,7 @@ void testTrainingEpochDefault_MeanForwardSumBackward_MixedCombination() {
     float capturedEpochLoss = epochLoss;
 
     freeOptimSgdM(sgd);
+    freeQuantization(momentumQ);
     freeDataLoader(dl);
     freeLinearLayerShellOnly(linear);
     freeEpochDataset();
@@ -1424,7 +1440,8 @@ void testTrainingRun_HardcodesForwardReductionMean() {
     layer_t *linear = buildBorrowedLinearLayer(w, b, &testQ);
     layer_t *model[] = {linear};
 
-    optimizer_t *sgd = sgdMCreateOptim(0.01f, 0.f, 0.f, model, 1, FLOAT32);
+    quantization_t *momentumQ = quantizationInitFloat();
+    optimizer_t *sgd = sgdMCreateOptim(0.01f, 0.f, 0.f, model, 1, FLOAT32, momentumQ);
 
     initEpochDataset();
     dataLoader_t *trainDl =
@@ -1445,6 +1462,7 @@ void testTrainingRun_HardcodesForwardReductionMean() {
     float capturedEval = result.finalEvalStats.loss;
 
     freeOptimSgdM(sgd);
+    freeQuantization(momentumQ);
     freeDataLoader(evalDl);
     freeDataLoader(trainDl);
     freeLinearLayerShellOnly(linear);

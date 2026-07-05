@@ -189,12 +189,14 @@ void testSgdMCreateOptimSkipsQuantizationLayer(void) {
     layer_t *quant = buildQuantLayer(symQ, symQ);
     layer_t *model[2] = {linear, quant};
 
-    optimizer_t *optim = sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 2, SYM_INT32);
+    quantization_t *momentumQ = quantizationInitFloat();
+    optimizer_t *optim = sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 2, SYM_INT32, momentumQ);
     size_t sizeStates = optim->sizeStates;
 
     freeOptimSgdM(optim); /* frees the Linear weights/bias parameter_t */
     freeQuantLayerShell(quant);
     freeLinearLayerShell(linear);
+    freeQuantization(momentumQ);
     freeQuantization(symQ);
 
     TEST_ASSERT_EQUAL_UINT(2, sizeStates); /* Linear w+b; QUANTIZATION contributes 0 states */
@@ -344,7 +346,8 @@ void testFullSymChainTrainingStepMatchesFloatTwin(void) {
     tensor_t *inS = build2DSym(2, 4, INPUT_VALS, 8);
     tensor_t *labelS = build2DSym(2, 2, LABEL_VALS, 4);
 
-    optimizer_t *optimS = sgdMCreateOptim(0.1f, 0.0f, 0.0f, modelSym, 5, SYM_INT32);
+    quantization_t *momentumQS = quantizationInitFloat();
+    optimizer_t *optimS = sgdMCreateOptim(0.1f, 0.0f, 0.0f, modelSym, 5, SYM_INT32, momentumQS);
     trainingStats_t *statsS =
         calculateGradsSequential(modelSym, 5, defaultLossConfig(MSE), REDUCTION_MEAN, inS, labelS);
     sgdStepM(optimS);
@@ -376,7 +379,8 @@ void testFullSymChainTrainingStepMatchesFloatTwin(void) {
     tensor_t *inF = build2DFloat(2, 4, INPUT_VALS, 8);
     tensor_t *labelF = build2DFloat(2, 2, LABEL_VALS, 4);
 
-    optimizer_t *optimF = sgdMCreateOptim(0.1f, 0.0f, 0.0f, modelF, 3, FLOAT32);
+    quantization_t *momentumQF = quantizationInitFloat();
+    optimizer_t *optimF = sgdMCreateOptim(0.1f, 0.0f, 0.0f, modelF, 3, FLOAT32, momentumQF);
     trainingStats_t *statsF =
         calculateGradsSequential(modelF, 3, defaultLossConfig(MSE), REDUCTION_MEAN, inF, labelF);
     sgdStepM(optimF);
@@ -405,6 +409,8 @@ void testFullSymChainTrainingStepMatchesFloatTwin(void) {
     freeLayerNormLayerShell(lnS);
     freeQuantLayer(quant1);
     freeLinearLayerShell(lin0S);
+    freeQuantization(momentumQF);
+    freeQuantization(momentumQS);
     freeQuantization(fQ);
     freeQuantization(symQ);
 
@@ -473,7 +479,8 @@ void testConv1dTransposedSymChainTrains(void) {
     static const float IN_VALS[3] = {0.5f, -0.3f, 0.8f};
     static const float LABEL_VALS[4] = {0.10f, 0.20f, -0.15f, 0.05f};
 
-    optimizer_t *opt = sgdMCreateOptim(0.05f, 0.0f, 0.0f, model, 2, SYM_INT32);
+    quantization_t *momentumQ2 = quantizationInitFloat();
+    optimizer_t *opt = sgdMCreateOptim(0.05f, 0.0f, 0.0f, model, 2, SYM_INT32, momentumQ2);
 
     size_t STEPS = 40;
     float firstLoss = NAN;
@@ -499,6 +506,7 @@ void testConv1dTransposedSymChainTrains(void) {
 
     freeOptimSgdM(opt); /* frees cw/cb parameter_t */
     freeQuantLayerShell(quant);
+    freeQuantization(momentumQ2);
     freeQuantization(symQ);
 
     TEST_ASSERT_TRUE_MESSAGE(finite, "SYM ConvT chain losses must be finite");

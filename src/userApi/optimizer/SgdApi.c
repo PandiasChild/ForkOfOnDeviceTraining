@@ -14,9 +14,16 @@
 #include "Tensor.h"
 #include "TensorApi.h"
 
-// IMPORTANT: Currently, the quantization for states are the same as the corresponding parameter
+/*! Builds a momentum-state tensor at `param`'s shape but with its OWN
+ * quantization (`momentumQuant`, deep-cloned via getQLike) -- decouples the
+ * accumulator's dtype from the parameter's storage dtype (#277 Task 2). */
+static tensor_t *momentumStateInit(tensor_t *param, quantization_t *momentumQuant) {
+    return initTensor(getShapeLike(param->shape), getQLike(momentumQuant), NULL);
+}
+
 optimizer_t *sgdMCreateOptim(float learningRate, float momentumFactor, float weightDecay,
-                             layer_t **model, size_t sizeModel, qtype_t qType) {
+                             layer_t **model, size_t sizeModel, qtype_t qType,
+                             quantization_t *momentumQuant) {
     optimizer_t *optim = reserveMemory(sizeof(optimizer_t));
     optim->type = SGD_M;
     optim->qtype = qType;
@@ -47,11 +54,11 @@ optimizer_t *sgdMCreateOptim(float learningRate, float momentumFactor, float wei
             parameter_t *weights = linearConfig->weights;
 
             optim->parameter[paramSlot] = weights;
-            tensor_t *weightStateBuffer = getTensorLike(weights->param);
+            tensor_t *weightStateBuffer = momentumStateInit(weights->param, momentumQuant);
 
             parameter_t *bias = linearConfig->bias;
             optim->parameter[paramSlot + 1] = bias;
-            tensor_t *biasStateBuffer = getTensorLike(bias->param);
+            tensor_t *biasStateBuffer = momentumStateInit(bias->param, momentumQuant);
 
             states_t *weightStates = reserveMemory(sizeof(states_t));
             weightStates->statesPerParameter = statesPerParam;
@@ -73,11 +80,11 @@ optimizer_t *sgdMCreateOptim(float learningRate, float momentumFactor, float wei
 
             parameter_t *cWeights = conv1dCfg->weights;
             optim->parameter[paramSlot] = cWeights;
-            tensor_t *cWeightStateBuffer = getTensorLike(cWeights->param);
+            tensor_t *cWeightStateBuffer = momentumStateInit(cWeights->param, momentumQuant);
 
             parameter_t *cBias = conv1dCfg->bias;
             optim->parameter[paramSlot + 1] = cBias;
-            tensor_t *cBiasStateBuffer = getTensorLike(cBias->param);
+            tensor_t *cBiasStateBuffer = momentumStateInit(cBias->param, momentumQuant);
 
             states_t *cWeightStates = reserveMemory(sizeof(states_t));
             cWeightStates->statesPerParameter = statesPerParam;
@@ -100,11 +107,11 @@ optimizer_t *sgdMCreateOptim(float learningRate, float momentumFactor, float wei
 
             parameter_t *ctWeights = ctCfg->weights;
             optim->parameter[paramSlot] = ctWeights;
-            tensor_t *ctWeightStateBuffer = getTensorLike(ctWeights->param);
+            tensor_t *ctWeightStateBuffer = momentumStateInit(ctWeights->param, momentumQuant);
 
             parameter_t *ctBias = ctCfg->bias;
             optim->parameter[paramSlot + 1] = ctBias;
-            tensor_t *ctBiasStateBuffer = getTensorLike(ctBias->param);
+            tensor_t *ctBiasStateBuffer = momentumStateInit(ctBias->param, momentumQuant);
 
             states_t *ctWeightStates = reserveMemory(sizeof(states_t));
             ctWeightStates->statesPerParameter = statesPerParam;
@@ -127,11 +134,11 @@ optimizer_t *sgdMCreateOptim(float learningRate, float momentumFactor, float wei
 
             parameter_t *lnGamma = lnCfg->gamma;
             optim->parameter[paramSlot] = lnGamma;
-            tensor_t *lnGammaStateBuffer = getTensorLike(lnGamma->param);
+            tensor_t *lnGammaStateBuffer = momentumStateInit(lnGamma->param, momentumQuant);
 
             parameter_t *lnBeta = lnCfg->beta;
             optim->parameter[paramSlot + 1] = lnBeta;
-            tensor_t *lnBetaStateBuffer = getTensorLike(lnBeta->param);
+            tensor_t *lnBetaStateBuffer = momentumStateInit(lnBeta->param, momentumQuant);
 
             states_t *lnGammaStates = reserveMemory(sizeof(states_t));
             lnGammaStates->statesPerParameter = statesPerParam;

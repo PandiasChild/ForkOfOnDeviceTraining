@@ -237,8 +237,8 @@ int main(void) {
                                                  /*shuffle*/ false, /*shuffleSeed*/ 0,
                                                  /*dropLast*/ true);
 
-        optimizer_t *sgd =
-            sgdMCreateOptim(LR, MOMENTUM, /*weightDecay*/ 0.0f, model, MODEL_SIZE, FLOAT32);
+        optimizer_t *sgd = sgdMCreateOptim(LR, MOMENTUM, /*weightDecay*/ 0.0f, model, MODEL_SIZE,
+                                           FLOAT32, quantizationInitFloat());
 
         g_log_file = fopen("examples/mnist_mlp/logs/c.json", "w");
         if (!g_log_file) {

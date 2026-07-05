@@ -138,12 +138,14 @@ void testOptimizer_ZeroStatesForDropout(void) {
     layer_t *model[1] = {drop};
 
     size_t numStates = calcTotalNumberOfStates(model, 1);
-    optimizer_t *optim = sgdMCreateOptim(0.01f, 0.9f, 0.0f, model, 1, FLOAT32);
+    quantization_t *momentumQ = quantizationInitFloat();
+    optimizer_t *optim = sgdMCreateOptim(0.01f, 0.9f, 0.0f, model, 1, FLOAT32, momentumQ);
     size_t sizeStates = optim->sizeStates;
 
     freeOptimSgdM(optim);
     freeDropoutLayer(drop);
     freeTensor(mask);
+    freeQuantization(momentumQ);
     freeQuantization(bq);
     freeQuantization(fq);
 

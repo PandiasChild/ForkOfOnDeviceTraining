@@ -104,11 +104,13 @@ void testOptimizer_ZeroStatesForParameterlessPool(void) {
     layer_t *model[1] = {pool};
 
     size_t numStates = calcTotalNumberOfStates(model, 1);
-    optimizer_t *optim = sgdMCreateOptim(0.01f, 0.9f, 0.0f, model, 1, FLOAT32);
+    quantization_t *momentumQ = quantizationInitFloat();
+    optimizer_t *optim = sgdMCreateOptim(0.01f, 0.9f, 0.0f, model, 1, FLOAT32, momentumQ);
     size_t sizeStates = optim->sizeStates;
 
     freeOptimSgdM(optim);
     freeAdaptiveAvgPool1dLayer(pool);
+    freeQuantization(momentumQ);
     freeQuantization(q);
 
     TEST_ASSERT_EQUAL_UINT(0, numStates);

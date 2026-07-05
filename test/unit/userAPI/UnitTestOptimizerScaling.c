@@ -102,8 +102,13 @@ static optimizer_t *buildOneLayerOptimWithGrads(layer_t **modelOut, parameter_t 
     *wOut = w;
     *bOut = b;
 
-    /* SGD optimizer wraps both parameters via the standard helper. */
-    return sgdMCreateOptim(0.01f, 0.f, 0.f, modelOut, 1, FLOAT32);
+    /* SGD optimizer wraps both parameters via the standard helper. Momentum
+     * config is a transient template -- sgdMCreateOptim clones it per state
+     * via getQLike, so it's safe to free right after the call. */
+    quantization_t *momentumQ = quantizationInitFloat();
+    optimizer_t *optim = sgdMCreateOptim(0.01f, 0.f, 0.f, modelOut, 1, FLOAT32, momentumQ);
+    freeQuantization(momentumQ);
+    return optim;
 }
 
 void testScaleOptimizerGradients_DoublesGradients() {
@@ -253,7 +258,10 @@ static optimizer_t *buildSymInt32OneLayerOptim(layer_t **modelOut, parameter_t *
     *wOut = w;
     *bOut = b;
 
-    return sgdMCreateOptim(lr, momentum, 0.f, modelOut, 1, SYM_INT32);
+    quantization_t *momentumQ = quantizationInitFloat();
+    optimizer_t *optim = sgdMCreateOptim(lr, momentum, 0.f, modelOut, 1, SYM_INT32, momentumQ);
+    freeQuantization(momentumQ);
+    return optim;
 }
 
 void testScaleOptimizerGradients_SymInt32_ScalesScaleOnly() {
@@ -480,7 +488,10 @@ static optimizer_t *buildSymOneLayerOptim(layer_t **modelOut, parameter_t **wOut
     *wOut = w;
     *bOut = b;
 
-    return sgdMCreateOptim(lr, momentum, 0.f, modelOut, 1, FLOAT32);
+    quantization_t *momentumQ = quantizationInitFloat();
+    optimizer_t *optim = sgdMCreateOptim(lr, momentum, 0.f, modelOut, 1, FLOAT32, momentumQ);
+    freeQuantization(momentumQ);
+    return optim;
 }
 
 void testScaleOptimizerGradients_Sym_ScalesScaleOnly(void) {
@@ -604,7 +615,10 @@ static optimizer_t *buildAsymOneLayerOptim(layer_t **modelOut, parameter_t **wOu
     *wOut = w;
     *bOut = b;
 
-    return sgdMCreateOptim(lr, momentum, 0.f, modelOut, 1, FLOAT32);
+    quantization_t *momentumQ = quantizationInitFloat();
+    optimizer_t *optim = sgdMCreateOptim(lr, momentum, 0.f, modelOut, 1, FLOAT32, momentumQ);
+    freeQuantization(momentumQ);
+    return optim;
 }
 
 void testScaleOptimizerGradients_Asym_ScalesScaleOnly(void) {

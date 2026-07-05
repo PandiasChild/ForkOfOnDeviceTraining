@@ -160,7 +160,8 @@ void testMnistSmoke_FullTrainingPipelineReducesLoss() {
     quantization_t *q = NULL;
     buildModel(model, &q);
 
-    optimizer_t *sgd = sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, MODEL_SIZE, FLOAT32);
+    quantization_t *momentumQ = quantizationInitFloat();
+    optimizer_t *sgd = sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, MODEL_SIZE, FLOAT32, momentumQ);
 
     cbInvocations = 0;
     size_t numberOfEpochs = 20;
@@ -186,6 +187,7 @@ void testMnistSmoke_FullTrainingPipelineReducesLoss() {
     freeLinearLayerShellOnly(model[0]);
     freeDataLoader(evalDl);
     freeDataLoader(trainDl);
+    freeQuantization(momentumQ);
     freeQuantization(q);
     freeDataset();
 
@@ -217,7 +219,8 @@ void testMnistSmoke_SnprintfGmtimeRBetweenSetupAndTrainingRun_NoSilentExit() {
     quantization_t *q = NULL;
     buildModel(model, &q);
 
-    optimizer_t *sgd = sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, MODEL_SIZE, FLOAT32);
+    quantization_t *momentumQ = quantizationInitFloat();
+    optimizer_t *sgd = sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, MODEL_SIZE, FLOAT32, momentumQ);
 
     /* The poison block from #94's reproducer: gmtime_r + snprintf wedged
      * between setup and trainingRun. Pre-fix this triggered silent exit(1). */
@@ -246,6 +249,7 @@ void testMnistSmoke_SnprintfGmtimeRBetweenSetupAndTrainingRun_NoSilentExit() {
     freeLinearLayerShellOnly(model[0]);
     freeDataLoader(evalDl);
     freeDataLoader(trainDl);
+    freeQuantization(momentumQ);
     freeQuantization(q);
     freeDataset();
 

@@ -322,8 +322,8 @@ int main(void) {
                                                  /*shuffle*/ false, /*shuffleSeed*/ 0,
                                                  /*dropLast*/ true);
 
-        optimizer_t *sgd =
-            sgdMCreateOptim(LR, MOMENTUM, /*weightDecay*/ 0.0f, model, MODEL_SIZE, FLOAT32);
+        optimizer_t *sgd = sgdMCreateOptim(LR, MOMENTUM, /*weightDecay*/ 0.0f, model, MODEL_SIZE,
+                                           FLOAT32, quantizationInitFloat());
 
         char logPath[300];
         snprintf(logPath, sizeof(logPath), "%s/c.json", logsDir);

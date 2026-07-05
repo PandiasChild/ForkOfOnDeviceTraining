@@ -97,7 +97,8 @@ void testLinearLayerNormLinearOneTrainingStep(void) {
     float gammaBefore = ((float *)norm->config->layerNorm->gamma->param->data)[0];
     float betaBefore = ((float *)norm->config->layerNorm->beta->param->data)[0];
 
-    optimizer_t *optim = sgdMCreateOptim(0.1f, 0.9f, 0.0f, model, 3, FLOAT32);
+    quantization_t *momentumQ = quantizationInitFloat();
+    optimizer_t *optim = sgdMCreateOptim(0.1f, 0.9f, 0.0f, model, 3, FLOAT32, momentumQ);
 
     trainingStats_t *stats =
         calculateGradsSequential(model, 3, defaultLossConfig(MSE), REDUCTION_MEAN, input, label);
@@ -128,6 +129,7 @@ void testLinearLayerNormLinearOneTrainingStep(void) {
     freeLinearLayerShell(linear1);
     freeLayerNormLayerShell(norm);
     freeLinearLayerShell(linear0);
+    freeQuantization(momentumQ);
     freeQuantization(q);
 
     TEST_ASSERT_TRUE(statsNotNull);
@@ -182,7 +184,8 @@ void testLayerNormSymInt32SingleLayerTrainingStep(void) {
 
     bool gradSymDtype = (lnSym->config->layerNorm->gamma->grad->quantization->type == SYM_INT32);
 
-    optimizer_t *optimSym = sgdMCreateOptim(0.1f, 0.0f, 0.0f, modelSym, 1, SYM_INT32);
+    quantization_t *momentumQSym = quantizationInitFloat();
+    optimizer_t *optimSym = sgdMCreateOptim(0.1f, 0.0f, 0.0f, modelSym, 1, SYM_INT32, momentumQSym);
     trainingStats_t *statsSym = calculateGradsSequential(modelSym, 1, defaultLossConfig(MSE),
                                                          REDUCTION_MEAN, inSym, labelSym);
     sgdStepM(optimSym);
@@ -211,7 +214,8 @@ void testLayerNormSymInt32SingleLayerTrainingStep(void) {
     tensor_t *inF = build2DFloat(2, 4, inputVals, 8);
     tensor_t *labelF = build2DFloat(2, 4, labelVals, 8);
 
-    optimizer_t *optimF = sgdMCreateOptim(0.1f, 0.0f, 0.0f, modelF, 1, FLOAT32);
+    quantization_t *momentumQF = quantizationInitFloat();
+    optimizer_t *optimF = sgdMCreateOptim(0.1f, 0.0f, 0.0f, modelF, 1, FLOAT32, momentumQF);
     trainingStats_t *statsF =
         calculateGradsSequential(modelF, 1, defaultLossConfig(MSE), REDUCTION_MEAN, inF, labelF);
     sgdStepM(optimF);
@@ -232,6 +236,8 @@ void testLayerNormSymInt32SingleLayerTrainingStep(void) {
     freeOptimSgdM(optimSym);
     freeLayerNormLayerShell(lnF);
     freeLayerNormLayerShell(lnSym);
+    freeQuantization(momentumQF);
+    freeQuantization(momentumQSym);
     freeQuantization(fQ);
     freeQuantization(symQ);
 

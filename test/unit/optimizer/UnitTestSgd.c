@@ -136,8 +136,9 @@ void testSgdMCreateOptim() {
     float momentumFactor = 0.9f;
     float weightDecay = 0.5f;
 
+    quantization_t *momentumQ = quantizationInitFloat();
     optimizer_t *optim =
-        sgdMCreateOptim(lr, momentumFactor, weightDecay, model, sizeModel, FLOAT32);
+        sgdMCreateOptim(lr, momentumFactor, weightDecay, model, sizeModel, FLOAT32, momentumQ);
     sgd_t *sgd = optim->impl->sgd;
 
     linearConfig_t *linear0Conf = linear0->config->linear;
@@ -199,6 +200,7 @@ void testSgdMCreateOptim() {
     freeLinearLayerShellOnly(linear1);
     freeReluLayer(relu0);
     freeLinearLayerShellOnly(linear0);
+    freeQuantization(momentumQ);
     freeQuantization(layerQ);
 
     /* ASSERT. */
@@ -258,7 +260,9 @@ void testSGDStep() {
     float momentumFactor = 0.9f;
     float weightDecay = 0.01f;
 
-    optimizer_t *sgd = sgdMCreateOptim(lr, momentumFactor, weightDecay, model, modelSize, FLOAT32);
+    quantization_t *momentumQ = quantizationInitFloat();
+    optimizer_t *sgd =
+        sgdMCreateOptim(lr, momentumFactor, weightDecay, model, modelSize, FLOAT32, momentumQ);
 
     optimizerFunctions_t sgdFns = optimizerFunctions[sgd->type];
     sgdFns.step(sgd);
@@ -289,6 +293,7 @@ void testSGDStep() {
      * weights/bias — freeLinearLayer would double-free them. */
     freeOptimSgdM(sgd);
     freeLinearLayerShellOnly(linear);
+    freeQuantization(momentumQ);
     freeQuantization(layerQ);
 
     /* ASSERT. */
@@ -345,7 +350,9 @@ void testSGDZeroGrad() {
     float momentumFactor = 0.9f;
     float weightDecay = 0.01f;
 
-    optimizer_t *sgd = sgdMCreateOptim(lr, momentumFactor, weightDecay, model, modelSize, FLOAT32);
+    quantization_t *momentumQ = quantizationInitFloat();
+    optimizer_t *sgd =
+        sgdMCreateOptim(lr, momentumFactor, weightDecay, model, modelSize, FLOAT32, momentumQ);
 
     sgdZeroGrad(sgd);
 
@@ -363,6 +370,7 @@ void testSGDZeroGrad() {
      * weights/bias — freeLinearLayer would double-free them. */
     freeOptimSgdM(sgd);
     freeLinearLayerShellOnly(linear);
+    freeQuantization(momentumQ);
     freeQuantization(layerQ);
 
     /* ASSERT. */
@@ -402,7 +410,8 @@ void testSgdZeroGradOnSymInt32GradZeroesMantissasAndResetsScale(void) {
     ((symInt32QConfig_t *)wGrad->quantization->qConfig)->scale = 0.07f;
 
     layer_t *model[] = {layer};
-    optimizer_t *optim = sgdMCreateOptim(0.1f, 0.9f, 0.0f, model, 1, SYM_INT32);
+    quantization_t *momentumQ = quantizationInitFloat();
+    optimizer_t *optim = sgdMCreateOptim(0.1f, 0.9f, 0.0f, model, 1, SYM_INT32, momentumQ);
 
     sgdZeroGrad(optim);
 
@@ -423,12 +432,71 @@ void testSgdZeroGradOnSymInt32GradZeroesMantissasAndResetsScale(void) {
     freeReservedMemory(layer->config->linear);
     freeReservedMemory(layer->config);
     freeReservedMemory(layer);
+    freeQuantization(momentumQ);
     freeQuantization(bwd);
     freeQuantization(fwd);
 
     TEST_ASSERT_TRUE_MESSAGE(allZero, "sgdZeroGrad must zero SYM_INT32 grad mantissas");
     TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.0f, scaleAfterZero);
     TEST_ASSERT_TRUE(accumWorks);
+}
+
+/* TDD RED for #277 Task 2: momentum state must carry its OWN quantization
+ * config, decoupled from the parameter's dtype. Before this change,
+ * sgdMCreateOptim built each state via getTensorLike(param->param), so a
+ * SYM_INT32 weight/bias produced a SYM_INT32 momentum accumulator -- this
+ * pins a FLOAT32 momentumQuant against a SYM_INT32 param and asserts the
+ * state buffer lands FLOAT32 regardless. */
+void testSgdMCreateOptimMomentumStateIsFloatIndependentOfSymInt32ParamDtype(void) {
+    quantization_t *symQ = quantizationInitSymInt32(HALF_AWAY);
+
+    /* weights: SYM_INT32 param + SYM_INT32 grad, shape [2, 3]. */
+    size_t *wDims = reserveMemory(2 * sizeof(size_t));
+    wDims[0] = 2;
+    wDims[1] = 3;
+    size_t *wOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, wOrder);
+    shape_t *wShape = reserveMemory(sizeof(shape_t));
+    setShape(wShape, wDims, 2, wOrder);
+    tensor_t *wParam = initTensor(wShape, quantizationInitSymInt32(HALF_AWAY), NULL);
+    tensorFillFromFloatBuffer(wParam, (float[]){0.f, 0.f, 0.f, 0.f, 0.f, 0.f}, 6);
+    tensor_t *wGrad = gradInitSymInt32(wParam, HALF_AWAY, NULL);
+    parameter_t *weights = parameterInit(wParam, wGrad);
+
+    /* bias: SYM_INT32 param + SYM_INT32 grad, shape [2]. */
+    size_t *bDims = reserveMemory(1 * sizeof(size_t));
+    bDims[0] = 2;
+    size_t *bOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, bOrder);
+    shape_t *bShape = reserveMemory(sizeof(shape_t));
+    setShape(bShape, bDims, 1, bOrder);
+    tensor_t *bParam = initTensor(bShape, quantizationInitSymInt32(HALF_AWAY), NULL);
+    tensorFillFromFloatBuffer(bParam, (float[]){0.f, 0.f}, 2);
+    tensor_t *bGrad = gradInitSymInt32(bParam, HALF_AWAY, NULL);
+    parameter_t *bias = parameterInit(bParam, bGrad);
+
+    layer_t *layer = buildBorrowedLinearLayer(weights, bias, symQ);
+    layer_t *model[1] = {layer};
+
+    quantization_t *momentumQ = quantizationInitFloat();
+    optimizer_t *optim = sgdMCreateOptim(0.1f, 0.9f, 0.0f, model, 1, SYM_INT32, momentumQ);
+
+    /* CAPTURE before frees. */
+    qtype_t capturedWeightParamType =
+        weights->param->quantization->type; /* guard: stays SYM_INT32 */
+    qtype_t capturedBiasParamType = bias->param->quantization->type;
+    qtype_t capturedWeightStateType = optim->states[0]->stateBuffers[0]->quantization->type;
+    qtype_t capturedBiasStateType = optim->states[1]->stateBuffers[0]->quantization->type;
+
+    freeOptimSgdM(optim);
+    freeLinearLayerShellOnly(layer);
+    freeQuantization(momentumQ);
+    freeQuantization(symQ);
+
+    TEST_ASSERT_EQUAL_INT(SYM_INT32, capturedWeightParamType);
+    TEST_ASSERT_EQUAL_INT(SYM_INT32, capturedBiasParamType);
+    TEST_ASSERT_EQUAL_INT(FLOAT32, capturedWeightStateType);
+    TEST_ASSERT_EQUAL_INT(FLOAT32, capturedBiasStateType);
 }
 
 void testSgdMCreateOptimRegistersLayerNormGammaAndBeta(void) {
@@ -481,8 +549,9 @@ void testSgdMCreateOptimRegistersLayerNormGammaAndBeta(void) {
     float momentumFactor = 0.9f;
     float weightDecay = 0.0f;
 
+    quantization_t *momentumQ = quantizationInitFloat();
     optimizer_t *optim =
-        sgdMCreateOptim(lr, momentumFactor, weightDecay, model, sizeModel, FLOAT32);
+        sgdMCreateOptim(lr, momentumFactor, weightDecay, model, sizeModel, FLOAT32, momentumQ);
 
     /* CAPTURE before frees. */
     size_t capturedSizeStates = optim->sizeStates;
@@ -501,6 +570,7 @@ void testSgdMCreateOptimRegistersLayerNormGammaAndBeta(void) {
     freeReservedMemory(lnLayer);
     freeReservedMemory(lcfg);
     freeReservedMemory(normShape);
+    freeQuantization(momentumQ);
     freeQuantization(bq);
     freeQuantization(fq);
     freeReservedMemory(lnCfg);
@@ -718,7 +788,8 @@ void testSgdMCreateOptimAdmitsPackedSymGradStorage(void) {
     layer_t *layer = buildBorrowedLinearLayer(weights, bias, fQ);
     layer_t *model[1] = {layer};
 
-    optimizer_t *optim = sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 1, FLOAT32);
+    quantization_t *momentumQ = quantizationInitFloat();
+    optimizer_t *optim = sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 1, FLOAT32, momentumQ);
 
     /* CAPTURE before frees. */
     qtype_t capturedWGradType = weights->grad->quantization->type;
@@ -727,6 +798,7 @@ void testSgdMCreateOptimAdmitsPackedSymGradStorage(void) {
     /* freeOptimSgdM cascades to the registered parameters (weights, bias). */
     freeOptimSgdM(optim);
     freeLinearLayerShellOnly(layer);
+    freeQuantization(momentumQ);
     freeQuantization(fQ);
 
     TEST_ASSERT_EQUAL_INT(SYM, capturedWGradType);
@@ -766,12 +838,14 @@ void testSgdMCreateOptimRejectsBoolGradStorage(void) {
     layer_t *layer = buildBorrowedLinearLayer(weights, bias, fQ);
     layer_t *model[1] = {layer};
 
-    ASSERT_EXITS_WITH_FAILURE(sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 1, FLOAT32));
+    quantization_t *momentumQ = quantizationInitFloat();
+    ASSERT_EXITS_WITH_FAILURE(sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 1, FLOAT32, momentumQ));
 
     /* Teardown (parent continues after the fork-based assert; file convention). */
     freeLinearLayerShellOnly(layer);
     freeParameter(weights);
     freeParameter(bias);
+    freeQuantization(momentumQ);
     freeQuantization(fQ);
 }
 
@@ -953,6 +1027,7 @@ int main() {
     RUN_TEST(testSGDStep);
     RUN_TEST(testSGDZeroGrad);
     RUN_TEST(testSgdZeroGradOnSymInt32GradZeroesMantissasAndResetsScale);
+    RUN_TEST(testSgdMCreateOptimMomentumStateIsFloatIndependentOfSymInt32ParamDtype);
     RUN_TEST(testLayerNormContributesTwoOptimizerStates);
     RUN_TEST(testSgdMCreateOptimRegistersLayerNormGammaAndBeta);
     RUN_TEST(testSgdStepSymInt32DoesNotRoundTripGrad);
