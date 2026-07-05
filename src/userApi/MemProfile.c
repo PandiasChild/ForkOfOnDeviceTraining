@@ -69,6 +69,12 @@ size_t measurePeakStackBytes(void (*fn)(void *), void *arg, size_t stackBytes) {
 size_t memProfileRssPeakKb(void) {
     struct rusage ru;
     if (getrusage(RUSAGE_SELF, &ru) != 0) {
+        /* Soft-fail sentinel (0 = "unavailable"): RSS is a COARSE SECONDARY anchor,
+         * not a primary measurement like the heap counter / stack watermark. A 0
+         * (never a real RSS) is more useful to a consumer than crashing the whole
+         * run; contrast measurePeakStackBytes, which fails loud because a wrong
+         * stack number silently corrupts the primary result. getrusage(RUSAGE_SELF)
+         * essentially never fails in practice. */
         return 0;
     }
     /* ru_maxrss is KiB on Linux, bytes on macOS/Darwin. */

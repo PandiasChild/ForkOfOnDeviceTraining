@@ -7,7 +7,7 @@ add_subdirectory(training_loop)
 add_library(MemProfile MemProfile.c)
 target_include_directories(MemProfile PUBLIC include)
 find_package(Threads REQUIRED)
-target_link_libraries(MemProfile PUBLIC Threads::Threads)
+target_link_libraries(MemProfile PRIVATE Threads::Threads)
 
 add_library(LayerCommon LayerCommon.c)
 target_include_directories(LayerCommon PUBLIC include)

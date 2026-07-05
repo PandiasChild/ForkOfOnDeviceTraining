@@ -22,8 +22,9 @@ static atomic_size_t g_peakBytes = 0;
 
 static void bumpPeak(size_t cur) {
     size_t prev = atomic_load_explicit(&g_peakBytes, memory_order_relaxed);
-    while (cur > prev && !atomic_compare_exchange_weak_explicit(
-                             &g_peakBytes, &prev, cur, memory_order_relaxed, memory_order_relaxed)) {
+    while (cur > prev &&
+           !atomic_compare_exchange_weak_explicit(&g_peakBytes, &prev, cur, memory_order_relaxed,
+                                                  memory_order_relaxed)) {
         /* prev is reloaded by the CAS on failure */
     }
 }
@@ -37,9 +38,8 @@ void *reserveMemory(size_t numberOfBytes) {
         return NULL;
     }
     base->size = numberOfBytes;
-    size_t cur =
-        atomic_fetch_add_explicit(&g_currentBytes, numberOfBytes, memory_order_relaxed) +
-        numberOfBytes;
+    size_t cur = atomic_fetch_add_explicit(&g_currentBytes, numberOfBytes, memory_order_relaxed) +
+                 numberOfBytes;
     bumpPeak(cur);
     return (void *)(base + 1);
 }

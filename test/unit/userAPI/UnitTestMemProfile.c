@@ -1,7 +1,5 @@
 #define SOURCE_FILE "UnitTestMemProfile"
 
-#include <stdlib.h>
-
 #include "MemProfile.h"
 #include "StorageApi.h"
 #include "unity.h"

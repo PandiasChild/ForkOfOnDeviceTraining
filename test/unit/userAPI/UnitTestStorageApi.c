@@ -48,8 +48,8 @@ void testFreeReservedMemoryIsNullSafe(void) {
 #ifdef ODT_MEM_PROFILE
 /* GT-1: exact-integer heap accounting. No tolerance exists to fudge.
  * Guarded by ODT_MEM_PROFILE: the counter is a no-op when the macro is
- * undefined, so these tests only compile/run in profiling builds (the
- * dedicated c-memprofile CI job). */
+ * undefined, so these tests only compile/run in profiling builds — the
+ * ASan/UBSan CI presets (ODT_MEM_PROFILE=ON); plain unit_test has it OFF. */
 void testHeapCounterExactCurrentAndPeak(void) {
     memProfileReset();
     TEST_ASSERT_EQUAL_size_t(0, memProfileCurrentBytes());
