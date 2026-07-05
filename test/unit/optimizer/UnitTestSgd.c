@@ -865,8 +865,8 @@ void testSgdStepMFloatReadsPackedSymGradGeneric(void) {
      * (no rounding ties: HALF_AWAY only matters at x.5, none of these land
      * on one). momentumFactor=0 and weightDecay=0 collapse the momentum
      * update to state=grad, param -= lr*dequant(grad).
-     * Mutation: reverting the generic read (raw float-cast of the packed SYM
-     * bytes, i.e. dropping the FLOAT32/else branch in sgdStepMFloat) misreads
+     * Mutation: forcing the executeOp prologue to raw-cast the packed SYM bytes
+     * instead of dequantizing them (its per-dtype operand conversion) misreads
      * the storage as raw floats -> garbage grad values -> RED. */
     size_t *pDims = reserveMemory(1 * sizeof(size_t));
     pDims[0] = 3;

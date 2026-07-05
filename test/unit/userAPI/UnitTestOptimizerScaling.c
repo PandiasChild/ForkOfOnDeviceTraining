@@ -202,8 +202,8 @@ void testScaleOptimizerGradients_FactorNaN_DoesNotAbort() {
  * scale are written directly (NOT via tensorFillFromFloatBuffer, which would
  * route through convertTensor and recompute scale from the float source).
  * The param data stays at default-zero, which matches the scale=1.0 default
- * from initSymInt32QConfig — sgdStepSymInt32 round-trips it through float and
- * back, but for the scaling assertions below the param values are irrelevant. */
+ * from initSymInt32QConfig — the executeOp funnel round-trips it through float
+ * and back, but for the scaling assertions below the param values are irrelevant. */
 static optimizer_t *buildSymInt32OneLayerOptim(layer_t **modelOut, parameter_t **wOut,
                                                parameter_t **bOut, float wInitialScale,
                                                const int32_t *wInitialGradInt32,
@@ -413,7 +413,7 @@ void testScaleOptimizerGradients_SymInt32_MomentumSgdAppliesScaledGradient() {
     freeOptimSgdM(sgd);
     freeLinearLayerShellOnly(model[0]);
 
-    /* Tolerance accounts for the int32 round-trip in sgdStepSymInt32 — the
+    /* Tolerance accounts for the int32 round-trip in the executeOp funnel — the
      * intermediate float value gets requantized through wScale0 (post-step
      * scale unchanged on param tensor in this iteration). 1e-3f is generous
      * enough for the small magnitudes here. */
