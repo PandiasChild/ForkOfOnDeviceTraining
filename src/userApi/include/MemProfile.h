@@ -9,4 +9,8 @@
  * reserveMemory, so it never enters the heap counter. */
 size_t measurePeakStackBytes(void (*fn)(void *), void *arg, size_t stackBytes);
 
+/* Peak resident set size (KiB) from getrusage(RUSAGE_SELF). Includes
+ * allocator/libc/dataset — a coarse process-level anchor, NOT the MCU number. */
+size_t memProfileRssPeakKb(void);
+
 #endif

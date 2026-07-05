@@ -1,11 +1,19 @@
 #define SOURCE_FILE "UnitTestMemProfile"
 
+#include <stdlib.h>
+
 #include "MemProfile.h"
+#include "StorageApi.h"
 #include "unity.h"
 
 void setUp(void) {}
 void tearDown(void) {}
 
+/* GT-2 drives measurePeakStackBytes, which runs the workload on a custom pthread
+ * stack (pthread_attr_setstack). ASan's thread instrumentation rejects a custom
+ * stack, so skip GT-2 under ASan — it runs under plain/debug/ubsan. The stack
+ * watermark is host measurement tooling and is never used under ASan in practice. */
+#ifndef __SANITIZE_ADDRESS__
 static volatile unsigned char g_sink;
 
 /* Touches n bytes of a stack VLA end-to-end so the compiler cannot elide it.
@@ -49,9 +57,27 @@ void testStackWatermarkTracksLoadRelativeAndMonotonic(void) {
     TEST_ASSERT_INT_WITHIN(F_STACK_SLACK, 0, (int)d1);
     TEST_ASSERT_INT_WITHIN(F_STACK_SLACK, 0, (int)d2);
 }
+#endif /* !__SANITIZE_ADDRESS__ */
+
+void testRssPeakIsPositiveAndGrows(void) {
+    size_t before = memProfileRssPeakKb();
+    TEST_ASSERT_GREATER_THAN_size_t(0, before); /* the process already uses RAM */
+    /* Force a large resident allocation and touch it. */
+    size_t big = 32u * 1024 * 1024;
+    volatile unsigned char *p = reserveMemory(big);
+    for (size_t i = 0; i < big; i += 4096) {
+        p[i] = 1;
+    }
+    size_t after = memProfileRssPeakKb();
+    TEST_ASSERT_GREATER_OR_EQUAL_size_t(before, after); /* peak is monotonic */
+    freeReservedMemory((void *)p);
+}
 
 int main(void) {
     UNITY_BEGIN();
+#ifndef __SANITIZE_ADDRESS__
     RUN_TEST(testStackWatermarkTracksLoadRelativeAndMonotonic);
+#endif
+    RUN_TEST(testRssPeakIsPositiveAndGrows);
     return UNITY_END();
 }

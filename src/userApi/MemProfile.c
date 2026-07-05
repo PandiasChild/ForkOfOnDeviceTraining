@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 
 #include "MemProfile.h"
 
@@ -63,4 +64,17 @@ size_t measurePeakStackBytes(void (*fn)(void *), void *arg, size_t stackBytes) {
     size_t used = stackBytes - firstTouched;
     free(region);
     return used;
+}
+
+size_t memProfileRssPeakKb(void) {
+    struct rusage ru;
+    if (getrusage(RUSAGE_SELF, &ru) != 0) {
+        return 0;
+    }
+    /* ru_maxrss is KiB on Linux, bytes on macOS/Darwin. */
+#if defined(__APPLE__)
+    return (size_t)ru.ru_maxrss / 1024u;
+#else
+    return (size_t)ru.ru_maxrss;
+#endif
 }
