@@ -4,6 +4,9 @@ add_elastic_ai_unit_test(
 )
 
 
+add_elastic_ai_unit_test(LIB_UNDER_TEST MemProfile)
+
+
 add_elastic_ai_unit_test(
         LIB_UNDER_TEST
         LayerQuant
