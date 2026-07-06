@@ -1,7 +1,6 @@
 #define SOURCE_FILE "ROUNDING"
 
 #include <math.h>
-#include <stdio.h>
 #include <stdlib.h>
 
 #include "Common.h"
@@ -45,6 +44,16 @@ int32_t rescaleIntoAccumulatorScale(int32_t paramQ, float paramScale, float accu
     }
 #endif
     return roundByMode(rescaled, roundingMode);
+}
+
+int32_t clampInt32(int32_t input, int32_t min, int32_t max) {
+    if (input < min) {
+        return min;
+    }
+    if (input > max) {
+        return max;
+    }
+    return input;
 }
 
 float clamp(float input, float min, float max) {

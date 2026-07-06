@@ -26,6 +26,8 @@ int32_t roundByMode(float input, roundingMode_t roundingMode);
 int32_t rescaleIntoAccumulatorScale(int32_t paramQ, float paramScale, float accumulatorScale,
                                     roundingMode_t roundingMode);
 
+int32_t clampInt32(int32_t input, int32_t min, int32_t max);
+
 float clamp(float input, float min, float max);
 
 #endif // ROUNDING_H

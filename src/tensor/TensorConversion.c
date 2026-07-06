@@ -62,8 +62,9 @@ static void quantizeFloatToAsym(const float *values, size_t n, asymQConfig_t *ou
     int16_t zeroPoint = (int16_t)roundByMode(mn / scale, outQC->roundingMode);
     int32_t codes[n];
     for (size_t i = 0; i < n; i++) {
-        codes[i] = roundByMode(clamp(values[i] / scale - (float)zeroPoint, 0.f, qMax),
-                               outQC->roundingMode);
+        codes[i] =
+            clampInt32(roundByMode(values[i] / scale - (float)zeroPoint, outQC->roundingMode), 0,
+                       (int32_t)qMax);
     }
     outQC->scale = scale;
     outQC->zeroPoint = zeroPoint;
@@ -120,7 +121,8 @@ void convertFloatTensorToSymInt32Tensor(tensor_t *inputTensor, tensor_t *outputT
 
     for (size_t i = 0; i < numberOfElements; i++) {
         outputInt32[i] =
-            roundByMode(clamp(inputFloat[i] / scale, qMin, qMax), outputSymInt32QC->roundingMode);
+            clampInt32(roundByMode(inputFloat[i] / scale, outputSymInt32QC->roundingMode),
+                       (int32_t)qMin, (int32_t)qMax);
     }
 }
 
@@ -208,8 +210,9 @@ void requantSymInt32Tensor(tensor_t *inputTensor, tensor_t *outputTensor) {
 
     /* pass B: same-index read-then-write — in-place safe (int32 both sides) */
     for (size_t i = 0; i < numberOfElements; i++) {
-        outputInt32[i] = roundByMode(clamp(((float)inputInt32[i] * inScale) / scale, qMin, qMax),
-                                     outputSymInt32QC->roundingMode);
+        outputInt32[i] = clampInt32(
+            roundByMode((float)inputInt32[i] * (inScale / scale), outputSymInt32QC->roundingMode),
+            (int32_t)qMin, (int32_t)qMax);
     }
 }
 
@@ -448,7 +451,8 @@ static void packFloatBufferAsSym(const float *values, size_t n, symQConfig_t *ou
     outQC->scale = scale;
     int32_t codes[n];
     for (size_t i = 0; i < n; i++) {
-        codes[i] = roundByMode(clamp(values[i] / scale, qMin, qMax), outQC->roundingMode);
+        codes[i] = clampInt32(roundByMode(values[i] / scale, outQC->roundingMode), (int32_t)qMin,
+                              (int32_t)qMax);
     }
     packFitGuarded(codes, n, dst, outQC->qBits, what);
 }
