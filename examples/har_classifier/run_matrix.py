@@ -39,7 +39,6 @@ BUILD_DIR = ROOT / "build" / "examples_memprofile" / "examples" / "har_classifie
 # each SYM config is the same binary at a different packed weight width.
 CONFIGS: dict[str, tuple[str, dict[str, str]]] = {
     "float": ("train_c_har_classifier", {}),
-    "sym16": ("train_c_har_classifier_sym", {"SYM_BITS": "16"}),
     "sym12": ("train_c_har_classifier_sym", {"SYM_BITS": "12"}),
     "sym8": ("train_c_har_classifier_sym", {"SYM_BITS": "8"}),
     "sym4": ("train_c_har_classifier_sym", {"SYM_BITS": "4"}),

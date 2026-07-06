@@ -97,12 +97,12 @@ static dataset_t g_valDataset;
 static dataset_t g_testDataset;
 
 /* Runtime config (env-overridable). */
-static float g_lr = 0.03f;
+static float g_lr = 0.01f;
 static float g_momentum = 0.9f;
-static int g_epochs = 2;
+static int g_epochs = 50;
 static unsigned g_seed = 1;
-static unsigned g_shuffleSeed = 42;
-static int g_symBits = 8;
+static unsigned g_shuffleSeed = 1;
+static int g_symBits = 12;
 
 static float envFloat(const char *name, float dflt) {
     const char *v = getenv(name);
@@ -405,8 +405,17 @@ int main(void) {
     g_shuffleSeed = (unsigned)envInt("SHUFFLE_SEED", (int)g_shuffleSeed);
     const char *logPath = getenv("LOG_PATH");
 
-    if (g_symBits < 1 || g_symBits > 31) {
-        fprintf(stderr, "SYM_BITS must be in [1, 31] (packed SYM range); got %d\n", g_symBits);
+    /* Packed-SYM STORAGE supports up to 31 bits, but this example's forward is
+     * ARITH_SYM_INT32: it multiplies the packed-SYM weights as integer operands
+     * accumulated in an int32 accumulator, and matmul/conv cap the SYM_INT32
+     * operand at 12 bits (#227) — wider weights (e.g. 16) would overflow int32
+     * over the conv accumulation length, so the kernel rejects them mid-forward.
+     * Fail fast here with the reason instead of crashing deep in the matmul. */
+    if (g_symBits < 1 || g_symBits > 12) {
+        fprintf(stderr,
+                "SYM_BITS must be in [1, 12]: the SYM_INT32 forward operand contract caps at 12 "
+                "bits (#227; int32 accumulator would overflow at wider widths). Got %d.\n",
+                g_symBits);
         return 2;
     }
 
