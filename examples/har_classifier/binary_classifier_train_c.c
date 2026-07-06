@@ -57,7 +57,8 @@ typedef enum deltaStatus { WITH_DELTAS, WITHOUT_DELTAS } deltaStatus_t;
 
 
 /// es wurde geändert optuna, plot und hier in diesem dokument das print. es wurde noch delta status und trial_number hinzugefügt
-
+// ich möchte noch irgendwie tracken was mein total storage ist und was der storage von meinen deltas verbraucht.
+// batch  möchte ich klein haben, weil für embedded device
 // har_classifier: FINAL test_loss=0.3498 test_acc=0.9046
 
 /* ------------------------------------------------------------------------- */

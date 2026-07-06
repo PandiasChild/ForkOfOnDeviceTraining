@@ -17,7 +17,7 @@ def objective(trial) -> int| float:
     momentum = trial.suggest_int("momentum", 1, 4, step=1)
     rounding_mode = 0 # HALF_AWAY
     epochs = 20
-    batch = 64
+    batch = 64 # möchte ich klein haben, weil für embedded device
 
     result = subprocess.run(
         [
