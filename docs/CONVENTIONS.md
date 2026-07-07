@@ -50,3 +50,6 @@ something that will drift again.
   test memory discipline; build-time gold-value generators.
 - [`conventions/data-shape.md`](conventions/data-shape.md) — datasets deliver the
   natural geometric shape; reshape/flatten is the first model layer.
+- [`conventions/toolchain-parity.md`](conventions/toolchain-parity.md) — gold
+  tests are toolchain-sensitive (FMA contraction, libm); the `-ffp-contract=fast`
+  pin and the CI gcc-major-13 assert; host/CI parity gap tracked as open.
