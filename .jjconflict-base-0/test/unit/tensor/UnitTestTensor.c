@@ -258,12 +258,44 @@ void test_calcNumberOfBytesForData_Sym_qBits3_N10() {
     TEST_ASSERT_EQUAL_size_t(4, calcNumberOfBytesForData(&q, 10));
 }
 
+void test_calcNumberOfBytesForData_Delta_qBits3_N10_deltabits2() {
+    symQDeltaConfig_t cfg = {.scale = 1.0f, .qBits = 3, .roundingMode = HALF_AWAY, .deltabits = 2};
+    quantization_t q;
+    initSymQDeltaQuantization(&cfg, &q);
+    /* ceil((2*9 + 3)/ 8) = ceil(21/8) = 3 */
+    TEST_ASSERT_EQUAL_size_t(3, calcNumberOfBytesForData(&q, 10));
+}
+
+void test_calcNumberOfBytesForData_Delta_qBits7_N10_deltabits5() {
+    symQDeltaConfig_t cfg = {.scale = 1.0f, .qBits = 9, .roundingMode = HALF_AWAY, .deltabits = 5};
+    quantization_t q;
+    initSymQDeltaQuantization(&cfg, &q);
+    /* ceil((9*9 + 5)/ 8) = ceil(86/8) = 11 */
+    TEST_ASSERT_EQUAL_size_t(11, calcNumberOfBytesForData(&q, 10));
+}
+
 void test_calcNumberOfBytesForData_Sym_qBits5_N4() {
     symQConfig_t cfg = {.scale = 1.0f, .qBits = 5, .roundingMode = HALF_AWAY};
     quantization_t q;
     initSymQuantization(&cfg, &q);
     /* ceil(5*4 / 8) = ceil(20/8) = 3 */
     TEST_ASSERT_EQUAL_size_t(3, calcNumberOfBytesForData(&q, 4));
+}
+
+void test_calcNumberOfBytesForData_Delta_qBits5_N4_deltabits2() {
+    symQDeltaConfig_t cfg = {.scale = 1.0f, .qBits = 5, .roundingMode = HALF_AWAY, .deltabits = 2};
+    quantization_t q;
+    initSymQDeltaQuantization(&cfg, &q);
+    /* ceil((2*3 + 5)/ 8) = ceil(11/8) = 2 */
+    TEST_ASSERT_EQUAL_size_t(2, calcNumberOfBytesForData(&q, 10));
+}
+
+void test_calcNumberOfBytesForData_Delta_qBits5_N4_deltabits3() {
+    symQDeltaConfig_t cfg = {.scale = 1.0f, .qBits = 5, .roundingMode = HALF_AWAY, .deltabits = 3};
+    quantization_t q;
+    initSymQDeltaQuantization(&cfg, &q);
+    /* ceil((3*3 + 5)/ 8) = ceil(14/8) = 2 */
+    TEST_ASSERT_EQUAL_size_t(2, calcNumberOfBytesForData(&q, 10));
 }
 
 void test_calcBytesPerTensor_SymQBits3N10_Ceils() {
@@ -460,5 +492,10 @@ int main(void) {
     RUN_TEST(test_calcNumberOfBytesForData_Sym_qBits5_N4);
     RUN_TEST(test_calcBytesPerTensor_SymQBits3N10_Ceils);
     RUN_TEST(test_calcBytesPerTensor_BoolN3_CeilsTo1);
+
+    RUN_TEST(test_calcNumberOfBytesForData_Delta_qBits3_N10_deltabits2);
+    RUN_TEST(test_calcNumberOfBytesForData_Delta_qBits5_N4_deltabits2);
+    RUN_TEST(test_calcNumberOfBytesForData_Delta_qBits7_N10_deltabits5);
+    RUN_TEST(test_calcNumberOfBytesForData_Delta_qBits5_N4_deltabits2);
     return UNITY_END();
 }
