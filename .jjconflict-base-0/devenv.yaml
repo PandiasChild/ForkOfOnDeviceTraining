@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=https://devenv.sh/devenv.schema.json
+inputs:
+  nixpkgs:
+    url: github:cachix/devenv-nixpkgs/rolling
+  nixpkgs-unstable:
+    url: github:nixos/nixpkgs/nixpkgs-unstable
+  # Separate input so the ASan compiler can track LLVM >= 22 without dragging
+  # clang-tools / uv / arm-gcc forward with nixpkgs-unstable. macOS 26.4+ broke
+  # compiler-rt's ASan init for LLVM <= 21.1.8 (our nixpkgs default); the fix is
+  # on LLVM's release/22.x line. Locked independently in devenv.lock.
+  nixpkgs-llvm22:
+    url: github:nixos/nixpkgs/nixpkgs-unstable
+
+# If you're using non-OSS software, you can set allowUnfree to true.
+# allowUnfree: true
+
+# If you're willing to use a package that's vulnerable
+# permittedInsecurePackages:
+#  - "openssl-1.1.1w"
+
+# If you have more than one devenv you can merge them
+#imports:
+# - ./backend
+
+
+

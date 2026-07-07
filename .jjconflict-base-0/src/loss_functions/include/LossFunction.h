@@ -1,0 +1,66 @@
+#ifndef LOSSFUNCTION_H
+#define LOSSFUNCTION_H
+
+#include "Tensor.h"
+
+typedef enum lossFuncType { MSE, CROSS_ENTROPY } lossFuncType_t;
+
+typedef enum reduction { REDUCTION_SUM, REDUCTION_MEAN } reduction_t;
+
+typedef struct lossConfig {
+    lossFuncType_t funcType;
+    reduction_t backwardReduction;
+    tensor_t *classWeights;
+} lossConfig_t;
+
+/* Convenience initializer. Returns {funcType, REDUCTION_MEAN, REDUCTION_MEAN, NULL}.
+ * forwardReduction is intentionally NOT a config field — it is a per-call parameter
+ * on aggregators. trainingRun hardcodes REDUCTION_MEAN to keep train/eval comparability. */
+lossConfig_t defaultLossConfig(lossFuncType_t funcType);
+
+/*! Per-microbatch forward.
+ *
+ * Reduction-aware; PyTorch-parity for both MEAN and SUM.
+ *
+ * \param modelOutput  Tensor of shape [B, F] (B microbatch dim, F feature dim).
+ *                     For B=1 today the [B, ...] dim may be implicit.
+ * \param label        Same shape as modelOutput.
+ * \param reduction    REDUCTION_MEAN ⇒ per-microbatch mean over own elements;
+ *                     REDUCTION_SUM  ⇒ per-microbatch raw sum.
+ * \return Per-microbatch scalar loss value.
+ *
+ * Contract: `modelOutput->shape->dimensions[0] >= 1`. All microbatches in one
+ * macro batch must have equal B (uniform microbatch size assumption — see
+ * docs/CONVENTIONS.md §"Loss API: microbatch contracts"). */
+typedef float (*lossFwdFn_t)(tensor_t *modelOutput, tensor_t *label, reduction_t reduction);
+
+/*! Per-microbatch backward.
+ *
+ * Writes raw per-element gradient (no batchSize/reduction divisor).
+ * Macro-batch scaling is applied at the optimizer step via
+ * scaleOptimizerGradients(optimizer, computeMeanScale(...)) in
+ * trainingEpochDefault when backwardReduction == REDUCTION_MEAN.
+ *
+ * \param modelOutput  Same shape contract as forward.
+ * \param label        Same shape as modelOutput.
+ * \param result       Output buffer (same shape) for the raw per-element grad. */
+typedef void (*lossBwdFn_t)(tensor_t *modelOutput, tensor_t *label, tensor_t *result);
+
+/* Per-loss MEAN-reduction scale factor (PyTorch parity).
+ * Only called when backwardReduction == REDUCTION_MEAN.
+ * Each loss family derives numFeaturesPerSample from the model output
+ * shape itself (B = dimensions[0], F = numElements / B), so the caller
+ * does not need to know about microbatch-vs-feature dimensions:
+ *   MSE: 1 / (totalSamples × F)
+ *   CE:  1 / totalSamples (modelOutput unused) */
+typedef float (*computeMeanScaleFn_t)(size_t totalSamples, tensor_t *modelOutput);
+
+typedef struct lossFunctions {
+    lossFwdFn_t forward;
+    lossBwdFn_t backward;
+    computeMeanScaleFn_t computeMeanScale;
+} lossFunctions_t;
+
+extern lossFunctions_t lossFunctions[];
+
+#endif // LOSSFUNCTION_H
