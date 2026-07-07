@@ -16,6 +16,11 @@ typedef struct layerNormConfig layerNormConfig_t;
 typedef struct groupNormConfig groupNormConfig_t;
 typedef struct quantizationConfig quantizationConfig_t;
 
+/* WIRE FORMAT -- append-only. The serialized layer record's uint8 tag is this
+ * enum's POSITION (src/serial/Serialize.c). Never insert or reorder members:
+ * that renumbers the tail and silently corrupts every previously serialized
+ * model. Append new members at the end and extend the wire-tag pins in
+ * test/unit/serial/UnitTestSerialize.c. */
 typedef enum layerType {
     LINEAR,
     RELU,

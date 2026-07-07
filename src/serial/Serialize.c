@@ -57,6 +57,8 @@ void serializeModel(layer_t **model, size_t sizeModel, FILE *f) {
     serialize(&layerCount, 1, sizeof(uint32_t), f);
 
     for (size_t i = 0; i < sizeModel; i++) {
+        /* The tag byte is the layerType_t enum position -- append-only wire
+         * contract, pinned in test/unit/serial/UnitTestSerialize.c. */
         uint8_t tag = (uint8_t)model[i]->type;
         serialize(&tag, 1, sizeof(uint8_t), f);
         serializeLayer(model[i], f);

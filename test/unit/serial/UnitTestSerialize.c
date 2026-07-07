@@ -39,6 +39,31 @@
 #include "TensorApi.h"
 #include "unity.h"
 
+/* WIRE-FORMAT PINS (#serial): the serialized layer record's uint8 tag IS the
+ * layerType_t enum position (Serialize.c serializeLayer). The enum is an
+ * append-only wire contract -- inserting or reordering members silently
+ * corrupts every previously serialized model. If one of these asserts fires,
+ * you reordered/inserted; move your new member to the END instead. When
+ * appending, add its pin line here and bump the count pin. */
+_Static_assert(LINEAR == 0, "layerType_t wire tag: LINEAR must stay 0 (append-only enum)");
+_Static_assert(RELU == 1, "layerType_t wire tag: RELU must stay 1 (append-only enum)");
+_Static_assert(CONV1D == 2, "layerType_t wire tag: CONV1D must stay 2 (append-only enum)");
+_Static_assert(CONV1D_TRANSPOSED == 3,
+               "layerType_t wire tag: CONV1D_TRANSPOSED must stay 3 (append-only enum)");
+_Static_assert(MAXPOOL1D == 4, "layerType_t wire tag: MAXPOOL1D must stay 4 (append-only enum)");
+_Static_assert(AVGPOOL1D == 5, "layerType_t wire tag: AVGPOOL1D must stay 5 (append-only enum)");
+_Static_assert(SOFTMAX == 6, "layerType_t wire tag: SOFTMAX must stay 6 (append-only enum)");
+_Static_assert(FLATTEN == 7, "layerType_t wire tag: FLATTEN must stay 7 (append-only enum)");
+_Static_assert(QUANTIZATION == 8,
+               "layerType_t wire tag: QUANTIZATION must stay 8 (append-only enum)");
+_Static_assert(ADAPTIVE_AVGPOOL1D == 9,
+               "layerType_t wire tag: ADAPTIVE_AVGPOOL1D must stay 9 (append-only enum)");
+_Static_assert(DROPOUT == 10, "layerType_t wire tag: DROPOUT must stay 10 (append-only enum)");
+_Static_assert(LAYERNORM == 11, "layerType_t wire tag: LAYERNORM must stay 11 (append-only enum)");
+_Static_assert(GROUPNORM == 12, "layerType_t wire tag: GROUPNORM must stay 12 (append-only enum)");
+_Static_assert(GROUPNORM + 1 == 13,
+               "new layerType_t member: append at the END and add its wire-tag pin above");
+
 /* SERIALIZE_TEST_FILE_PATH is injected by the CMake target_compile_definitions
  * in test/unit/serial/CMakeLists.txt as an absolute path so the test does not
  * depend on the working directory (which differs between host runs and

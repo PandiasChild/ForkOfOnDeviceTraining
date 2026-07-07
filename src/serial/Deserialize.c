@@ -69,6 +69,8 @@ void deserializeModel(layer_t **model, size_t sizeModel, FILE *f) {
     }
 
     for (size_t i = 0; i < sizeModel; i++) {
+        /* Tag byte = layerType_t enum position (append-only wire contract; see
+         * Layer.h and the pins in test/unit/serial/UnitTestSerialize.c). */
         uint8_t tag;
         deserialize(&tag, 1, sizeof(uint8_t), f);
         if (tag != (uint8_t)model[i]->type) {
