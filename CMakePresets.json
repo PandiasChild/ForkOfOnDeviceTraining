@@ -85,6 +85,17 @@
         "BUILD_EXAMPLES": "ON",
         "ODT_MEM_PROFILE": "ON"
       }
+    },
+    {
+      "name": "arm_cross",
+      "displayName": "ARM cross-compile (compile-only, core libs)",
+      "inherits": "gen_ninja",
+      "toolchainFile": "${sourceDir}/cmake/arm-none-eabi.cmake",
+      "cacheVariables": {
+        "HOST": "OFF",
+        "ODT_BUILD_TESTS": "OFF",
+        "CMAKE_C_FLAGS": "-Werror"
+      }
     }
   ],
   "buildPresets": [
@@ -137,6 +148,24 @@
     {
       "name": "examples_memprofile",
       "configurePreset": "examples_memprofile"
+    },
+    {
+      "name": "arm_cross",
+      "configurePreset": "arm_cross",
+      "jobs": 4,
+      "targets": [
+        "DTypes", "DataStorage", "Quantization", "TensorConversion", "Tensor",
+        "Add", "Arithmetic", "ArithmeticType", "Comparison", "Distributions",
+        "Div", "Kernel", "Log", "Matmul", "Mul", "MinMax", "Reduce", "Rounding",
+        "Square", "Sub", "Sum", "SlidingWindow1d", "AdaptiveWindow1d",
+        "Conv1dKernel", "ConvTranspose1dKernel", "ExecuteOp",
+        "Conv1d", "Conv1dTransposed", "MaxPool1d", "AvgPool1d",
+        "AdaptiveAvgPool1d", "Dropout", "LayerNorm", "GroupNorm", "Layer",
+        "Linear", "QuantizationLayer", "Relu", "Softmax", "Flatten",
+        "Optimizer", "Sgd",
+        "CrossEntropy", "LossFunction", "MSE",
+        "Serialize", "Deserialize"
+      ]
     }
   ],
   "testPresets": [
