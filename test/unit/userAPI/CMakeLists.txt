@@ -312,6 +312,35 @@ target_link_libraries(UnitTestFlattenIntegration PRIVATE
 )
 __register_target_as_unit_test(UnitTestFlattenIntegration)
 
+add_executable(UnitTestBiaslessConvOptim UnitTestBiaslessConvOptim.c)
+target_link_libraries(UnitTestBiaslessConvOptim PRIVATE
+        unity
+        Conv1dApi
+        Conv1d
+        Conv1dTransposedApi
+        Conv1dTransposed
+        ConvTranspose1dKernel
+        Conv1dKernel
+        SlidingWindow1d
+        SgdApi
+        Sgd
+        Optimizer
+        ArithmeticType
+        Common
+        LayerQuant
+        LayerCommon
+        QuantizationApi
+        Quantization
+        Rounding
+        Distributions
+        RNG
+        Kernel
+        Tensor
+        TensorApi
+        StorageApi
+)
+__register_target_as_unit_test(UnitTestBiaslessConvOptim)
+
 add_executable(UnitTestOptimizerScaling UnitTestOptimizerScaling.c)
 target_link_libraries(UnitTestOptimizerScaling PRIVATE
         unity
