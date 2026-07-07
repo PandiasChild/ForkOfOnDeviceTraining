@@ -155,13 +155,13 @@ tensor_t **inferenceBatched(layer_t **model, size_t numberOfLayers, batch_t *bat
     return tensorArr;
 }
 
-inferenceStats_t *reserveInferenceStats(tensor_t *label) {
+/* Sized from the PRODUCED output, not the label: a classifier's label is
+ * rank-1 [C] while the model emits [1, C] — sizing from the label made the
+ * later shape copy overflow the dimensions array (ASan-verified). Mirrors
+ * initTrainingStats (CalculateGradsSequential.c). */
+static inferenceStats_t *reserveInferenceStats(tensor_t *producedOutput) {
     inferenceStats_t *inferenceStats = reserveMemory(sizeof(inferenceStats_t));
-
-    shape_t *outputShape = getShapeLike(label->shape);
-    quantization_t *outputQ = getQLike(label->quantization);
-    inferenceStats->output = initTensor(outputShape, outputQ, NULL);
-
+    inferenceStats->output = getTensorLike(producedOutput);
     return inferenceStats;
 }
 
@@ -189,8 +189,8 @@ inferenceStats_t *inferenceWithLoss(layer_t **model, size_t numberOfLayers, tens
         outputNext = outputCurr;
     }
 
-    inferenceStats_t *inferenceStats = reserveInferenceStats(label);
-    copyTensor(inferenceStats->output, &outputNext);
+    inferenceStats_t *inferenceStats = reserveInferenceStats(&outputNext);
+    convertTensor(&outputNext, inferenceStats->output);
 
     lossFunctions_t lossFns = lossFunctions[funcType];
     float loss = lossFns.forward(&outputNext, label, forwardReduction);
