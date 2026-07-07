@@ -369,6 +369,55 @@ jobs:
           export PATH="$HOME/arm-gnu-toolchain/bin:$PATH"
           cmake --build --preset arm_cross
 
+  # Stage-1 stack-watermark REPORT (hardening item 6): builds the two
+  # instrumented har_classifier trainers with ODT_MEM_PROFILE, runs one
+  # epoch each, and reports memory.stack_peak_b against the budgets in
+  # examples/_shared/check_stack_watermark.py. WARN-ONLY by design: linux
+  # budgets are uncalibrated until this job has produced stable peaks;
+  # calibration + --enforce promotion is a dedicated later PR.
+  c-stack-watermark:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build gcc
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync Python deps
+        run: uv sync
+
+      - name: Cache raw HAR dataset
+        uses: actions/cache@v4
+        with:
+          path: examples/har_classifier/data/raw
+          key: datasets-raw-${{ hashFiles('examples/har_classifier/prepare_data.py', 'examples/ecg_anomaly_ae/prepare_data.py', 'examples/mnist_mlp/prepare_data.py', 'examples/mnist_cnn/prepare_data.py') }}
+
+      - name: Prepare HAR data
+        run: uv run examples/har_classifier/prepare_data.py
+
+      - name: Configure (examples_memprofile preset)
+        run: cmake --preset examples_memprofile
+
+      - name: Build instrumented HAR trainers
+        run: cmake --build --preset examples_memprofile --target train_c_har_classifier train_c_har_classifier_sym
+
+      - name: Run 1-epoch watermark probes
+        run: |
+          EPOCHS=1 SEED=1 LOG_PATH=/tmp/wm_float.json \
+            build/examples_memprofile/examples/har_classifier/train_c_har_classifier
+          EPOCHS=1 SEED=1 SYM_BITS=8 LOG_PATH=/tmp/wm_sym8.json \
+            build/examples_memprofile/examples/har_classifier/train_c_har_classifier_sym
+
+      - name: Check stack watermarks (report-only)
+        run: uv run examples/_shared/check_stack_watermark.py --platform linux /tmp/wm_float.json /tmp/wm_sym8.json
+
   python-test:
     runs-on: ubuntu-latest
 
