@@ -18,6 +18,7 @@ static size_t calcNumberOfStatesByLayer(const layer_t *layer) {
     switch (layer->type) {
     case LINEAR:
     case LAYERNORM:
+    case GROUPNORM:
         return 2;
     case RELU:
     case SOFTMAX:

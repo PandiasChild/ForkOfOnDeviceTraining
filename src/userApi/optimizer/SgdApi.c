@@ -6,6 +6,7 @@
 #include "Common.h"
 #include "Conv1d.h"
 #include "Conv1dTransposed.h"
+#include "GroupNorm.h"
 #include "Layer.h"
 #include "LayerNorm.h"
 #include "Linear.h"
@@ -164,6 +165,33 @@ optimizer_t *sgdMCreateOptim(float learningRate, float momentumFactor, float wei
 
             states[paramSlot] = lnGammaStates;
             states[paramSlot + 1] = lnBetaStates;
+
+            paramSlot += 2;
+            break;
+        }
+        case GROUPNORM: {
+            groupNormConfig_t *gnCfg = layerConfig->groupNorm;
+
+            parameter_t *gnGamma = gnCfg->gamma;
+            optim->parameter[paramSlot] = gnGamma;
+            tensor_t *gnGammaStateBuffer = momentumStateInit(gnGamma->param, momentumQuant);
+
+            parameter_t *gnBeta = gnCfg->beta;
+            optim->parameter[paramSlot + 1] = gnBeta;
+            tensor_t *gnBetaStateBuffer = momentumStateInit(gnBeta->param, momentumQuant);
+
+            states_t *gnGammaStates = reserveMemory(sizeof(states_t));
+            gnGammaStates->statesPerParameter = statesPerParam;
+            gnGammaStates->stateBuffers = reserveMemory(sizeof(tensor_t *));
+            gnGammaStates->stateBuffers[0] = gnGammaStateBuffer;
+
+            states_t *gnBetaStates = reserveMemory(sizeof(states_t));
+            gnBetaStates->statesPerParameter = statesPerParam;
+            gnBetaStates->stateBuffers = reserveMemory(sizeof(tensor_t *));
+            gnBetaStates->stateBuffers[0] = gnBetaStateBuffer;
+
+            states[paramSlot] = gnGammaStates;
+            states[paramSlot + 1] = gnBetaStates;
 
             paramSlot += 2;
             break;
