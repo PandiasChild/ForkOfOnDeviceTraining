@@ -190,7 +190,7 @@ void testSgdMCreateOptimSkipsQuantizationLayer(void) {
     layer_t *model[2] = {linear, quant};
 
     quantization_t *momentumQ = quantizationInitFloat();
-    optimizer_t *optim = sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 2, SYM_INT32, momentumQ);
+    optimizer_t *optim = sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 2, momentumQ);
     size_t sizeStates = optim->sizeStates;
 
     freeOptimSgdM(optim); /* frees the Linear weights/bias parameter_t */
@@ -347,7 +347,7 @@ void testFullSymChainTrainingStepMatchesFloatTwin(void) {
     tensor_t *labelS = build2DSym(2, 2, LABEL_VALS, 4);
 
     quantization_t *momentumQS = quantizationInitFloat();
-    optimizer_t *optimS = sgdMCreateOptim(0.1f, 0.0f, 0.0f, modelSym, 5, SYM_INT32, momentumQS);
+    optimizer_t *optimS = sgdMCreateOptim(0.1f, 0.0f, 0.0f, modelSym, 5, momentumQS);
     trainingStats_t *statsS =
         calculateGradsSequential(modelSym, 5, defaultLossConfig(MSE), REDUCTION_MEAN, inS, labelS);
     sgdStepM(optimS);
@@ -380,7 +380,7 @@ void testFullSymChainTrainingStepMatchesFloatTwin(void) {
     tensor_t *labelF = build2DFloat(2, 2, LABEL_VALS, 4);
 
     quantization_t *momentumQF = quantizationInitFloat();
-    optimizer_t *optimF = sgdMCreateOptim(0.1f, 0.0f, 0.0f, modelF, 3, FLOAT32, momentumQF);
+    optimizer_t *optimF = sgdMCreateOptim(0.1f, 0.0f, 0.0f, modelF, 3, momentumQF);
     trainingStats_t *statsF =
         calculateGradsSequential(modelF, 3, defaultLossConfig(MSE), REDUCTION_MEAN, inF, labelF);
     sgdStepM(optimF);
@@ -480,7 +480,7 @@ void testConv1dTransposedSymChainTrains(void) {
     static const float LABEL_VALS[4] = {0.10f, 0.20f, -0.15f, 0.05f};
 
     quantization_t *momentumQ2 = quantizationInitFloat();
-    optimizer_t *opt = sgdMCreateOptim(0.05f, 0.0f, 0.0f, model, 2, SYM_INT32, momentumQ2);
+    optimizer_t *opt = sgdMCreateOptim(0.05f, 0.0f, 0.0f, model, 2, momentumQ2);
 
     size_t STEPS = 40;
     float firstLoss = NAN;

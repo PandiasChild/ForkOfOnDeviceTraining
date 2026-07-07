@@ -236,7 +236,7 @@ void testGroupNormClassifierTrainsAndRoundTrips(void) {
      * the halving threshold across the whole hyperparameter neighborhood, so the
      * assertion is deterministic and far from the knife-edge (weight init is
      * RNG-seeded to a fixed constant, so every run is bit-identical). */
-    optimizer_t *optim = sgdMCreateOptim(0.1f, 0.5f, 0.0f, model, MODEL_SIZE, FLOAT32, momentumQ);
+    optimizer_t *optim = sgdMCreateOptim(0.1f, 0.5f, 0.0f, model, MODEL_SIZE, momentumQ);
 
     /* (b) 30 epochs; captureEpoch records the first and last training loss. */
     cbInvocations = 0;

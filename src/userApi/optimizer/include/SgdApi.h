@@ -17,8 +17,7 @@
  *        (caller-owned; not consumed -- cloned once per state via getQLike).
  */
 optimizer_t *sgdMCreateOptim(float learningRate, float momentumFactor, float weightDecay,
-                             layer_t **model, size_t sizeModel, qtype_t qType,
-                             quantization_t *momentumQuant);
+                             layer_t **model, size_t sizeModel, quantization_t *momentumQuant);
 
 void freeOptimSgdM(optimizer_t *sgdM);
 

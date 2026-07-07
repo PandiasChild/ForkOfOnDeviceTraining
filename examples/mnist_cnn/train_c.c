@@ -288,7 +288,7 @@ int main(void) {
                                                  /*dropLast*/ true);
 
         optimizer_t *sgd = sgdMCreateOptim(LR, MOMENTUM, /*weightDecay*/ 0.0f, model, MODEL_SIZE,
-                                           FLOAT32, quantizationInitFloat());
+                                           quantizationInitFloat());
 
         g_log_file = fopen("examples/mnist_cnn/logs/c.json", "w");
         if (!g_log_file) {

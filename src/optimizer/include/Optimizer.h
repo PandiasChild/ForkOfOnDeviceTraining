@@ -20,7 +20,6 @@ typedef enum { SGD, SGD_M } optimizerType_t;
 
 typedef struct optimizer {
     optimizerType_t type;
-    qtype_t qtype;
     optimImpl_t *impl;
     parameter_t **parameter;
     states_t **states;

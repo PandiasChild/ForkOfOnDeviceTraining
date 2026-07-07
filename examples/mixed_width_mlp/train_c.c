@@ -389,7 +389,7 @@ int main(void) {
     }
 
     optimizer_t *sgd = sgdMCreateOptim(LR, MOMENTUM, /*weightDecay*/ 0.0f, model, MODEL_SIZE,
-                                       SYM_INT32, quantizationInitFloat());
+                                       quantizationInitFloat());
     optimizerFunctions_t optimFns = optimizerFunctions[sgd->type];
 
     lossConfig_t lossCfg = defaultLossConfig(CROSS_ENTROPY);

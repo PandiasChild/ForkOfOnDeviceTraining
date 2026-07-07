@@ -105,7 +105,7 @@ void testOptimizer_ZeroStatesForParameterlessPool(void) {
 
     size_t numStates = calcTotalNumberOfStates(model, 1);
     quantization_t *momentumQ = quantizationInitFloat();
-    optimizer_t *optim = sgdMCreateOptim(0.01f, 0.9f, 0.0f, model, 1, FLOAT32, momentumQ);
+    optimizer_t *optim = sgdMCreateOptim(0.01f, 0.9f, 0.0f, model, 1, momentumQ);
     size_t sizeStates = optim->sizeStates;
 
     freeOptimSgdM(optim);

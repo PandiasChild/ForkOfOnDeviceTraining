@@ -513,8 +513,8 @@ int main(void) {
      * dead-zone in the accumulator; a FLOAT32 accumulator keeps velocity precise
      * so ONLY the weights carry the memory win. */
     quantization_t *momentumQ = quantizationInitFloat();
-    optimizer_t *sgd = sgdMCreateOptim(g_lr, g_momentum, /*weightDecay*/ 0.0f, model, MODEL_SIZE,
-                                       SYM_INT32, momentumQ);
+    optimizer_t *sgd =
+        sgdMCreateOptim(g_lr, g_momentum, /*weightDecay*/ 0.0f, model, MODEL_SIZE, momentumQ);
 #ifdef ODT_MEM_PROFILE
     size_t markAfterOpt = memProfileMark(); /* optstate_b = delta */
 #endif
