@@ -89,6 +89,9 @@ target_link_libraries(LayerNorm PRIVATE
         TensorConversion
         Quantization
         Add
+        Sub
+        Mul
+        Reduce
         Arithmetic
         ArithmeticType
         ExecuteOp
