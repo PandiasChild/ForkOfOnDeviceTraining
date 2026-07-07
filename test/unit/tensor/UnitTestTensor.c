@@ -460,6 +460,218 @@ void testCopyTensorSymIntoNullConfigDestDies() {
 
     ASSERT_EXITS_WITH_FAILURE(copyTensor(&dst, &src));
 }
+void testByteConversionWithInputOffset() {
+    /*
+     * Input:
+     *
+     * Bit 0-2: Padding
+     * Bit 3-5: 001 (1)
+     * Bit 6-8: 010 (2)
+     * Bit 9-11: 011 (3)
+     *
+     */
+    uint8_t dataIn[] = {
+        0b10001000,
+        0b00011001
+    };
+
+    size_t dataInBits = 12;
+    size_t startbitInOffset = 3;
+
+    size_t dataOutBits = 3;
+    size_t numValues = 3;
+
+    size_t numBytesDataOut =
+        (dataOutBits * numValues - 1) / 8 + 1;
+
+    uint8_t dataOut[numBytesDataOut];
+    memset(dataOut, 0, numBytesDataOut);
+
+    byteConversionWithOffsets(
+        dataIn,
+        dataInBits,
+        dataOut,
+        startbitInOffset,
+        dataOutBits,
+        numValues,
+        0
+    );
+
+    uint8_t expectedBytes[] = {
+        0b11010001
+    };
+
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(
+        expectedBytes,
+        dataOut,
+        numBytesDataOut
+    );
+}
+
+
+void testByteConversionWithOutputOffset() {
+    /*
+     * Input values:
+     * {1,2,3}
+     *
+     * Output startet ab Bit 3:
+     *
+     * 000 | 001 | 010 | 011
+     * ^offset
+     *
+     */
+    uint8_t dataIn[] = {
+        0b00000001,
+        0b00000010,
+        0b00000011
+    };
+
+    size_t dataInBits = 3;
+    size_t startbitInOffset = 0;
+
+    size_t dataOutBits = 3;
+    size_t numValues = 3;
+
+    size_t startbitOutOffset = 3;
+
+    size_t numBytesDataOut =
+        (startbitOutOffset + dataOutBits * numValues + 7) / 8;
+
+    uint8_t dataOut[numBytesDataOut];
+    memset(dataOut, 0, numBytesDataOut);
+
+    byteConversionWithOffsets(
+        dataIn,
+        dataInBits,
+        dataOut,
+        startbitInOffset,
+        dataOutBits,
+        numValues,
+        startbitOutOffset
+    );
+
+    uint8_t expectedBytes[] = {
+        0b01000100,
+        0b00000000
+    };
+
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(
+        expectedBytes,
+        dataOut,
+        numBytesDataOut
+    );
+}
+
+
+void testByteConversionWithInputAndOutputOffset() {
+    /*
+     * Input:
+     *
+     * Bit 0-2: Padding
+     * Bit 3-5: 001
+     * Bit 6-8: 010
+     * Bit 9-11:011
+     *
+     * Output:
+     *
+     * Start bei Bit 2
+     *
+     */
+    uint8_t dataIn[] = {
+        0b10001000,
+        0b00011001
+    };
+
+    size_t dataInBits = 12;
+    size_t startbitInOffset = 3;
+
+    size_t dataOutBits = 3;
+    size_t numValues = 3;
+
+    size_t startbitOutOffset = 2;
+
+    size_t numBytesDataOut =
+        (startbitOutOffset + dataOutBits * numValues + 7) / 8;
+
+    uint8_t dataOut[numBytesDataOut];
+    memset(dataOut, 0, numBytesDataOut);
+
+    byteConversionWithOffsets(
+        dataIn,
+        dataInBits,
+        dataOut,
+        startbitInOffset,
+        dataOutBits,
+        numValues,
+        startbitOutOffset
+    );
+
+    uint8_t expectedBytes[] = {
+        0b00010100,
+        0b00000000
+    };
+
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(
+        expectedBytes,
+        dataOut,
+        numBytesDataOut
+    );
+}
+
+
+void testByteConversionWithOutputOffsetCrossingByteBoundary() {
+    /*
+     * Output beginnt bei Bit 7.
+     *
+     * Zwei 4-bit Werte:
+     * {0xA, 0xB}
+     *
+     * Ergebnis:
+     *
+     * Bit 7-10: 1010
+     * Bit 11-14:1011
+     *
+     */
+    uint8_t dataIn[] = {
+        0b00001010,
+        0b00001011
+    };
+
+    size_t dataInBits = 8;
+    size_t startbitInOffset = 0;
+
+    size_t dataOutBits = 4;
+    size_t numValues = 2;
+
+    size_t startbitOutOffset = 7;
+
+    size_t numBytesDataOut =
+        (startbitOutOffset + dataOutBits * numValues + 7) / 8;
+
+    uint8_t dataOut[numBytesDataOut];
+    memset(dataOut, 0, numBytesDataOut);
+
+    byteConversionWithOffsets(
+        dataIn,
+        dataInBits,
+        dataOut,
+        startbitInOffset,
+        dataOutBits,
+        numValues,
+        startbitOutOffset
+    );
+
+    uint8_t expectedBytes[] = {
+        0b00000000,
+        0b01011010
+    };
+
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(
+        expectedBytes,
+        dataOut,
+        numBytesDataOut
+    );
+}
 
 void setUp() {}
 void tearDown() {}
@@ -497,5 +709,11 @@ int main(void) {
     RUN_TEST(test_calcNumberOfBytesForData_Delta_qBits5_N4_deltabits2);
     RUN_TEST(test_calcNumberOfBytesForData_Delta_qBits7_N10_deltabits5);
     RUN_TEST(test_calcNumberOfBytesForData_Delta_qBits5_N4_deltabits2);
+
+    RUN_TEST(testByteConversionWithInputOffset);
+    RUN_TEST(testByteConversionWithOutputOffset);
+    RUN_TEST(testByteConversionWithInputAndOutputOffset);
+    RUN_TEST(testByteConversionWithOutputOffsetCrossingByteBoundary);
+
     return UNITY_END();
 }
