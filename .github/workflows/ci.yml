@@ -319,6 +319,56 @@ jobs:
             --c examples/kws_raw/outputs/6class/c_predictions.npy \
             --dtype int32
 
+  # Compile-only ARM cross-build of the core src/ libraries. Surfaces the
+  # 32-bit-size_t bug class (e.g. 1<<32 shift UB, PR #297) and newlib
+  # behaviors (#160) that are structurally invisible on the LP64 host jobs.
+  # Toolchain = Arm GNU 13.3.Rel1, exactly the devenv gcc-arm-embedded-13
+  # version. Deliberately NON-required for now; propose making it required
+  # once it has been stable for a few weeks.
+  c-arm-cross-compile:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cmake + ninja
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build
+
+      - name: Cache Arm GNU toolchain 13.3.Rel1
+        id: arm-gcc-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/arm-gnu-toolchain
+          key: arm-gnu-toolchain-13.3.rel1-x86_64
+
+      - name: Install Arm GNU toolchain 13.3.Rel1 (matches devenv gcc-arm-embedded-13)
+        if: steps.arm-gcc-cache.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o /tmp/arm-gnu.tar.xz \
+            "https://developer.arm.com/-/media/Files/downloads/gnu/13.3.rel1/binrel/arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi.tar.xz"
+          mkdir -p ~/arm-gnu-toolchain
+          tar -xJf /tmp/arm-gnu.tar.xz -C ~/arm-gnu-toolchain --strip-components=1
+
+      - name: Assert toolchain version
+        run: |
+          export PATH="$HOME/arm-gnu-toolchain/bin:$PATH"
+          arm-none-eabi-gcc --version | head -1
+          major=$(arm-none-eabi-gcc -dumpversion | cut -d. -f1)
+          if [ "$major" != "13" ]; then
+            echo "::error::arm-none-eabi-gcc major is ${major}, expected 13 (devenv parity)."
+            exit 1
+          fi
+
+      - name: Configure (arm_cross preset)
+        run: |
+          export PATH="$HOME/arm-gnu-toolchain/bin:$PATH"
+          cmake --preset arm_cross
+
+      - name: Cross-compile core libraries (compile-only, -Werror)
+        run: |
+          export PATH="$HOME/arm-gnu-toolchain/bin:$PATH"
+          cmake --build --preset arm_cross
+
   python-test:
     runs-on: ubuntu-latest
 
