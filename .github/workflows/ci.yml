@@ -58,6 +58,16 @@ jobs:
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y cmake ninja-build gcc
 
+      - name: Assert pinned toolchain (gcc major 13)
+        run: |
+          gcc --version | head -1
+          cmake --version | head -1
+          major=$(gcc -dumpversion | cut -d. -f1)
+          if [ "$major" != "13" ]; then
+            echo "::error::CI gcc major is ${major}, expected 13. Gold tolerances are toolchain-sensitive (FMA contraction); a runner/toolchain bump must be a deliberate re-baseline, never an accident. See docs/conventions/toolchain-parity.md — do NOT loosen tolerances to make golds pass."
+            exit 1
+          fi
+
       - name: Install uv
         uses: astral-sh/setup-uv@v6
 
@@ -138,6 +148,16 @@ jobs:
 
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y cmake ninja-build gcc
+
+      - name: Assert pinned toolchain (gcc major 13)
+        run: |
+          gcc --version | head -1
+          cmake --version | head -1
+          major=$(gcc -dumpversion | cut -d. -f1)
+          if [ "$major" != "13" ]; then
+            echo "::error::CI gcc major is ${major}, expected 13. Gold tolerances are toolchain-sensitive (FMA contraction); a runner/toolchain bump must be a deliberate re-baseline, never an accident. See docs/conventions/toolchain-parity.md — do NOT loosen tolerances to make golds pass."
+            exit 1
+          fi
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6
