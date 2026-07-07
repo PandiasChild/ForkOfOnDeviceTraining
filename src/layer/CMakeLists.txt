@@ -100,6 +100,26 @@ target_link_libraries(LayerNorm PRIVATE
         Common
 )
 
+add_library(GroupNorm GroupNorm.c)
+target_include_directories(GroupNorm PUBLIC include)
+target_link_libraries(GroupNorm PRIVATE
+        DTypes
+        Tensor
+        Quantization
+        Add
+        Sub
+        Mul
+        Div
+        MinMax
+        Reduce
+        Arithmetic
+        ArithmeticType
+        ExecuteOp
+        Rounding
+        Layer
+        Common
+)
+
 add_library(Layer Layer.c)
 target_include_directories(Layer PUBLIC include)
 target_link_libraries(Layer PRIVATE
@@ -121,6 +141,7 @@ target_link_libraries(Layer PRIVATE
         QuantizationLayer
         Dropout
         LayerNorm
+        GroupNorm
 )
 
 add_library(Linear Linear.c)
@@ -197,6 +218,7 @@ target_link_libraries(CommonLayerLibs INTERFACE
         QuantizationLayer
         Dropout
         LayerNorm
+        GroupNorm
         Rounding
         Tensor
         Sgd
