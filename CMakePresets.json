@@ -15,7 +15,10 @@
     {
       "name": "host",
       "hidden": true,
-      "inherits": "gen_ninja"
+      "inherits": "gen_ninja",
+      "cacheVariables": {
+        "CMAKE_C_FLAGS": "-ffp-contract=fast"
+      }
     },
     {
       "name": "unit_test",
