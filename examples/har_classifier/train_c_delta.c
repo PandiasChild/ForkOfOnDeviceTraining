@@ -170,8 +170,8 @@ static tensorArray_t *buildOneHotLabels(tensorArray_t *intLabels) {
 /* Requantize FLOAT32 tensor `t` into targetQ's dtype in place (mixed_width_mlp
  * pattern): fresh buffer sized for t's element count, dynamic-quantize via * convertTensor, then
  * swap data + quantization pointers and free the old ones. shape/sparsity untouched.
- * Here targetQ is packed SYM@SYM_BITS, so the conversion is
- * convertFloatTensorToSymTensor (packFloatBufferAsSym).
+ * Here targetQ is packed DELTA@DELTA_BITS, so the conversion is
+ * convertFloatTensorToDeltaTensor (packFloatBufferAsSym).
  */
 static void requantizeTensorInPlace(tensor_t *t, quantization_t *targetQ) {
     size_t numElements = calcNumberOfElementsByTensor(t);
@@ -523,7 +523,7 @@ int main(void) {
                 wCtx.fails, gCtx.count, gCtx.fails);
         return 2;
     }
-    fprintf(stdout, "GATES PASS: weights+bias=SYM@%d grads=FLOAT32 (8 param + 8 grad checks)\n",
+    fprintf(stdout, "GATES PASS: weights+bias=DELTA@%d grads=FLOAT32 (8 param + 8 grad checks)\n",
             g_symBits);
     fflush(stdout);
 

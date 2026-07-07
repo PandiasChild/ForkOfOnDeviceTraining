@@ -25,6 +25,9 @@ in
       pkgs.zlib
     ];
 
+env.LOG_PATH_DELTA = "${config.env.DEVENV_ROOT}/examples/har_classifier/logs/with_deltas";
+env.LOG_PATH = "${config.env.DEVENV_ROOT}/examples/har_classifier/logs/without_deltas";
+
   languages.c.enable = true;
   #languages.c.compiler = gcc13;
   languages.python = {

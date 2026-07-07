@@ -43,6 +43,9 @@ uint8_t writeByte(uint8_t existingData, uint8_t data, uint8_t startbit, uint8_t 
 
 uint8_t readByte(uint8_t data, uint8_t startbit, uint8_t endbit);
 
+void byteConversionWithOffsets(uint8_t *dataIn, size_t dataInBits, uint8_t *dataOut, size_t startbitInOffset,
+                               size_t dataOutBits, size_t numValues, size_t startbitOutOffset);
+
 void byteConversion(uint8_t *dataIn, size_t dataInBits, uint8_t *dataOut, size_t dataOutBits,
                     size_t numValues);
 

@@ -96,6 +96,10 @@ size_t calcNumberOfBytesForData(quantization_t *q, size_t numberOfElements) {
         return (bitsPerElement * numberOfElements + 7) / 8;
     case BOOL:
         return (numberOfElements + 7) / 8;
+    case DELTA:
+        symQDeltaConfig_t *deltaQC = q->qConfig;
+        size_t totalBitAmount = ((numberOfElements-1) * deltaQC->deltabits) + deltaQC->qBits;
+        return (totalBitAmount + 7) / 8;
     default:
         PRINT_ERROR("Unknown QType!");
         exit(1);
@@ -185,16 +189,16 @@ int max(int a, int b) {
 int min(int a, int b) {
     return (a < b) ? a : b;
 }
-
-void byteConversion(uint8_t *dataIn, size_t dataInBits, uint8_t *dataOut, size_t dataOutBits,
-                    size_t numValues) {
-    memset(dataOut, 0, (numValues * dataOutBits - 1) / 8 + 1);
-    size_t dataOutIndex = 0;
-    size_t dataInIndex = 0;
-    int dataOutStartbit = 0;
-    int dataInStartbit = 0;
-    int dataInEndbit = (int)dataInBits;
-    int dataOutEndbit = (int)dataOutBits;
+//TODO: besserer kommentar
+/* will not be filled with 0 prior writing. caller needs to ensure that dataOut is clear*/
+void byteConversionWithOffsets(uint8_t *dataIn, size_t dataInBits, uint8_t *dataOut, size_t startbitInOffset,
+                               size_t dataOutBits, size_t numValues, size_t startbitOutOffset){
+    size_t dataOutIndex = startbitOutOffset/8;
+    size_t dataInIndex = startbitInOffset / 8;
+    int dataOutStartbit = startbitOutOffset % 8;
+    int dataInStartbit = startbitInOffset % 8;
+    int dataInEndbit = dataInStartbit + (int)dataInBits;
+    int dataOutEndbit =  dataOutStartbit + (int)dataOutBits;
     for (size_t i = 0; i < numValues; i++) {
         /*
         printf("\n");
@@ -263,6 +267,12 @@ void byteConversion(uint8_t *dataIn, size_t dataInBits, uint8_t *dataOut, size_t
         dataOutStartbit = dataOutEndbit % 8;
         dataOutEndbit = dataOutStartbit + dataOutBits;
     }
+}
+
+void byteConversion(uint8_t *dataIn, size_t dataInBits, uint8_t *dataOut, size_t dataOutBits,
+                    size_t numValues) {
+    memset(dataOut, 0, (numValues * dataOutBits - 1) / 8 + 1);
+    byteConversionWithOffsets(dataIn, dataInBits, dataOut, 0, dataOutBits, numValues, 0);
 }
 
 tensor_t *getParamFromParameter(parameter_t *parameter) {

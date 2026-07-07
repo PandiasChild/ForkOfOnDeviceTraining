@@ -64,6 +64,6 @@ void accumulateFloatIntoSymTensorFixedGrid(tensor_t *target, const float *inc, s
 void accumulateFloatIntoSymTensorRescale(tensor_t *target, const float *inc, size_t n);
 void accumulateFloatIntoAsymTensorRescale(tensor_t *target, const float *inc, size_t n);
 
-extern conversionFunction_t conversionMatrix[6][6];
+extern conversionFunction_t conversionMatrix[7][7];
 
 #endif // TENSOR_CONVERSION_H
