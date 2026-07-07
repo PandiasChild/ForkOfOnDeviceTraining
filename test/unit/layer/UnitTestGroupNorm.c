@@ -9,7 +9,9 @@
 #include "ArithmeticType.h"
 #include "ExecuteOp.h"
 #include "GroupNorm.h"
+#include "GroupNormApi.h"
 #include "Layer.h"
+#include "LayerQuant.h"
 #include "Quantization.h"
 #include "QuantizationApi.h"
 #include "StorageApi.h"
@@ -149,6 +151,7 @@ void testCalcOutputShapeIsIdentity(void) {
     size_t d1 = outShape->dimensions[1];
     size_t d2 = outShape->dimensions[2];
     size_t o0 = outShape->orderOfDimensions[0];
+    size_t o1 = outShape->orderOfDimensions[1];
     size_t o2 = outShape->orderOfDimensions[2];
 
     freeReservedMemory(outShape);
@@ -161,6 +164,7 @@ void testCalcOutputShapeIsIdentity(void) {
     TEST_ASSERT_EQUAL_UINT(6, d1);
     TEST_ASSERT_EQUAL_UINT(4, d2);
     TEST_ASSERT_EQUAL_UINT(0, o0);
+    TEST_ASSERT_EQUAL_UINT(1, o1);
     TEST_ASSERT_EQUAL_UINT(2, o2);
 }
 
@@ -355,9 +359,10 @@ void testBackwardAccumulatesGradsOverwritesDx(void) {
 }
 
 /* FLOAT32-backward guard set (spec §5.4): FLOAT32 forwardInput/loss/gamma
- * dtypes AND FLOAT32 gamma/beta grad storage — each violation exits(1).
- * whichSym selects the tensor built as SYM_INT32:
- *   0 forwardInput, 1 loss, 2 gamma param, 3 gamma grad, 4 beta grad. */
+ * dtypes AND FLOAT32 gamma/beta grad storage AND FLOAT32 propLoss (dx) storage —
+ * each violation exits(1). whichSym selects the tensor built as SYM_INT32:
+ *   0 forwardInput, 1 loss, 2 gamma param, 3 gamma grad, 4 beta grad,
+ *   5 propLoss (dx wire; groupNormBackwardFloat writes it via a raw float*). */
 static void runBackwardFloatGuard(int whichSym) {
     size_t dims[] = {1, 4, 2};
     float xVals[8] = {1.f, -1.f, 1.f, -1.f, 2.f, -2.f, 2.f, -2.f};
@@ -365,7 +370,8 @@ static void runBackwardFloatGuard(int whichSym) {
                                       : buildFloatTensorND(3, dims, xVals);
     tensor_t *loss = (whichSym == 1) ? buildSymInt32TensorND(3, dims, xVals)
                                      : buildFloatTensorND(3, dims, xVals);
-    tensor_t *propLoss = buildFloatTensorND(3, dims, NULL);
+    tensor_t *propLoss =
+        (whichSym == 5) ? buildSymInt32TensorND(3, dims, NULL) : buildFloatTensorND(3, dims, NULL);
 
     float ones[4] = {1.f, 1.f, 1.f, 1.f};
     parameter_t *gamma;
@@ -419,6 +425,9 @@ void testBackwardFloatGuardsSymGammaGrad(void) {
 }
 void testBackwardFloatGuardsSymBetaGrad(void) {
     runBackwardFloatGuard(4);
+}
+void testBackwardFloatGuardsSymPropLoss(void) {
+    runBackwardFloatGuard(5);
 }
 
 /* Build a minimal valid FLOAT32 layer around cfgOut (C=4, G=2) for the
@@ -690,6 +699,267 @@ void testSymBackwardRejectsOperandWiderThanInt12(void) {
     freeTensor(fwdIn);
 }
 
+void testFactoryBuildsGammaOnesBetaZerosAndForwards(void) {
+    groupNormInit_t init = {.numGroups = 2, .numChannels = 4, .eps = 0.0f};
+
+    quantization_t *fwdMath = quantizationInitFloat();
+    quantization_t *bwdMath = quantizationInitFloat();
+    quantization_t *wStore = quantizationInitFloat();
+    quantization_t *bStore = quantizationInitFloat();
+    layerQuant_t lq = {.forwardMath = arithmeticFromQuantization(fwdMath),
+                       .propLossMath = arithmeticFromQuantization(bwdMath),
+                       .outputQ = fwdMath,
+                       .propLossQ = bwdMath,
+                       .weightStorage = wStore,
+                       .biasStorage = bStore};
+
+    layer_t *layer = groupNormLayerInit(&init, &lq);
+
+    bool typeOk = (layer->type == GROUPNORM);
+    groupNormConfig_t *cfg = layer->config->groupNorm;
+    /* eps==0 -> factory substitutes default 1e-5 */
+    float capturedEps = cfg->eps;
+    /* gamma all ones, beta all zeros */
+    float g0 = ((float *)cfg->gamma->param->data)[0];
+    float g3 = ((float *)cfg->gamma->param->data)[3];
+    float b0 = ((float *)cfg->beta->param->data)[0];
+    bool gammaGradFloat = (cfg->gamma->grad->quantization->type == FLOAT32);
+    bool betaGradFloat = (cfg->beta->grad->quantization->type == FLOAT32);
+    bool fwdMapped = (cfg->outputQ == fwdMath);
+    bool bwdMapped = (cfg->propLossQ == bwdMath);
+    bool fwdMathOk = (cfg->forwardMath.type == ARITH_FLOAT32);
+    bool propLossMathOk = (cfg->propLossMath.type == ARITH_FLOAT32);
+
+    /* Forward smoke: B=1,C=4,T=2,G=2 -> sane output (not NaN/inf; exact gold
+     * values are the hand-wired UnitTestGroupNorm.c coverage above). */
+    size_t dims[] = {1, 4, 2};
+    tensor_t *in =
+        buildFloatTensorND(3, dims, (float[]){1.f, -1.f, 2.f, -2.f, 3.f, -3.f, 4.f, -4.f});
+    tensor_t *out = buildFloatTensorND(3, dims, NULL);
+    layerFunctions[GROUPNORM].forward(layer, in, out);
+    float y0 = ((float *)out->data)[0];
+
+    freeTensor(out);
+    freeTensor(in);
+    freeGroupNormLayer(layer);
+    freeQuantization(bStore);
+    freeQuantization(wStore);
+    freeQuantization(bwdMath);
+    freeQuantization(fwdMath);
+
+    TEST_ASSERT_TRUE(typeOk);
+    TEST_ASSERT_FLOAT_WITHIN(1e-9f, 1e-5f, capturedEps);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.f, g0);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.f, g3);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.f, b0);
+    TEST_ASSERT_TRUE(gammaGradFloat);
+    TEST_ASSERT_TRUE(betaGradFloat);
+    TEST_ASSERT_TRUE(fwdMapped);
+    TEST_ASSERT_TRUE(bwdMapped);
+    TEST_ASSERT_TRUE(fwdMathOk);
+    TEST_ASSERT_TRUE(propLossMathOk);
+    TEST_ASSERT_TRUE(y0 == y0); /* not NaN */
+}
+
+void testFactoryAppliesDefaultEpsWhenZero(void) {
+    groupNormInit_t init = {.numGroups = 1, .numChannels = 4, .eps = 0.0f};
+
+    quantization_t *q = quantizationInitFloat();
+    layerQuant_t lq = {.forwardMath = arithmeticFromQuantization(q),
+                       .propLossMath = arithmeticFromQuantization(q),
+                       .outputQ = q,
+                       .propLossQ = q,
+                       .weightStorage = q,
+                       .biasStorage = q};
+
+    layer_t *layer = groupNormLayerInit(&init, &lq);
+    groupNormConfig_t *cfg = layer->config->groupNorm;
+    float capturedEps = cfg->eps;
+
+    freeGroupNormLayer(layer);
+    freeQuantization(q);
+
+    TEST_ASSERT_FLOAT_WITHIN(1e-9f, 1e-5f, capturedEps);
+}
+
+void testFactoryOwningDeepCopiesQuantizations(void) {
+    groupNormInit_t init = {.numGroups = 1, .numChannels = 3, .eps = 1e-5f};
+
+    quantization_t *fwdMath = quantizationInitFloat();
+    quantization_t *bwdMath = quantizationInitFloat();
+    quantization_t *wStore = quantizationInitFloat();
+    quantization_t *bStore = quantizationInitFloat();
+    layerQuant_t lq = {.forwardMath = arithmeticFromQuantization(fwdMath),
+                       .propLossMath = arithmeticFromQuantization(bwdMath),
+                       .outputQ = fwdMath,
+                       .propLossQ = bwdMath,
+                       .weightStorage = wStore,
+                       .biasStorage = bStore};
+
+    layer_t *layer = groupNormLayerInitOwning(&init, &lq);
+    groupNormConfig_t *cfg = layer->config->groupNorm;
+
+    /* Owning: outputQ/propLossQ are fresh allocations, NOT the caller's. */
+    bool fwdIsCopy = (cfg->outputQ != fwdMath);
+    bool bwdIsCopy = (cfg->propLossQ != bwdMath);
+    bool fwdTypeOk = (cfg->outputQ->type == fwdMath->type);
+    bool owns = cfg->ownsQuantizations;
+
+    /* Caller drops its math quant configs IMMEDIATELY — the layer holds copies. */
+    freeQuantization(bStore);
+    freeQuantization(wStore);
+    freeQuantization(bwdMath);
+    freeQuantization(fwdMath);
+
+    /* Now tear down the layer — frees gamma/beta + the OWNED outputQ/propLossQ
+     * copies. No double-free (the caller's originals are already gone and were
+     * never aliased). */
+    freeGroupNormLayer(layer);
+
+    TEST_ASSERT_TRUE(fwdIsCopy);
+    TEST_ASSERT_TRUE(bwdIsCopy);
+    TEST_ASSERT_TRUE(fwdTypeOk);
+    TEST_ASSERT_TRUE(owns);
+}
+
+void testFactoryBorrowingDoesNotFreeCallerQuantizations(void) {
+    groupNormInit_t init = {.numGroups = 1, .numChannels = 3, .eps = 1e-5f};
+
+    quantization_t *fwdMath = quantizationInitFloat();
+    quantization_t *bwdMath = quantizationInitFloat();
+    quantization_t *wStore = quantizationInitFloat();
+    quantization_t *bStore = quantizationInitFloat();
+    layerQuant_t lq = {.forwardMath = arithmeticFromQuantization(fwdMath),
+                       .propLossMath = arithmeticFromQuantization(bwdMath),
+                       .outputQ = fwdMath,
+                       .propLossQ = bwdMath,
+                       .weightStorage = wStore,
+                       .biasStorage = bStore};
+
+    layer_t *layer = groupNormLayerInit(&init, &lq);
+    groupNormConfig_t *cfg = layer->config->groupNorm;
+
+    /* Borrowing: verbatim pointers, no ownership. */
+    bool fwdVerbatim = (cfg->outputQ == fwdMath);
+    bool bwdVerbatim = (cfg->propLossQ == bwdMath);
+    bool owns = cfg->ownsQuantizations;
+
+    /* Free the layer FIRST — it must NOT touch the borrowed math quantizations. */
+    freeGroupNormLayer(layer);
+
+    /* Caller frees its own quant configs AFTER. If freeGroupNormLayer had freed
+     * outputQ/propLossQ, these would be double-frees (ASan/valgrind catch them). */
+    freeQuantization(bStore);
+    freeQuantization(wStore);
+    freeQuantization(bwdMath);
+    freeQuantization(fwdMath);
+
+    TEST_ASSERT_TRUE(fwdVerbatim);
+    TEST_ASSERT_TRUE(bwdVerbatim);
+    TEST_ASSERT_FALSE(owns);
+}
+
+void testFactoryRejectsNonDivisibleGroups(void) {
+    groupNormInit_t init = {.numGroups = 3, .numChannels = 4, .eps = 1e-5f};
+
+    quantization_t *q = quantizationInitFloat();
+    layerQuant_t lq = {.forwardMath = arithmeticFromQuantization(q),
+                       .propLossMath = arithmeticFromQuantization(q),
+                       .outputQ = q,
+                       .propLossQ = q,
+                       .weightStorage = q,
+                       .biasStorage = q};
+
+    ASSERT_EXITS_WITH_FAILURE(groupNormLayerInit(&init, &lq));
+
+    freeQuantization(q);
+}
+
+void testFactorySymInt32StorageQuantizesGammaBeta(void) {
+    groupNormInit_t init = {.numGroups = 2, .numChannels = 4, .eps = 0.0f};
+
+    quantization_t *symQ = quantizationInitSymInt32(HALF_AWAY);
+    quantization_t *bwdMath = quantizationInitFloat();
+    layerQuant_t lq = {.forwardMath = arithmeticFromQuantization(symQ),
+                       .propLossMath = arithmeticFromQuantization(bwdMath),
+                       .outputQ = symQ,
+                       .propLossQ = bwdMath,
+                       .weightStorage = symQ,
+                       .biasStorage = symQ};
+
+    layer_t *layer = groupNormLayerInit(&init, &lq);
+    groupNormConfig_t *cfg = layer->config->groupNorm;
+
+    int32_t g[4];
+    int32_t b[4];
+    for (size_t i = 0; i < 4; i++) {
+        g[i] = ((int32_t *)cfg->gamma->param->data)[i];
+        b[i] = ((int32_t *)cfg->beta->param->data)[i];
+    }
+    float gScale = symScaleOf(cfg->gamma->param);
+    float bScale = symScaleOf(cfg->beta->param);
+    bool gammaGradFloat = (cfg->gamma->grad->quantization->type == FLOAT32);
+    bool betaGradFloat = (cfg->beta->grad->quantization->type == FLOAT32);
+
+    /* Forward smoke through the vtable on SYM input (factory-built params). */
+    size_t dims[] = {1, 4, 2};
+    tensor_t *in =
+        buildSymInt32TensorND(3, dims, (float[]){1.f, -1.f, 2.f, -2.f, 3.f, -3.f, 4.f, -4.f});
+    tensor_t *out = buildSymInt32TensorND(3, dims, NULL);
+    layerFunctions[GROUPNORM].forward(layer, in, out);
+    float outScale = symScaleOf(out);
+
+    freeTensor(out);
+    freeTensor(in);
+    freeGroupNormLayer(layer);
+    freeQuantization(bwdMath);
+    freeQuantization(symQ);
+
+    for (size_t i = 0; i < 4; i++) {
+        /* gamma=ones is OPERAND storage (default int12, #227): absmax=1 ->
+         * every mantissa = qMax = 2047, scale = 1/2047. beta=zeros -> 0, scale 1. */
+        TEST_ASSERT_EQUAL_INT(2047, g[i]);
+        TEST_ASSERT_EQUAL_INT(0, b[i]);
+    }
+    TEST_ASSERT_FLOAT_WITHIN(1e-9f, 1.0f / 2047.0f, gScale);
+    TEST_ASSERT_FLOAT_WITHIN(1e-9f, 1.0f, bScale);
+    TEST_ASSERT_TRUE(gammaGradFloat);
+    TEST_ASSERT_TRUE(betaGradFloat);
+    TEST_ASSERT_TRUE(outScale > 0.f);
+}
+
+void testFactoryOwningSymInt32DeepCopies(void) {
+    groupNormInit_t init = {.numGroups = 1, .numChannels = 3, .eps = 1e-5f};
+
+    quantization_t *symQ = quantizationInitSymInt32(HALF_AWAY);
+    quantization_t *bwdMath = quantizationInitFloat();
+    layerQuant_t lq = {.forwardMath = arithmeticFromQuantization(symQ),
+                       .propLossMath = arithmeticFromQuantization(bwdMath),
+                       .outputQ = symQ,
+                       .propLossQ = bwdMath,
+                       .weightStorage = symQ,
+                       .biasStorage = symQ};
+
+    layer_t *layer = groupNormLayerInitOwning(&init, &lq);
+    groupNormConfig_t *cfg = layer->config->groupNorm;
+
+    bool fwdIsCopy = (cfg->outputQ != symQ);
+    bool fwdIsSym = (cfg->outputQ->type == SYM_INT32);
+    bool fwdCfgIsCopy = (cfg->outputQ->qConfig != symQ->qConfig);
+    bool owns = cfg->ownsQuantizations;
+
+    /* Caller drops its quants immediately — the layer holds deep copies
+     * (incl. the symInt32QConfig_t; double-free/UAF surfaces under CI ASan). */
+    freeQuantization(bwdMath);
+    freeQuantization(symQ);
+    freeGroupNormLayer(layer);
+
+    TEST_ASSERT_TRUE(fwdIsCopy);
+    TEST_ASSERT_TRUE(fwdIsSym);
+    TEST_ASSERT_TRUE(fwdCfgIsCopy);
+    TEST_ASSERT_TRUE(owns);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testConfigStructIsPopulated);
@@ -713,9 +983,17 @@ int main(void) {
     RUN_TEST(testBackwardFloatGuardsSymGammaParam);
     RUN_TEST(testBackwardFloatGuardsSymGammaGrad);
     RUN_TEST(testBackwardFloatGuardsSymBetaGrad);
+    RUN_TEST(testBackwardFloatGuardsSymPropLoss);
     RUN_TEST(testSymForwardTwinSanityTwoGroups);
     RUN_TEST(testSymForwardRejectsOperandWiderThanInt12);
     RUN_TEST(testSymBackwardTwinSanityTwoGroups);
     RUN_TEST(testSymBackwardRejectsOperandWiderThanInt12);
+    RUN_TEST(testFactoryBuildsGammaOnesBetaZerosAndForwards);
+    RUN_TEST(testFactoryAppliesDefaultEpsWhenZero);
+    RUN_TEST(testFactoryOwningDeepCopiesQuantizations);
+    RUN_TEST(testFactoryBorrowingDoesNotFreeCallerQuantizations);
+    RUN_TEST(testFactoryRejectsNonDivisibleGroups);
+    RUN_TEST(testFactorySymInt32StorageQuantizesGammaBeta);
+    RUN_TEST(testFactoryOwningSymInt32DeepCopies);
     return UNITY_END();
 }
