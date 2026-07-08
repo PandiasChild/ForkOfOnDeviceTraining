@@ -20,11 +20,10 @@
  *     and grad storage FLOAT32 (weightGradStorage/biasGradStorage left NULL =
  *     per-layer FLOAT32 default). No sub-byte packing on the grad side here.
  *   - all activation + dx wires FLOAT32.
- *   - optimizer: SGD-M, qType tag SYM_INT32 — routes through sgdStepMSymInt32,
- *     the dtype-generic dequant->float-update->requant path. convertTensor
- *     dispatches on the ACTUAL param dtype, so the SYM param round-trips
- *     SYM->FLOAT32->SYM (both cells exist); the "SYM_INT32" tag is a misnomer
- *     for "quantized param, dequant-update-requant".
+ *   - optimizer: SGD-M; the update routes through executeOp (#278), which
+ *     dispatches per tensor on its ACTUAL dtype — the packed-SYM params
+ *     round-trip SYM->FLOAT32->SYM each step, FLOAT32 grads and momentum are
+ *     used directly. No optimizer-level dtype tag exists (#283).
  *
  * SYM_BITS / SEED / LR / MOMENTUM / EPOCHS / LOG_PATH are env-overridable. */
 
@@ -499,11 +498,11 @@ int main(void) {
         return 2;
     }
 
-    /* qType tag SYM_INT32 -> sgdStepMSymInt32, the dtype-generic
-     * dequant->float-update->requant path. convertTensor dispatches on each
-     * tensor's ACTUAL dtype: the packed-SYM weights round-trip SYM<->FLOAT32 per
-     * step (write-back stochastic via symRounding), while the FLOAT32 grad and
-     * the FLOAT32 momentum state (below) are read/written directly. */
+    /* The SGD-M update routes through executeOp (#278): prologue/epilogue
+     * dispatch on each tensor's ACTUAL dtype. The packed-SYM weights round-trip
+     * SYM<->FLOAT32 per step (write-back stochastic via symRounding), while the
+     * FLOAT32 grad and the FLOAT32 momentum state (below) are read/written
+     * directly. */
 #ifdef ODT_MEM_PROFILE
     size_t markBeforeOpt = memProfileMark();
 #endif

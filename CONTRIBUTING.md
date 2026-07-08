@@ -34,7 +34,7 @@ Read in this order:
 
 The C framework is layered; upper layers only reach lower ones:
 
-```
+```text
 src/userApi/          TrainingLoopApi, InferenceApi, TensorApi, SgdApi, StateDictApi, …
     ↓
 src/layer/ + src/loss_functions/ + src/optimizer/
@@ -184,7 +184,7 @@ affected examples' parity checks yourself.
 This repo is half of a two-repo pipeline with
 [es-ude/elastic-ai.creator](https://github.com/es-ude/elastic-ai.creator):
 
-```
+```text
 PyTorch model → torch2ir → IR + shapes → annotated IR → ir2c → C code → MCU
               ╰―― elastic-ai.creator ――╯               ╰――― this repo ―――╯
 ```

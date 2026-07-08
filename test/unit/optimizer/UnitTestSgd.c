@@ -933,15 +933,15 @@ void testSgdStepMFloatReadsPackedSymGradGeneric(void) {
 }
 
 void testSgdStepMMixedDtypeMovesBothParamsCorrectly(void) {
-    /* TDD RED (Task 1, optimizer epic #277, closes #278): sgdStep{,M} dispatch
-     * on optim->qtype today, so a model with BOTH a FLOAT32 and a SYM_INT32
-     * parameter cannot be trained correctly in one call -- sgdStepMFloat
-     * (the FLOAT32 arm) raw-casts param->param->data/state->data to float*
-     * unconditionally, so a SYM_INT32 param/state gets its int32 mantissas
-     * reinterpreted as float bit patterns (garbage). This must fail today;
-     * the executeOp-funnel rewrite (per-tensor dtype dispatch via the
-     * funnel's own conversionMatrix lookups, no qtype switch) is what makes
-     * it pass. */
+    /* TDD RED history (Task 1, optimizer epic #277, closed #278): pre-#278,
+     * sgdStep{,M} dispatched on the since-removed optim->qtype (#283), so a
+     * model with BOTH a FLOAT32 and a SYM_INT32 parameter could not be trained
+     * correctly in one call -- the then-existing sgdStepMFloat arm raw-cast
+     * param/state data to float* unconditionally, reinterpreting SYM_INT32
+     * mantissas as float bit patterns (garbage). The executeOp-funnel rewrite
+     * (per-tensor dtype dispatch via the funnel's own conversionMatrix
+     * lookups, no qtype switch) is what makes this pass -- this test pins that
+     * mixed-dtype contract. */
 
     /* Parameter A: FLOAT32 param + grad, shape [2]. */
     size_t *aDims = reserveMemory(1 * sizeof(size_t));

@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main, develop]
 
+# Least privilege: every job only reads the repo (build/test/cache; nothing
+# pushes, comments, or releases). Widen per-job if a future job needs more.
+permissions:
+  contents: read
+
 jobs:
   alloc-locality:
     runs-on: ubuntu-latest
@@ -346,6 +351,9 @@ jobs:
         run: |
           curl -fsSL -o /tmp/arm-gnu.tar.xz \
             "https://developer.arm.com/-/media/Files/downloads/gnu/13.3.rel1/binrel/arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi.tar.xz"
+          # Pinned from Arm's official .sha256asc for 13.3.rel1 (fetched 2026-07-08);
+          # supply-chain guard: fail before extracting a tampered tarball.
+          echo "95c011cee430e64dd6087c75c800f04b9c49832cc1000127a92a97f9c8d83af4  /tmp/arm-gnu.tar.xz" | sha256sum -c -
           mkdir -p ~/arm-gnu-toolchain
           tar -xJf /tmp/arm-gnu.tar.xz -C ~/arm-gnu-toolchain --strip-components=1
 
