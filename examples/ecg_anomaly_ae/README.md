@@ -53,7 +53,7 @@ After the train-from-scratch demo, `examples/ecg_anomaly_ae/` contains:
 ## Model
 
 - Input: `[1, 140]` (univariate ECG beat, 140 samples)
-- Encoder: `Conv1d(1→8, K=7, S=2, SAME)` → ReLU → `MaxPool1d(K=2, S=2)`
+- Encoder: `Conv1d(1→8, K=7, S=2, EXPLICIT pad=3)` → ReLU → `MaxPool1d(K=2, S=2)`
   → `Conv1d(8→16, K=5, SAME)` → ReLU → `AvgPool1d(K=5, S=5)` → `[16, 7]`
 - Decoder: `Conv1dTransposed(16→8, K=5, S=5)` → ReLU
   → `Conv1dTransposed(8→4, K=2, S=2)` → ReLU

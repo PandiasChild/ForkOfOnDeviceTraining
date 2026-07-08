@@ -7,8 +7,8 @@ native `[1, 16000]` waveform and **downsamples in-framework** — its first laye
 `AvgPool1d(K=16, S=16)`, a decimation-by-16 box filter that turns 16 kHz into
 1 kHz. Change `K` to change the effective rate (8 → 2 kHz, …) with no re-prep; the
 `AdaptiveAvgPool1d(1)` head is length-agnostic so the rest of the model is
-unchanged (only the three MaxPool nominal `inputLength`s in `train_c.c` need to
-track the new lengths).
+unchanged (only the three MaxPool nominal `inputLength`s and the three LayerNorm
+`normalizedShape`s in `train_c.c` need to track the new lengths).
 
 One binary, two modes — **bit-parity** (`BIT_PARITY=1`, the exact CI gate) and a
 **train-from-scratch** informational demo. See `kws_mfcc/README.md` for the mode

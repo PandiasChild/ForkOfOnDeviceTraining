@@ -49,7 +49,7 @@ After the train-from-scratch demo, `examples/har_classifier/` contains:
 ## Model
 
 - Input: `[9, 128]` (9 IMU channels, 2.56 s window @ 50 Hz)
-- 3 × `Conv1d → ReLU → MaxPool1d` blocks
+- 2 × `Conv1d → ReLU → MaxPool1d` blocks, then `Conv1d → ReLU`
 - Global `AvgPool1d` → `Flatten → Linear → Softmax → CrossEntropy`
 - ~10 K parameters
 
@@ -74,8 +74,8 @@ FLOAT32 trainer as the reference.
 
 Key design points (see `docs/CONVENTIONS.md` and the source comments):
 
-- **Weights + biases** are packed `SYM@x` (`ceil(x·N/8)` bytes → @16 = 50%, @8 =
-  75%, @4 = 87.5% smaller than FLOAT32's `4N`). Everything else — gradients,
+- **Weights + biases** are packed `SYM@x` (`ceil(x·N/8)` bytes → @12 = 62.5%,
+  @8 = 75%, @4 = 87.5% smaller than FLOAT32's `4N`). Everything else — gradients,
   momentum, activation wires — is FLOAT32.
 - **Momentum is FLOAT32**, decoupled from the packed-SYM params via the optimizer's
   own-config knob (`sgdMCreateOptim(..., momentumQuant)`). A packed-SYM momentum
@@ -106,7 +106,7 @@ heap/stack/RSS peaks, and the **reconciliation gap** (`heap_peak − mcu_total`,
 ### Offline sweep + honest aggregation
 
 ```bash
-# Full study: {float, sym@16, sym@12, sym@8, sym@4} × seed 1..10 = 50 runs.
+# Full study: {float, sym@12, sym@10, sym@8, sym@6, sym@4} × seed 1..10 = 60 runs.
 # LONG (~40 h offline; NOT wired into CI). Use --configs/--seeds/--epochs to smoke.
 uv run examples/har_classifier/run_matrix.py                 # full
 uv run examples/har_classifier/run_matrix.py --configs float sym8 --seeds 1 2 --epochs 2  # smoke
