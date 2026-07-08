@@ -359,12 +359,12 @@ void testScaleOptimizerGradients_SymInt32_DequantEquivalence() {
 }
 
 void testScaleOptimizerGradients_SymInt32_MomentumSgdAppliesScaledGradient() {
-    /* End-to-end: scaleOptimizerGradients into sgdStep with momentum > 0.
+    /* End-to-end: scaleOptimizerGradients into sgdStepM with momentum > 0.
      * The dequantized grad (int32 * scale) MUST equal int32_initial * scale_initial * factor
      * once scaling is applied, and momentum-SGD's parameter update (with
      * momentum=0 in the very first step) becomes -lr * scaled_grad. We assert
      * that the post-step parameter equals the expected dequantized update,
-     * proving scaleOptimizerGradients fed sgdStep correctly. */
+     * proving scaleOptimizerGradients fed sgdStepM correctly. */
     layer_t *model[1];
     parameter_t *w;
     parameter_t *b;

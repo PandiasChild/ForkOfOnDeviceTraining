@@ -4,9 +4,8 @@
 #include "Optimizer.h"
 
 /* No standalone `SGD` factory: sgdMCreateOptim() with momentumFactor == 0
- * is numerically identical to plain SGD (the momentum-state kernel reduces
- * to `state = grad + wd*param`, same as the plain-SGD kernel), at the cost
- * of one extra momentum-state tensor per parameter. See SgdApi.h (#277). */
+ * IS plain SGD -- the step runs a single stateless update op per parameter
+ * and the factory allocates no momentum-state buffers in this mode (#308). */
 
 /* Scales every gradient field of every parameter tracked by the optimizer
  * by the given factor in-place.

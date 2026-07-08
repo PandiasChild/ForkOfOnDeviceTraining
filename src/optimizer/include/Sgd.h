@@ -11,8 +11,6 @@ typedef struct sgd {
 
 void sgdInit(sgd_t *sgd, float learningRate, float momentumFactor, float weightDecay);
 
-void sgdStep(optimizer_t *optimizer);
-
 void sgdStepM(optimizer_t *optimizer);
 
 void sgdZeroGrad(optimizer_t *optimizer);

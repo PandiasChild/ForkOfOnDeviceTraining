@@ -16,7 +16,7 @@ typedef union optimImpl {
     sgd_t *sgd;
 } optimImpl_t;
 
-typedef enum { SGD, SGD_M } optimizerType_t;
+typedef enum { SGD_M } optimizerType_t;
 
 typedef struct optimizer {
     optimizerType_t type;

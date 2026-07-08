@@ -624,7 +624,7 @@ void testSgdStepSymInt32DoesNotRoundTripGrad(void) {
     ((symInt32QConfig_t *)g->quantization->qConfig)->scale = 0.05f;
 
     /* Minimal stack optimizer around one parameter; plain SGD, SYM_INT32 qtype.
-     * sgdStep dispatches on qtype; the plain-SGD SYM step reads only
+     * sgdStepM's unified momentum==0 fast path reads only
      * impl/sizeStates/parameter (+ sgd learningRate/weightDecay). */
     sgd_t sgd;
     sgdInit(&sgd, 0.1f, 0.0f, 0.0f);
@@ -633,10 +633,11 @@ void testSgdStepSymInt32DoesNotRoundTripGrad(void) {
     impl.sgd = &sgd;
     optimizer_t optim;
     optim.parameter = params;
+    optim.states = NULL;
     optim.sizeStates = 1;
     optim.impl = &impl;
 
-    sgdStep(&optim);
+    sgdStepM(&optim);
 
     /* CAPTURE -> free -> assert: grad mantissas + scale must be untouched. */
     int32_t m0 = ((int32_t *)g->data)[0];
@@ -650,6 +651,50 @@ void testSgdStepSymInt32DoesNotRoundTripGrad(void) {
     TEST_ASSERT_EQUAL_INT(-20, m1);
     TEST_ASSERT_EQUAL_INT(30, m2);
     TEST_ASSERT_FLOAT_WITHIN(1e-9f, 0.05f, gScale);
+}
+
+void testSgdStepMMomentumZeroIgnoresStatesAndUpdatesParam(void) {
+    /* #308 contract: momentumFactor == 0 makes the momentum state
+     * semantically nonexistent -- sgdStepM must not touch optim->states
+     * (explicitly NULL here; the factory allocates none in this mode) and
+     * must apply the plain update param -= lr*(grad + wd*param) in a single
+     * op. RED before the fast path: sgdStepM unconditionally derefs
+     * optim->states[i] -> NULL-deref crash. */
+    size_t *pDims = reserveMemory(1 * sizeof(size_t));
+    pDims[0] = 2;
+    size_t *pOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, pOrder);
+    shape_t *pShape = reserveMemory(sizeof(shape_t));
+    setShape(pShape, pDims, 1, pOrder);
+    tensor_t *p = initTensor(pShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(p, (float[]){1.f, -2.f}, 2);
+    tensor_t *g = gradInitFloat(p, NULL);
+    tensorFillFromFloatBuffer(g, (float[]){0.5f, 0.25f}, 2);
+    parameter_t *param = parameterInit(p, g);
+
+    sgd_t sgd;
+    sgdInit(&sgd, 0.1f, 0.0f, 0.5f); /* lr=0.1, momentum=0, wd=0.5 */
+    parameter_t *params[1] = {param};
+    optimImpl_t impl;
+    impl.sgd = &sgd;
+    optimizer_t optim;
+    optim.parameter = params;
+    optim.states = NULL; /* the #308 contract under test */
+    optim.sizeStates = 1;
+    optim.impl = &impl;
+
+    sgdStepM(&optim);
+
+    /* CAPTURE -> free -> assert (file convention). */
+    float p0 = ((float *)p->data)[0];
+    float p1 = ((float *)p->data)[1];
+    freeParameter(param);
+
+    /* param -= lr*(grad + wd*param):
+     * p0: 1.0  - 0.1*(0.5  + 0.5*1.0)  = 1.0 - 0.1*1.0    = 0.9
+     * p1: -2.0 - 0.1*(0.25 + 0.5*-2.0) = -2.0 - 0.1*-0.75 = -1.925 */
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.9f, p0);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, -1.925f, p1);
 }
 
 void testSgdZeroGradAsymSubByteZeroesAllPackedBytes(void) {
@@ -858,20 +903,19 @@ void testSgdMCreateOptimRejectsBoolGradStorage(void) {
 }
 
 void testSgdStepMFloatReadsPackedSymGradGeneric(void) {
-    /* Packed-SYM grad through the momentum step (generic-read guard, PR3
-     * #261). Hand-built optimizer (UnitTestSgd.c:545-556 stack pattern):
-     * FLOAT32 param, grad = SYM@8 seeded via ONE
-     * accumulateFloatIntoSymTensorFixedGrid call. The grad starts fresh
-     * (all-zero mantissa from initTensor's zero-fill), so the call triggers
-     * first-store grid derivation (spec §4.1): scale = absmax(inc)/qMax,
-     * qMax = 2^(8-1)-1 = 127. inc = {2.0, -1.5, 0.5} -> absmax = 2.0 ->
-     * scale = 2.0/127. codes = round(inc/scale):
+    /* Packed-SYM grad through the fast path (generic-read guard, PR3 #261).
+     * Hand-built optimizer (UnitTestSgd.c:545-556 stack pattern): FLOAT32
+     * param, grad = SYM@8 seeded via ONE accumulateFloatIntoSymTensorFixedGrid
+     * call. The grad starts fresh (all-zero mantissa from initTensor's
+     * zero-fill), so the call triggers first-store grid derivation (spec
+     * §4.1): scale = absmax(inc)/qMax, qMax = 2^(8-1)-1 = 127. inc = {2.0,
+     * -1.5, 0.5} -> absmax = 2.0 -> scale = 2.0/127. codes = round(inc/scale):
      *   2.0  / scale =  127.0   (exact) -> code  127
      *  -1.5  / scale =  -95.25          -> code  -95
      *   0.5  / scale =   31.75          -> code   32
      * (no rounding ties: HALF_AWAY only matters at x.5, none of these land
-     * on one). momentumFactor=0 and weightDecay=0 collapse the momentum
-     * update to state=grad, param -= lr*dequant(grad).
+     * on one). momentumFactor=0 routes through the #308 fast path (single op,
+     * optim->states untouched): param -= lr*dequant(grad).
      * Mutation: forcing the executeOp prologue to raw-cast the packed SYM bytes
      * instead of dequantizing them (its per-dtype operand conversion) misreads
      * the storage as raw floats -> garbage grad values -> RED. */
@@ -889,22 +933,17 @@ void testSgdStepMFloatReadsPackedSymGradGeneric(void) {
     float inc[] = {2.0f, -1.5f, 0.5f};
     accumulateFloatIntoSymTensorFixedGrid(g, inc, 3);
 
-    tensor_t *stateBuf = getTensorLike(p);
-
     /* Minimal stack optimizer around one parameter (file convention,
-     * UnitTestSgd.c:545-556): sgdStepM reads only impl/sizeStates/parameter/
-     * states (+ sgd learningRate/momentumFactor/weightDecay). */
+     * UnitTestSgd.c:545-556): momentumFactor==0 -> sgdStepM never reads
+     * optim->states (#308). */
     sgd_t sgd;
     sgdInit(&sgd, 0.1f, 0.0f, 0.0f);
     parameter_t *params[1] = {param};
-    tensor_t *stateBuffers[1] = {stateBuf};
-    states_t states0 = {.stateBuffers = stateBuffers, .statesPerParameter = 1};
-    states_t *states[1] = {&states0};
     optimImpl_t impl;
     impl.sgd = &sgd;
     optimizer_t optim;
     optim.parameter = params;
-    optim.states = states;
+    optim.states = NULL;
     optim.sizeStates = 1;
     optim.impl = &impl;
 
@@ -918,7 +957,6 @@ void testSgdStepMFloatReadsPackedSymGradGeneric(void) {
     float p1 = ((float *)p->data)[1];
     float p2 = ((float *)p->data)[2];
 
-    freeTensor(stateBuf);
     freeParameter(param);
 
     float lr = 0.1f;
@@ -933,15 +971,12 @@ void testSgdStepMFloatReadsPackedSymGradGeneric(void) {
 }
 
 void testSgdStepMMixedDtypeMovesBothParamsCorrectly(void) {
-    /* TDD RED history (Task 1, optimizer epic #277, closed #278): pre-#278,
-     * sgdStep{,M} dispatched on the since-removed optim->qtype (#283), so a
-     * model with BOTH a FLOAT32 and a SYM_INT32 parameter could not be trained
-     * correctly in one call -- the then-existing sgdStepMFloat arm raw-cast
-     * param/state data to float* unconditionally, reinterpreting SYM_INT32
-     * mantissas as float bit patterns (garbage). The executeOp-funnel rewrite
-     * (per-tensor dtype dispatch via the funnel's own conversionMatrix
-     * lookups, no qtype switch) is what makes this pass -- this test pins that
-     * mixed-dtype contract. */
+    /* Momentum==0 fast path (#308) over a mixed-dtype model: a FLOAT32 and a
+     * SYM_INT32 parameter must both update correctly from the SAME
+     * momentum-free sgdStepM call, with optim->states left NULL throughout.
+     * Per-target dtype dispatch happens in the executeOp funnel's epilogue
+     * (conversionMatrix lookup on OUT_WRITE), not via any qtype switch in
+     * sgdStepM itself -- this is what lets one code path serve both dtypes. */
 
     /* Parameter A: FLOAT32 param + grad, shape [2]. */
     size_t *aDims = reserveMemory(1 * sizeof(size_t));
@@ -969,24 +1004,17 @@ void testSgdStepMMixedDtypeMovesBothParamsCorrectly(void) {
     tensorFillFromFloatBuffer(gradB, (float[]){1.f, 1.f}, 2);
     parameter_t *B = parameterInit(paramB, gradB);
 
-    tensor_t *stateA = getTensorLike(paramA);
-    tensor_t *stateB = getTensorLike(paramB);
-
     /* Minimal stack optimizer around two heterogeneous-dtype parameters (file
-     * convention, UnitTestSgd.c:545-556 pattern extended to 2 params). */
+     * convention, UnitTestSgd.c:545-556 pattern extended to 2 params).
+     * momentumFactor==0 -> sgdStepM never reads optim->states (#308). */
     sgd_t sgd;
     sgdInit(&sgd, 0.1f, 0.0f, 0.0f);
     parameter_t *params[2] = {A, B};
-    tensor_t *stateBuffersA[1] = {stateA};
-    tensor_t *stateBuffersB[1] = {stateB};
-    states_t statesA = {.stateBuffers = stateBuffersA, .statesPerParameter = 1};
-    states_t statesB = {.stateBuffers = stateBuffersB, .statesPerParameter = 1};
-    states_t *states[2] = {&statesA, &statesB};
     optimImpl_t impl;
     impl.sgd = &sgd;
     optimizer_t optim;
     optim.parameter = params;
-    optim.states = states;
+    optim.states = NULL;
     optim.sizeStates = 2;
     optim.impl = &impl;
 
@@ -1008,13 +1036,11 @@ void testSgdStepMMixedDtypeMovesBothParamsCorrectly(void) {
     bAfter[0] = ((float *)bAfterFloat.data)[0];
     bAfter[1] = ((float *)bAfterFloat.data)[1];
 
-    freeTensor(stateA);
-    freeTensor(stateB);
     freeParameter(A);
     freeParameter(B);
 
-    /* A: pure FLOAT32 arithmetic, no quantization noise -- state = grad
-     * (momentum=0), param -= lr*state = param - 0.1*1.0. */
+    /* A: pure FLOAT32 arithmetic, no quantization noise -- fast path collapses
+     * to param -= lr*grad (weightDecay=0) = param - 0.1*1.0. */
     TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.9f, aAfter[0]);
     TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.9f, aAfter[1]);
 
@@ -1067,12 +1093,13 @@ static parameter_t *buildSymDeadZoneFixture(roundingMode_t roundingMode, float l
 
 void testSgdStepHalfAwayNeverEscapesSymDeadZone(void) {
     /* #279 control: HALF_AWAY (round-to-nearest) on the target's own qConfig.
-     * Every sgdStep re-decodes the target from its (unchanged) integer code,
-     * applies the same sub-ULP delta, and requants -- landing back on the
-     * exact same code every time. Mutation guard: if writeOut ever stopped
-     * re-deriving the target's value from its stored code (e.g. a latent
-     * float accumulator were added), this would go RED (code would drift and
-     * eventually move), so this test also pins that absence of hidden state. */
+     * Every sgdStepM momentum==0 step re-decodes the target from its
+     * (unchanged) integer code, applies the same sub-ULP delta, and requants
+     * -- landing back on the exact same code every time. Mutation guard: if
+     * writeOut ever stopped re-deriving the target's value from its stored
+     * code (e.g. a latent float accumulator were added), this would go RED
+     * (code would drift and eventually move), so this test also pins that
+     * absence of hidden state. */
     const float lr = 0.1f;
     parameter_t *param = buildSymDeadZoneFixture(HALF_AWAY, lr);
 
@@ -1086,12 +1113,13 @@ void testSgdStepHalfAwayNeverEscapesSymDeadZone(void) {
     impl.sgd = &sgd;
     optimizer_t optim;
     optim.parameter = params;
+    optim.states = NULL;
     optim.sizeStates = 1;
     optim.impl = &impl;
 
     int codeEverMoved = 0;
     for (int i = 0; i < 500; i++) {
-        sgdStep(&optim);
+        sgdStepM(&optim);
         if (((int32_t *)param->param->data)[1] != initialTargetCode) {
             codeEverMoved = 1;
         }
@@ -1131,12 +1159,13 @@ void testSgdStepSrHalfAwayEscapesSymDeadZone(void) {
     impl.sgd = &sgd;
     optimizer_t optim;
     optim.parameter = params;
+    optim.states = NULL;
     optim.sizeStates = 1;
     optim.impl = &impl;
 
     int codeEverMoved = 0;
     for (int i = 0; i < 500; i++) {
-        sgdStep(&optim);
+        sgdStepM(&optim);
         if (((int32_t *)param->param->data)[1] != initialTargetCode) {
             codeEverMoved = 1;
         }
@@ -1149,6 +1178,44 @@ void testSgdStepSrHalfAwayEscapesSymDeadZone(void) {
                              "dead-zone within 500 iterations");
 }
 
+void testSgdMCreateOptimMomentumZeroAllocatesNoStates(void) {
+    /* #308: momentumFactor == 0 must not allocate momentum-state buffers
+     * (real RAM on an MCU for a configuration that has no state). Contract:
+     * optim->states == NULL; freeOptimSgdM still frees all parameters.
+     * RED today: the factory unconditionally allocates states. */
+    quantization_t *layerQ = quantizationInitFloat();
+
+    size_t *wDims = reserveMemory(2 * sizeof(size_t));
+    wDims[0] = 1;
+    wDims[1] = 3;
+    size_t *wOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, wOrder);
+    shape_t *wShape = reserveMemory(sizeof(shape_t));
+    setShape(wShape, wDims, 2, wOrder);
+    tensor_t *wParam = initTensor(wShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(wParam, (float[]){1.f, 2.f, 3.f}, 3);
+    tensor_t *wGrad = gradInitFloat(wParam, NULL);
+    parameter_t *weights = parameterInit(wParam, wGrad);
+
+    layer_t *linear = buildBorrowedLinearLayer(weights, NULL, layerQ);
+    layer_t *model[] = {linear};
+
+    quantization_t *momentumQ = quantizationInitFloat();
+    optimizer_t *optim = sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 1, momentumQ);
+
+    /* CAPTURE -> free -> assert. */
+    states_t **capturedStates = optim->states;
+    size_t capturedSizeStates = optim->sizeStates;
+
+    freeOptimSgdM(optim);
+    freeLinearLayerShellOnly(linear);
+    freeQuantization(momentumQ);
+    freeQuantization(layerQ);
+
+    TEST_ASSERT_EQUAL_size_t(1, capturedSizeStates);
+    TEST_ASSERT_NULL(capturedStates);
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(testSgdMCreateOptim);
@@ -1159,6 +1226,7 @@ int main() {
     RUN_TEST(testLayerNormContributesTwoOptimizerStates);
     RUN_TEST(testSgdMCreateOptimRegistersLayerNormGammaAndBeta);
     RUN_TEST(testSgdStepSymInt32DoesNotRoundTripGrad);
+    RUN_TEST(testSgdStepMMomentumZeroIgnoresStatesAndUpdatesParam);
     RUN_TEST(testSgdMCreateOptimAdmitsPackedSymGradStorage);
     RUN_TEST(testSgdMCreateOptimRejectsBoolGradStorage);
     RUN_TEST(testSgdStepMFloatReadsPackedSymGradGeneric);
@@ -1167,5 +1235,6 @@ int main() {
     RUN_TEST(testSgdStepMMixedDtypeMovesBothParamsCorrectly);
     RUN_TEST(testSgdStepHalfAwayNeverEscapesSymDeadZone);
     RUN_TEST(testSgdStepSrHalfAwayEscapesSymDeadZone);
+    RUN_TEST(testSgdMCreateOptimMomentumZeroAllocatesNoStates);
     return UNITY_END();
 }

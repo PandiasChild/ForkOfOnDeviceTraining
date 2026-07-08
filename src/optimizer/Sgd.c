@@ -80,27 +80,34 @@ static void sgdMParamKernel(tensor_t **op, size_t n, tensor_t *rawOut, tensor_t 
     }
 }
 
-void sgdStep(optimizer_t *optim) {
-    sgd_t *sgd = optim->impl->sgd;
-    for (size_t i = 0; i < optim->sizeStates; i++) {
-        parameter_t *p = optim->parameter[i];
-        sgdUpdateCtx_t ctx = {.lr = sgd->learningRate, .weightDecay = sgd->weightDecay};
-        executeOp(
-            &(opSpec_t){
-                .kernel = sgdUpdateKernel,
-                .ctx = &ctx,
-                .inputs = (tensor_t *[]){p->param, p->grad},
-                .nInputs = 2,
-                .arithmetic = (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY},
-                .mode = OUT_WRITE,
-                .auxOut = NULL,
-            },
-            p->param);
-    }
-}
-
 void sgdStepM(optimizer_t *optim) {
     sgd_t *sgd = optim->impl->sgd;
+
+    /* momentumFactor == 0: momentum state is semantically nonexistent --
+     * the factory allocates no state buffers in this mode (optim->states
+     * may be NULL), so run the stateless single-op update instead of the
+     * two-op momentum path. Mathematically identical at momentum == 0:
+     * state would be exactly grad + wd*param, and param -= lr*state
+     * collapses to param -= lr*(grad + wd*param). (#308) */
+    if (sgd->momentumFactor == 0.0f) {
+        for (size_t i = 0; i < optim->sizeStates; i++) {
+            parameter_t *p = optim->parameter[i];
+            sgdUpdateCtx_t ctx = {.lr = sgd->learningRate, .weightDecay = sgd->weightDecay};
+            executeOp(
+                &(opSpec_t){
+                    .kernel = sgdUpdateKernel,
+                    .ctx = &ctx,
+                    .inputs = (tensor_t *[]){p->param, p->grad},
+                    .nInputs = 2,
+                    .arithmetic = (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY},
+                    .mode = OUT_WRITE,
+                    .auxOut = NULL,
+                },
+                p->param);
+        }
+        return;
+    }
+
     for (size_t i = 0; i < optim->sizeStates; i++) {
         parameter_t *p = optim->parameter[i];
         tensor_t *state = optim->states[i]->stateBuffers[0];
