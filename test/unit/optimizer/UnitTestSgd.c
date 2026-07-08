@@ -23,15 +23,17 @@
 
 #include <ReluApi.h>
 
-/* #283 contract: sgdMCreateOptim takes NO qtype_t -- the optimizer dispatches
- * per-tensor via executeOp since #278, so a creation-time qType is dead API.
- * _Generic picks 1 only for the exact 6-arg signature; anything else hits
- * default: 0 and fails the assert at compile time. */
+/* #310 contract: sgdMCreateOptim takes a by-value arithmetic_t updateMath
+ * (mirroring the layer-side forwardMath/weightGradMath knobs) as its last
+ * parameter -- the arithmetic the three SGD update ops run in. _Generic
+ * picks 1 only for the exact 7-arg signature; anything else fails at
+ * compile time. */
 _Static_assert(_Generic(&sgdMCreateOptim,
-                   optimizer_t *(*)(float, float, float, layer_t **, size_t, quantization_t *): 1,
+                   optimizer_t *(*)(float, float, float, layer_t **, size_t, quantization_t *,
+                                    arithmetic_t): 1,
                    default: 0),
-               "#283: sgdMCreateOptim must be (lr, momentumFactor, weightDecay, "
-               "model, sizeModel, momentumQuant)");
+               "#310: sgdMCreateOptim must be (lr, momentumFactor, weightDecay, "
+               "model, sizeModel, momentumQuant, updateMath)");
 
 void setUp() {}
 void tearDown() {}
@@ -149,7 +151,8 @@ void testSgdMCreateOptim() {
 
     quantization_t *momentumQ = quantizationInitFloat();
     optimizer_t *optim =
-        sgdMCreateOptim(lr, momentumFactor, weightDecay, model, sizeModel, momentumQ);
+        sgdMCreateOptim(lr, momentumFactor, weightDecay, model, sizeModel, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     sgd_t *sgd = optim->impl->sgd;
 
     linearConfig_t *linear0Conf = linear0->config->linear;
@@ -273,7 +276,8 @@ void testSGDStep() {
 
     quantization_t *momentumQ = quantizationInitFloat();
     optimizer_t *sgd =
-        sgdMCreateOptim(lr, momentumFactor, weightDecay, model, modelSize, momentumQ);
+        sgdMCreateOptim(lr, momentumFactor, weightDecay, model, modelSize, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
 
     optimizerFunctions_t sgdFns = optimizerFunctions[sgd->type];
     sgdFns.step(sgd);
@@ -363,7 +367,8 @@ void testSGDZeroGrad() {
 
     quantization_t *momentumQ = quantizationInitFloat();
     optimizer_t *sgd =
-        sgdMCreateOptim(lr, momentumFactor, weightDecay, model, modelSize, momentumQ);
+        sgdMCreateOptim(lr, momentumFactor, weightDecay, model, modelSize, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
 
     sgdZeroGrad(sgd);
 
@@ -422,7 +427,9 @@ void testSgdZeroGradOnSymInt32GradZeroesMantissasAndResetsScale(void) {
 
     layer_t *model[] = {layer};
     quantization_t *momentumQ = quantizationInitFloat();
-    optimizer_t *optim = sgdMCreateOptim(0.1f, 0.9f, 0.0f, model, 1, momentumQ);
+    optimizer_t *optim =
+        sgdMCreateOptim(0.1f, 0.9f, 0.0f, model, 1, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
 
     sgdZeroGrad(optim);
 
@@ -490,7 +497,9 @@ void testSgdMCreateOptimMomentumStateIsFloatIndependentOfSymInt32ParamDtype(void
     layer_t *model[1] = {layer};
 
     quantization_t *momentumQ = quantizationInitFloat();
-    optimizer_t *optim = sgdMCreateOptim(0.1f, 0.9f, 0.0f, model, 1, momentumQ);
+    optimizer_t *optim =
+        sgdMCreateOptim(0.1f, 0.9f, 0.0f, model, 1, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
 
     /* CAPTURE before frees. */
     qtype_t capturedWeightParamType =
@@ -562,7 +571,8 @@ void testSgdMCreateOptimRegistersLayerNormGammaAndBeta(void) {
 
     quantization_t *momentumQ = quantizationInitFloat();
     optimizer_t *optim =
-        sgdMCreateOptim(lr, momentumFactor, weightDecay, model, sizeModel, momentumQ);
+        sgdMCreateOptim(lr, momentumFactor, weightDecay, model, sizeModel, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
 
     /* CAPTURE before frees. */
     size_t capturedSizeStates = optim->sizeStates;
@@ -623,11 +633,12 @@ void testSgdStepSymInt32DoesNotRoundTripGrad(void) {
     ((int32_t *)g->data)[2] = 30;
     ((symInt32QConfig_t *)g->quantization->qConfig)->scale = 0.05f;
 
-    /* Minimal stack optimizer around one parameter; plain SGD, SYM_INT32 qtype.
-     * sgdStepM's unified momentum==0 fast path reads only
+    /* Minimal stack optimizer around one parameter; hand-assembled momentum==0
+     * optimizer; SYM_INT32 param. sgdStepM's unified momentum==0 fast path reads only
      * impl/sizeStates/parameter (+ sgd learningRate/weightDecay). */
     sgd_t sgd;
-    sgdInit(&sgd, 0.1f, 0.0f, 0.0f);
+    sgdInit(&sgd, 0.1f, 0.0f, 0.0f,
+            (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     parameter_t *params[1] = {param};
     optimImpl_t impl;
     impl.sgd = &sgd;
@@ -673,7 +684,9 @@ void testSgdStepMMomentumZeroIgnoresStatesAndUpdatesParam(void) {
     parameter_t *param = parameterInit(p, g);
 
     sgd_t sgd;
-    sgdInit(&sgd, 0.1f, 0.0f, 0.5f); /* lr=0.1, momentum=0, wd=0.5 */
+    sgdInit(&sgd, 0.1f, 0.0f, 0.5f,
+            (arithmetic_t){.type = ARITH_FLOAT32,
+                           .roundingMode = HALF_AWAY}); /* lr=0.1, momentum=0, wd=0.5 */
     parameter_t *params[1] = {param};
     optimImpl_t impl;
     impl.sgd = &sgd;
@@ -725,7 +738,8 @@ void testSgdZeroGradAsymSubByteZeroesAllPackedBytes(void) {
      * PR3, but sgdZeroGrad reads only sizeStates/parameter — this characterizes
      * the primitive PR3 will rely on. */
     sgd_t sgd;
-    sgdInit(&sgd, 0.1f, 0.0f, 0.0f);
+    sgdInit(&sgd, 0.1f, 0.0f, 0.0f,
+            (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     parameter_t *params[1] = {param};
     optimImpl_t impl;
     impl.sgd = &sgd;
@@ -778,7 +792,8 @@ void testSgdZeroGradSymSubByteZeroesAllPackedBytesAndResetsScale(void) {
     gSymQ->scale = 0.42f; /* poison the scale too */
 
     sgd_t sgd;
-    sgdInit(&sgd, 0.1f, 0.0f, 0.0f);
+    sgdInit(&sgd, 0.1f, 0.0f, 0.0f,
+            (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     parameter_t *params[1] = {param};
     optimImpl_t impl;
     impl.sgd = &sgd;
@@ -842,7 +857,9 @@ void testSgdMCreateOptimAdmitsPackedSymGradStorage(void) {
     layer_t *model[1] = {layer};
 
     quantization_t *momentumQ = quantizationInitFloat();
-    optimizer_t *optim = sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 1, momentumQ);
+    optimizer_t *optim =
+        sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 1, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
 
     /* CAPTURE before frees. */
     qtype_t capturedWGradType = weights->grad->quantization->type;
@@ -892,7 +909,9 @@ void testSgdMCreateOptimRejectsBoolGradStorage(void) {
     layer_t *model[1] = {layer};
 
     quantization_t *momentumQ = quantizationInitFloat();
-    ASSERT_EXITS_WITH_FAILURE(sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 1, momentumQ));
+    ASSERT_EXITS_WITH_FAILURE(
+        sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 1, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY}));
 
     /* Teardown (parent continues after the fork-based assert; file convention). */
     freeLinearLayerShellOnly(layer);
@@ -900,6 +919,72 @@ void testSgdMCreateOptimRejectsBoolGradStorage(void) {
     freeParameter(bias);
     freeQuantization(momentumQ);
     freeQuantization(fQ);
+}
+
+void testSgdMCreateOptimRejectsNonFloat32UpdateMath(void) {
+    /* #310: ARITH_SYM_INT32 update arithmetic is not implemented -- the
+     * factory must fail fast at creation, not corrupt at step time. Also
+     * pins that the factory actually forwards updateMath into sgdInit
+     * (a factory that dropped the arg would NOT exit -> RED). */
+    quantization_t *layerQ = quantizationInitFloat();
+
+    size_t *wDims = reserveMemory(2 * sizeof(size_t));
+    wDims[0] = 1;
+    wDims[1] = 2;
+    size_t *wOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, wOrder);
+    shape_t *wShape = reserveMemory(sizeof(shape_t));
+    setShape(wShape, wDims, 2, wOrder);
+    tensor_t *wParam = initTensor(wShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(wParam, (float[]){1.f, 2.f}, 2);
+    tensor_t *wGrad = gradInitFloat(wParam, NULL);
+    parameter_t *weights = parameterInit(wParam, wGrad);
+    layer_t *linear = buildBorrowedLinearLayer(weights, NULL, layerQ);
+    layer_t *model[] = {linear};
+    quantization_t *momentumQ = quantizationInitFloat();
+
+    ASSERT_EXITS_WITH_FAILURE(
+        sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 1, momentumQ,
+                        (arithmetic_t){.type = ARITH_SYM_INT32, .roundingMode = HALF_AWAY}));
+
+    freeParameter(weights);
+    freeLinearLayerShellOnly(linear);
+    freeQuantization(momentumQ);
+    freeQuantization(layerQ);
+}
+
+void testSgdStepMRejectsNonFloat32UpdateMath(void) {
+    /* #310 airtightness: the update kernels raw-cast operand data to
+     * float*, so a non-FLOAT32 prologue (e.g. int32 scratch codes) would be
+     * silently misread as float bit patterns. A hand-assembled optimizer
+     * bypasses the factory guard -- the step itself must also fail fast. */
+    size_t *pDims = reserveMemory(1 * sizeof(size_t));
+    pDims[0] = 1;
+    size_t *pOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, pOrder);
+    shape_t *pShape = reserveMemory(sizeof(shape_t));
+    setShape(pShape, pDims, 1, pOrder);
+    tensor_t *p = initTensor(pShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(p, (float[]){1.f}, 1);
+    tensor_t *g = gradInitFloat(p, NULL);
+    parameter_t *param = parameterInit(p, g);
+
+    sgd_t sgd;
+    sgdInit(&sgd, 0.1f, 0.0f, 0.0f,
+            (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
+    sgd.updateMath.type = ARITH_SYM_INT32; /* bypass the sgdInit guard */
+    parameter_t *params[1] = {param};
+    optimImpl_t impl;
+    impl.sgd = &sgd;
+    optimizer_t optim;
+    optim.parameter = params;
+    optim.states = NULL;
+    optim.sizeStates = 1;
+    optim.impl = &impl;
+
+    ASSERT_EXITS_WITH_FAILURE(sgdStepM(&optim));
+
+    freeParameter(param);
 }
 
 void testSgdStepMFloatReadsPackedSymGradGeneric(void) {
@@ -937,7 +1022,8 @@ void testSgdStepMFloatReadsPackedSymGradGeneric(void) {
      * UnitTestSgd.c:545-556): momentumFactor==0 -> sgdStepM never reads
      * optim->states (#308). */
     sgd_t sgd;
-    sgdInit(&sgd, 0.1f, 0.0f, 0.0f);
+    sgdInit(&sgd, 0.1f, 0.0f, 0.0f,
+            (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     parameter_t *params[1] = {param};
     optimImpl_t impl;
     impl.sgd = &sgd;
@@ -1008,7 +1094,8 @@ void testSgdStepMMixedDtypeMovesBothParamsCorrectly(void) {
      * convention, UnitTestSgd.c:545-556 pattern extended to 2 params).
      * momentumFactor==0 -> sgdStepM never reads optim->states (#308). */
     sgd_t sgd;
-    sgdInit(&sgd, 0.1f, 0.0f, 0.0f);
+    sgdInit(&sgd, 0.1f, 0.0f, 0.0f,
+            (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     parameter_t *params[2] = {A, B};
     optimImpl_t impl;
     impl.sgd = &sgd;
@@ -1107,7 +1194,7 @@ void testSgdStepHalfAwayNeverEscapesSymDeadZone(void) {
     TEST_ASSERT_EQUAL_INT(0, initialTargetCode); /* fixture guard */
 
     sgd_t sgd;
-    sgdInit(&sgd, lr, 0.f, 0.f);
+    sgdInit(&sgd, lr, 0.f, 0.f, (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     parameter_t *params[1] = {param};
     optimImpl_t impl;
     impl.sgd = &sgd;
@@ -1153,7 +1240,7 @@ void testSgdStepSrHalfAwayEscapesSymDeadZone(void) {
     TEST_ASSERT_EQUAL_INT(0, initialTargetCode); /* fixture guard */
 
     sgd_t sgd;
-    sgdInit(&sgd, lr, 0.f, 0.f);
+    sgdInit(&sgd, lr, 0.f, 0.f, (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     parameter_t *params[1] = {param};
     optimImpl_t impl;
     impl.sgd = &sgd;
@@ -1201,7 +1288,9 @@ void testSgdMCreateOptimMomentumZeroAllocatesNoStates(void) {
     layer_t *model[] = {linear};
 
     quantization_t *momentumQ = quantizationInitFloat();
-    optimizer_t *optim = sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 1, momentumQ);
+    optimizer_t *optim =
+        sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 1, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
 
     /* CAPTURE -> free -> assert. */
     states_t **capturedStates = optim->states;
@@ -1229,6 +1318,8 @@ int main() {
     RUN_TEST(testSgdStepMMomentumZeroIgnoresStatesAndUpdatesParam);
     RUN_TEST(testSgdMCreateOptimAdmitsPackedSymGradStorage);
     RUN_TEST(testSgdMCreateOptimRejectsBoolGradStorage);
+    RUN_TEST(testSgdMCreateOptimRejectsNonFloat32UpdateMath);
+    RUN_TEST(testSgdStepMRejectsNonFloat32UpdateMath);
     RUN_TEST(testSgdStepMFloatReadsPackedSymGradGeneric);
     RUN_TEST(testSgdZeroGradAsymSubByteZeroesAllPackedBytes);
     RUN_TEST(testSgdZeroGradSymSubByteZeroesAllPackedBytesAndResetsScale);

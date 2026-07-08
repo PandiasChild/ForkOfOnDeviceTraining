@@ -25,6 +25,9 @@ size_t memInstrumentGradBytes(optimizer_t *optim) {
 }
 
 size_t memInstrumentOptStateBytes(optimizer_t *optim) {
+    if (optim->states == NULL) { /* momentumFactor == 0: no state exists (#308) */
+        return 0;
+    }
     size_t total = 0;
     for (size_t i = 0; i < optim->sizeStates; i++) {
         states_t *s = optim->states[i];

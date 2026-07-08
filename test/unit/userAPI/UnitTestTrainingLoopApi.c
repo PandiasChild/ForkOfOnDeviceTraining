@@ -103,12 +103,13 @@ void testCalculateGradsSequential_MatchesPyTorch() {
     tensor_t *label2 = buildFloatTensor2D(1, 2, (float[]){23.f, 457.f}, 2);
 
     quantization_t *momentumQ = quantizationInitFloat();
-    optimizer_t *sgd = sgdMCreateOptim(0.01f, 0.f, 0.f, model, sizeModel, momentumQ);
+    optimizer_t *sgd =
+        sgdMCreateOptim(0.01f, 0.f, 0.f, model, sizeModel, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     optimizerFunctions_t sgdFns = optimizerFunctions[SGD_M];
     /* Pre-existing test hack: only step weights, leaving bias unchanged across
-     * iterations. We restore sizeStates to 2 before the free below so
-     * freeOptimSgdM cascades to BOTH registered parameters and their state
-     * buffers (otherwise parameter[1]/states[1] would leak). */
+     * iterations. freeOptimSgdM frees the registered parameters; no state
+     * buffers exist at momentum==0 (#308). */
     sgd->sizeStates = 1;
 
     for (size_t i = 0; i < 23; i++) {
@@ -544,7 +545,9 @@ void testTrainingEpochDefault_DoesOptimizerStepPerBatch() {
     }
 
     quantization_t *momentumQ = quantizationInitFloat();
-    optimizer_t *sgd = sgdMCreateOptim(0.01f, 0.f, 0.f, model, sizeModel, momentumQ);
+    optimizer_t *sgd =
+        sgdMCreateOptim(0.01f, 0.f, 0.f, model, sizeModel, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
 
     /* Use epoch dataset (batchSize=1 → 4 batches) */
     initEpochDataset();
@@ -608,7 +611,9 @@ void testTrainingEpochDefault_MinibatchStepsOncePerMinibatch() {
     }
 
     quantization_t *momentumQ = quantizationInitFloat();
-    optimizer_t *sgd = sgdMCreateOptim(0.01f, 0.f, 0.f, model, sizeModel, momentumQ);
+    optimizer_t *sgd =
+        sgdMCreateOptim(0.01f, 0.f, 0.f, model, sizeModel, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
 
     initEpochDataset();
     dataLoader_t *dl =
@@ -658,7 +663,9 @@ void testTrainingRun_ReturnsResult() {
     layer_t *model[] = {linear};
 
     quantization_t *momentumQ = quantizationInitFloat();
-    optimizer_t *sgd = sgdMCreateOptim(0.01f, 0.f, 0.f, model, 1, momentumQ);
+    optimizer_t *sgd =
+        sgdMCreateOptim(0.01f, 0.f, 0.f, model, 1, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
 
     initEpochDataset();
     dataLoader_t *trainDl =
@@ -722,7 +729,9 @@ void testTrainingRun_CallsCallbackEachEpochWithStats() {
     layer_t *model[] = {linear};
 
     quantization_t *momentumQ = quantizationInitFloat();
-    optimizer_t *sgd = sgdMCreateOptim(0.01f, 0.f, 0.f, model, 1, momentumQ);
+    optimizer_t *sgd =
+        sgdMCreateOptim(0.01f, 0.f, 0.f, model, 1, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
 
     initEpochDataset();
     dataLoader_t *trainDl =
@@ -893,7 +902,9 @@ void testTrainingEpochDefault_MeanScalesGradByOneOverNF() {
 
     /* momentumFactor=0 makes SGD_M behave like plain SGD. */
     quantization_t *momentumQ = quantizationInitFloat();
-    optimizer_t *sgd = sgdMCreateOptim(0.01f, 0.f, 0.f, model, 1, momentumQ);
+    optimizer_t *sgd =
+        sgdMCreateOptim(0.01f, 0.f, 0.f, model, 1, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
 
     initSingleSampleDataset();
     dataLoader_t *dl =
@@ -1255,7 +1266,9 @@ void testTrainingEpochDefault_SumBackwardSkipsOptimizerScaling() {
     /* Use a very small learning rate so SUM doesn't NaN — SUM gradients are
      * larger by N*F than MEAN gradients on the same data. */
     quantization_t *momentumQ = quantizationInitFloat();
-    optimizer_t *sgd = sgdMCreateOptim(0.001f, 0.f, 0.f, model, 1, momentumQ);
+    optimizer_t *sgd =
+        sgdMCreateOptim(0.001f, 0.f, 0.f, model, 1, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
 
     initEpochDataset();
     dataLoader_t *dl =
@@ -1312,7 +1325,9 @@ void testTrainingEpochDefault_MeanForwardSumBackward_MixedCombination() {
     layer_t *model[] = {linear};
 
     quantization_t *momentumQ = quantizationInitFloat();
-    optimizer_t *sgd = sgdMCreateOptim(0.001f, 0.f, 0.f, model, 1, momentumQ);
+    optimizer_t *sgd =
+        sgdMCreateOptim(0.001f, 0.f, 0.f, model, 1, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
 
     initEpochDataset();
     dataLoader_t *dl =
@@ -1441,7 +1456,9 @@ void testTrainingRun_HardcodesForwardReductionMean() {
     layer_t *model[] = {linear};
 
     quantization_t *momentumQ = quantizationInitFloat();
-    optimizer_t *sgd = sgdMCreateOptim(0.01f, 0.f, 0.f, model, 1, momentumQ);
+    optimizer_t *sgd =
+        sgdMCreateOptim(0.01f, 0.f, 0.f, model, 1, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
 
     initEpochDataset();
     dataLoader_t *trainDl =

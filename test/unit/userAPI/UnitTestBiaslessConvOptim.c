@@ -79,7 +79,9 @@ void testOptimizer_OneStateForBiaslessConv1d(void) {
     size_t numStates = calcTotalNumberOfStates(model, 1);
 
     quantization_t *momentumQuant = quantizationInitFloat();
-    optimizer_t *optim = sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 1, momentumQuant);
+    optimizer_t *optim =
+        sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 1, momentumQuant,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     bool optimNotNull = (optim != NULL);
 
     freeOptimSgdM(optim); /* frees the conv's weights parameter_t */
@@ -114,7 +116,9 @@ void testOptimizer_TwoStatesForBiasedConv1d(void) {
     size_t numStates = calcTotalNumberOfStates(model, 1);
 
     quantization_t *momentumQuant = quantizationInitFloat();
-    optimizer_t *optim = sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 1, momentumQuant);
+    optimizer_t *optim =
+        sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 1, momentumQuant,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     bool optimNotNull = (optim != NULL);
 
     freeOptimSgdM(optim); /* frees the conv's weights AND bias parameter_t */
@@ -148,7 +152,9 @@ void testOptimizer_OneStateForBiaslessConv1dTransposed(void) {
     size_t numStates = calcTotalNumberOfStates(model, 1);
 
     quantization_t *momentumQuant = quantizationInitFloat();
-    optimizer_t *optim = sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 1, momentumQuant);
+    optimizer_t *optim =
+        sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 1, momentumQuant,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     bool optimNotNull = (optim != NULL);
 
     freeOptimSgdM(optim); /* frees the convT's weights parameter_t (bias slot NULL) */
@@ -183,7 +189,9 @@ void testBiaslessLinearCountsOneStateAndOptimizerSurvives(void) {
     size_t numStates = calcTotalNumberOfStates(model, 1);
 
     quantization_t *momentumQuant = quantizationInitFloat();
-    optimizer_t *optim = sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 1, momentumQuant);
+    optimizer_t *optim =
+        sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 1, momentumQuant,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     bool optimNotNull = (optim != NULL);
 
     freeOptimSgdM(optim); /* frees the linear's weights parameter_t */

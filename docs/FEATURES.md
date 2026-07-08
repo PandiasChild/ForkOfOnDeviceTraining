@@ -61,23 +61,39 @@ Notes on the qualified cells:
 
 ## Optimizer (`optimizerType_t`)
 
-- **Two optimizers**: `SGD` (plain) and `SGD_M` (momentum). No Adam/RMSProp/Nesterov.
-  Only `sgdMCreateOptim` exists as a public factory and it **always** builds `SGD_M`;
-  a plain-`SGD` optimizer must be hand-assembled. `optimizerInit` is declared but
-  unimplemented (dangling).
-- **Arithmetic** — the update is **always computed in FLOAT32**. There is a SYM_INT32
-  dispatch arm, but it dequantizes params + grads to a stack float VLA, updates in
-  float, and requantizes in place. No integer/fixed-point update kernel exists.
-- **Quant grads** — ✓. Grads of dtype FLOAT32 / SYM_INT32 / SYM / ASYM are consumed;
-  FLOAT32 takes a raw-cast fast path, the rest dequantize to a float VLA. INT32 and
-  BOOL are rejected at optimizer-create time.
-- **Quant params** — FLOAT32 and SYM_INT32 only (in-place dequant→update→requant).
-  SYM/ASYM param storage hits the step's `switch` default and exits. `qtype` is a
-  single whole-optimizer dtype, **not** per-parameter — every param must share it.
+- **One optimizer type**: `SGD_M` — the plain-`SGD` enum value and its unreachable
+  code arm were deleted (#308). No Adam/RMSProp/Nesterov. `sgdMCreateOptim` is the
+  only public factory; passing `momentumFactor == 0.0f` is how a caller gets plain
+  SGD, not a separate type: the factory allocates **no** momentum-state buffers in
+  that case (`optim->states == NULL`) and `sgdStepM` runs a single stateless update
+  op per parameter instead of the two-op momentum path (mathematically identical at
+  momentum 0).
+- **Arithmetic** — `sgdMCreateOptim`'s `updateMath` parameter (by-value `arithmetic_t`,
+  #310) selects what the update kernels compute in. Only `ARITH_FLOAT32` is
+  implemented; any other type fails fast at optimizer-create time and again at
+  `sgdStepM` (no integer/fixed-point update kernel exists yet). Rounding ownership:
+  `updateMath.roundingMode` governs only the `executeOp` funnel's prologue (operand
+  conversion into the compute format; inert for FLOAT32) — the OUT_WRITE epilogue
+  rounds by each **target** tensor's own qConfig, e.g. a packed-SYM param's write-back
+  rounding comes from its own `SYM_ROUNDING`-controlled config, independent of
+  `updateMath`.
+- **Quant grads** — ✓. The update kernels route through `executeOp` like every other
+  op in the framework: the funnel dispatches per operand's ACTUAL dtype, so FLOAT32 /
+  SYM_INT32 / SYM / ASYM grads are all consumed with no optimizer-level dtype switch.
+  INT32 and BOOL grad storage are rejected at optimizer-create time.
+- **Quant params** — dtype dispatch is a funnel property, not a whole-optimizer
+  `qtype`: the OUT_WRITE epilogue requants into whatever dtype each parameter tensor
+  actually carries, so FLOAT32/SYM_INT32/SYM/ASYM params all round-trip through the
+  same code path. FLOAT32 and packed SYM are exercised today (har_classifier
+  trainers); SYM_INT32 and ASYM are implied by the generic executeOp/conversionMatrix
+  dispatch but not yet exercised by any example. Support is bounded only by what
+  `conversionMatrix` covers for that dtype (BOOL has no conversion cell in either
+  direction).
 - **Features**: learning rate, coupled L2 weight decay, classic heavy-ball momentum
   (no Nesterov/dampening), per-parameter momentum state (2 states for Linear/Conv/
-  ConvT/LayerNorm, 0 for the rest), dtype-aware `scaleOptimizerGradients` (O(1) scale
-  fold for quantized grads), and `sgdZeroGrad`. No LR schedule / bias-correction.
+  ConvT/LayerNorm, 0 for the rest, and 0 for every parameter when
+  `momentumFactor == 0`), dtype-aware `scaleOptimizerGradients` (O(1) scale fold for
+  quantized grads), and `sgdZeroGrad`. No LR schedule / bias-correction.
 
 ## Serialization (`src/serial/`)
 

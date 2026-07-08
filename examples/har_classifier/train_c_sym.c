@@ -20,10 +20,14 @@
  *     and grad storage FLOAT32 (weightGradStorage/biasGradStorage left NULL =
  *     per-layer FLOAT32 default). No sub-byte packing on the grad side here.
  *   - all activation + dx wires FLOAT32.
- *   - optimizer: SGD-M; the update routes through executeOp (#278), which
- *     dispatches per tensor on its ACTUAL dtype — the packed-SYM params
- *     round-trip SYM->FLOAT32->SYM each step, FLOAT32 grads and momentum are
- *     used directly. No optimizer-level dtype tag exists (#283).
+ *   - optimizer: SGD-M, routed through executeOp like every other op (#284) --
+ *     per-target dtype dispatch is a funnel property, not an optimizer-level
+ *     switch: the prologue converts operands to the update arithmetic and the
+ *     OUT_WRITE epilogue requants rawOut into each TARGET tensor's own dtype,
+ *     so the packed-SYM weight round-trips SYM->FLOAT32->SYM every step.
+ *     Update arithmetic itself = FLOAT32 via the `updateMath` knob (fail-fast
+ *     on anything else, #310); write-back rounding comes from the param's own
+ *     qConfig (`SYM_ROUNDING` env -> HALF_AWAY/SR_HALF_AWAY, #279/#284).
  *
  * SYM_BITS / SEED / LR / MOMENTUM / EPOCHS / LOG_PATH are env-overridable. */
 
@@ -498,11 +502,12 @@ int main(void) {
         return 2;
     }
 
-    /* The SGD-M update routes through executeOp (#278): prologue/epilogue
-     * dispatch on each tensor's ACTUAL dtype. The packed-SYM weights round-trip
-     * SYM<->FLOAT32 per step (write-back stochastic via symRounding), while the
-     * FLOAT32 grad and the FLOAT32 momentum state (below) are read/written
-     * directly. */
+    /* SGD-M routes through executeOp (#284): per-target dtype dispatch is a
+     * funnel property, so the packed-SYM weights round-trip SYM<->FLOAT32 each
+     * step, write-back rounding taken from each param's own qConfig
+     * (SYM_ROUNDING env, #279), while the FLOAT32 grad and momentum state
+     * (below) are read/written directly. Update arithmetic itself is FLOAT32
+     * via updateMath. */
 #ifdef ODT_MEM_PROFILE
     size_t markBeforeOpt = memProfileMark();
 #endif
@@ -513,7 +518,8 @@ int main(void) {
      * so ONLY the weights carry the memory win. */
     quantization_t *momentumQ = quantizationInitFloat();
     optimizer_t *sgd =
-        sgdMCreateOptim(g_lr, g_momentum, /*weightDecay*/ 0.0f, model, MODEL_SIZE, momentumQ);
+        sgdMCreateOptim(g_lr, g_momentum, /*weightDecay*/ 0.0f, model, MODEL_SIZE, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
 #ifdef ODT_MEM_PROFILE
     size_t markAfterOpt = memProfileMark(); /* optstate_b = delta */
 #endif

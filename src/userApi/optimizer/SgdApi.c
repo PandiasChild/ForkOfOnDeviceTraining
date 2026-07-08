@@ -23,13 +23,14 @@ static tensor_t *momentumStateInit(tensor_t *param, quantization_t *momentumQuan
 }
 
 optimizer_t *sgdMCreateOptim(float learningRate, float momentumFactor, float weightDecay,
-                             layer_t **model, size_t sizeModel, quantization_t *momentumQuant) {
+                             layer_t **model, size_t sizeModel, quantization_t *momentumQuant,
+                             arithmetic_t updateMath) {
     optimizer_t *optim = reserveMemory(sizeof(optimizer_t));
     optim->type = SGD_M;
 
     optimImpl_t *sgdImpl = reserveMemory(sizeof(optimImpl_t));
     sgd_t *sgd = reserveMemory(sizeof(sgd_t));
-    sgdInit(sgd, learningRate, momentumFactor, weightDecay);
+    sgdInit(sgd, learningRate, momentumFactor, weightDecay, updateMath);
     sgdImpl->sgd = sgd;
     optim->impl = sgdImpl;
 

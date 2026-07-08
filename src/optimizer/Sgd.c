@@ -2,6 +2,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "ArithmeticType.h"
@@ -10,10 +11,20 @@
 #include "Sgd.h"
 #include "Tensor.h"
 
-void sgdInit(sgd_t *sgd, float learningRate, float momentumFactor, float weightDecay) {
+void sgdInit(sgd_t *sgd, float learningRate, float momentumFactor, float weightDecay,
+             arithmetic_t updateMath) {
+    /* Only ARITH_FLOAT32 update arithmetic is implemented; fail at
+     * construction so a training run cannot start on an unimplemented
+     * arm (#310). */
+    if (updateMath.type != ARITH_FLOAT32) {
+        PRINT_ERROR("SGD updateMath: only ARITH_FLOAT32 is implemented "
+                    "(integer-arithmetic update numerics not yet designed, #310)");
+        exit(1);
+    }
     sgd->learningRate = learningRate;
     sgd->momentumFactor = momentumFactor;
     sgd->weightDecay = weightDecay;
+    sgd->updateMath = updateMath;
 }
 
 typedef struct {
@@ -26,11 +37,16 @@ typedef struct {
     float lr;
 } sgdMParamCtx_t; /* momentum: param */
 
-/* executeOp update kernels (design spec 2026-07-03 PR1b.2, D1): arithmetic is
- * always ARITH_FLOAT32, so the funnel prologue dequants every operand to
- * float and the epilogue requants rawOut into the target's own dtype
- * (OUT_WRITE) -- this is what gives the SGD update per-parameter dtype
- * dispatch without a qtype switch here. */
+/* executeOp update kernels. The update arithmetic comes from the sgd_t's
+ * updateMath knob (#310); only ARITH_FLOAT32 is implemented (guards in
+ * sgdInit + sgdStepM), so the funnel prologue dequants every operand to
+ * float and the OUT_WRITE epilogue requants rawOut into the target's own
+ * dtype -- per-parameter dtype dispatch without a qtype switch here.
+ * Rounding ownership (the #282 seam): updateMath.roundingMode governs the
+ * funnel PROLOGUE (operand conversion into the compute format; inert for
+ * ARITH_FLOAT32, dequantization does not round). The epilogue rounds by the
+ * TARGET tensor's own qConfig roundingMode -- that is where a SYM param's
+ * SR_HALF_AWAY dead-zone escape lives (#279, PR #284). */
 
 /* operands {param, grad} -> rawOut = param - lr*(grad + wd*param) */
 static void sgdUpdateKernel(tensor_t **op, size_t n, tensor_t *rawOut, tensor_t *aux,
@@ -83,6 +99,15 @@ static void sgdMParamKernel(tensor_t **op, size_t n, tensor_t *rawOut, tensor_t 
 void sgdStepM(optimizer_t *optim) {
     sgd_t *sgd = optim->impl->sgd;
 
+    /* Re-checked here (not only in sgdInit): the update kernels raw-cast
+     * operand data to float*, so a non-FLOAT32 prologue would be silently
+     * misread -- hand-assembled optimizers must hit the same wall (#310). */
+    if (sgd->updateMath.type != ARITH_FLOAT32) {
+        PRINT_ERROR("SGD updateMath: only ARITH_FLOAT32 is implemented "
+                    "(integer-arithmetic update numerics not yet designed, #310)");
+        exit(1);
+    }
+
     /* momentumFactor == 0: momentum state is semantically nonexistent --
      * the factory allocates no state buffers in this mode (optim->states
      * may be NULL), so run the stateless single-op update instead of the
@@ -99,7 +124,7 @@ void sgdStepM(optimizer_t *optim) {
                     .ctx = &ctx,
                     .inputs = (tensor_t *[]){p->param, p->grad},
                     .nInputs = 2,
-                    .arithmetic = (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY},
+                    .arithmetic = sgd->updateMath,
                     .mode = OUT_WRITE,
                     .auxOut = NULL,
                 },
@@ -119,7 +144,7 @@ void sgdStepM(optimizer_t *optim) {
                 .ctx = &sc,
                 .inputs = (tensor_t *[]){state, p->grad, p->param},
                 .nInputs = 3,
-                .arithmetic = (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY},
+                .arithmetic = sgd->updateMath,
                 .mode = OUT_WRITE,
                 .auxOut = NULL,
             },
@@ -132,7 +157,7 @@ void sgdStepM(optimizer_t *optim) {
                 .ctx = &pc,
                 .inputs = (tensor_t *[]){p->param, state},
                 .nInputs = 2,
-                .arithmetic = (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY},
+                .arithmetic = sgd->updateMath,
                 .mode = OUT_WRITE,
                 .auxOut = NULL,
             },

@@ -389,7 +389,9 @@ void testMultiLayerTraining_MultipleSteps_GradsAccumulate() {
 
     /* Optimizer takes references to w0/b0/w1/b1 — its free will cascade. */
     quantization_t *momentumQ = quantizationInitFloat();
-    optimizer_t *sgd = sgdMCreateOptim(0.01f, 0.f, 0.f, model, sizeModel, momentumQ);
+    optimizer_t *sgd =
+        sgdMCreateOptim(0.01f, 0.f, 0.f, model, sizeModel, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     optimizerFunctions_t sgdFns = optimizerFunctions[SGD_M];
 
     /* Input (1x3). */

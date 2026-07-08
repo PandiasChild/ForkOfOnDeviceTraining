@@ -106,7 +106,9 @@ static optimizer_t *buildOneLayerOptimWithGrads(layer_t **modelOut, parameter_t 
      * config is a transient template -- sgdMCreateOptim clones it per state
      * via getQLike, so it's safe to free right after the call. */
     quantization_t *momentumQ = quantizationInitFloat();
-    optimizer_t *optim = sgdMCreateOptim(0.01f, 0.f, 0.f, modelOut, 1, momentumQ);
+    optimizer_t *optim =
+        sgdMCreateOptim(0.01f, 0.f, 0.f, modelOut, 1, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     freeQuantization(momentumQ);
     return optim;
 }
@@ -259,7 +261,9 @@ static optimizer_t *buildSymInt32OneLayerOptim(layer_t **modelOut, parameter_t *
     *bOut = b;
 
     quantization_t *momentumQ = quantizationInitFloat();
-    optimizer_t *optim = sgdMCreateOptim(lr, momentum, 0.f, modelOut, 1, momentumQ);
+    optimizer_t *optim =
+        sgdMCreateOptim(lr, momentum, 0.f, modelOut, 1, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     freeQuantization(momentumQ);
     return optim;
 }
@@ -489,7 +493,9 @@ static optimizer_t *buildSymOneLayerOptim(layer_t **modelOut, parameter_t **wOut
     *bOut = b;
 
     quantization_t *momentumQ = quantizationInitFloat();
-    optimizer_t *optim = sgdMCreateOptim(lr, momentum, 0.f, modelOut, 1, momentumQ);
+    optimizer_t *optim =
+        sgdMCreateOptim(lr, momentum, 0.f, modelOut, 1, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     freeQuantization(momentumQ);
     return optim;
 }
@@ -616,7 +622,9 @@ static optimizer_t *buildAsymOneLayerOptim(layer_t **modelOut, parameter_t **wOu
     *bOut = b;
 
     quantization_t *momentumQ = quantizationInitFloat();
-    optimizer_t *optim = sgdMCreateOptim(lr, momentum, 0.f, modelOut, 1, momentumQ);
+    optimizer_t *optim =
+        sgdMCreateOptim(lr, momentum, 0.f, modelOut, 1, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     freeQuantization(momentumQ);
     return optim;
 }

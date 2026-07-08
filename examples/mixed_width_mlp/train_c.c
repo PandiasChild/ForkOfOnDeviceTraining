@@ -388,8 +388,9 @@ int main(void) {
         requantizeTensorInPlace(cfg->bias->param, mq.biasQ);
     }
 
-    optimizer_t *sgd = sgdMCreateOptim(LR, MOMENTUM, /*weightDecay*/ 0.0f, model, MODEL_SIZE,
-                                       quantizationInitFloat());
+    optimizer_t *sgd = sgdMCreateOptim(
+        LR, MOMENTUM, /*weightDecay*/ 0.0f, model, MODEL_SIZE, quantizationInitFloat(),
+        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     optimizerFunctions_t optimFns = optimizerFunctions[sgd->type];
 
     lossConfig_t lossCfg = defaultLossConfig(CROSS_ENTROPY);

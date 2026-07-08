@@ -1551,7 +1551,9 @@ void testLinearSymInt32GradAccumulatesOverTwoMicrobatchesAndSteps(void) {
     /* ---- Optimizer step on the SYM_INT32 layer ("updates the param without crashing"). ---- */
     layer_t *symModel[] = {symLayer};
     quantization_t *momentumQ = quantizationInitFloat();
-    optimizer_t *symOptim = sgdMCreateOptim(0.1f, 0.0f, 0.0f, symModel, 1, momentumQ);
+    optimizer_t *symOptim =
+        sgdMCreateOptim(0.1f, 0.0f, 0.0f, symModel, 1, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     optimizerFunctions[symOptim->type].step(symOptim);
     tensor_t *symWParam = symLayer->config->linear->weights->param;
     int paramFinite = 1;

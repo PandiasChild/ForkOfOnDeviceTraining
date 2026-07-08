@@ -15,9 +15,23 @@
  *
  * \param momentumQuant: Quantization template for momentum state buffers
  *        (caller-owned; not consumed -- cloned once per state via getQLike).
+ * \param updateMath: arithmetic_t the three update ops run in (by-value,
+ *        mirroring the layer-side per-op knobs). Pass
+ *        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY}
+ *        for the established behavior. Only ARITH_FLOAT32 is implemented;
+ *        any other type fails fast at creation (and again at step time)
+ *        until the integer-update numerics design lands. Rounding
+ *        ownership (#282): updateMath.roundingMode governs the funnel
+ *        prologue only (inert for ARITH_FLOAT32); the OUT_WRITE epilogue
+ *        rounds by each target tensor's own qConfig roundingMode.
+ *
+ * \note momentumFactor is creation-fixed: it determines whether momentum-state
+ *       buffers are allocated (momentumFactor == 0 → none, #308), so callers
+ *       must not mutate sgd_t.momentumFactor from 0 to nonzero after creation.
  */
 optimizer_t *sgdMCreateOptim(float learningRate, float momentumFactor, float weightDecay,
-                             layer_t **model, size_t sizeModel, quantization_t *momentumQuant);
+                             layer_t **model, size_t sizeModel, quantization_t *momentumQuant,
+                             arithmetic_t updateMath);
 
 void freeOptimSgdM(optimizer_t *sgdM);
 

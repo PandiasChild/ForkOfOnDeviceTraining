@@ -98,7 +98,9 @@ void testLinearLayerNormLinearOneTrainingStep(void) {
     float betaBefore = ((float *)norm->config->layerNorm->beta->param->data)[0];
 
     quantization_t *momentumQ = quantizationInitFloat();
-    optimizer_t *optim = sgdMCreateOptim(0.1f, 0.9f, 0.0f, model, 3, momentumQ);
+    optimizer_t *optim =
+        sgdMCreateOptim(0.1f, 0.9f, 0.0f, model, 3, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
 
     trainingStats_t *stats =
         calculateGradsSequential(model, 3, defaultLossConfig(MSE), REDUCTION_MEAN, input, label);
@@ -185,7 +187,9 @@ void testLayerNormSymInt32SingleLayerTrainingStep(void) {
     bool gradSymDtype = (lnSym->config->layerNorm->gamma->grad->quantization->type == SYM_INT32);
 
     quantization_t *momentumQSym = quantizationInitFloat();
-    optimizer_t *optimSym = sgdMCreateOptim(0.1f, 0.0f, 0.0f, modelSym, 1, momentumQSym);
+    optimizer_t *optimSym =
+        sgdMCreateOptim(0.1f, 0.0f, 0.0f, modelSym, 1, momentumQSym,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     trainingStats_t *statsSym = calculateGradsSequential(modelSym, 1, defaultLossConfig(MSE),
                                                          REDUCTION_MEAN, inSym, labelSym);
     sgdStepM(optimSym);
@@ -215,7 +219,9 @@ void testLayerNormSymInt32SingleLayerTrainingStep(void) {
     tensor_t *labelF = build2DFloat(2, 4, labelVals, 8);
 
     quantization_t *momentumQF = quantizationInitFloat();
-    optimizer_t *optimF = sgdMCreateOptim(0.1f, 0.0f, 0.0f, modelF, 1, momentumQF);
+    optimizer_t *optimF =
+        sgdMCreateOptim(0.1f, 0.0f, 0.0f, modelF, 1, momentumQF,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     trainingStats_t *statsF =
         calculateGradsSequential(modelF, 1, defaultLossConfig(MSE), REDUCTION_MEAN, inF, labelF);
     sgdStepM(optimF);
