@@ -262,9 +262,9 @@ void byteConversionWithOffsets(uint8_t *dataIn, size_t dataInBits, uint8_t *data
             }
             // printf("\n");
         }
-        dataInStartbit = dataInEndbit % 8;
+        dataInStartbit = dataInEndbit;
         dataInEndbit = dataInStartbit + dataInBits;
-        dataOutStartbit = dataOutEndbit % 8;
+        dataOutStartbit = dataOutEndbit;
         dataOutEndbit = dataOutStartbit + dataOutBits;
     }
 }
