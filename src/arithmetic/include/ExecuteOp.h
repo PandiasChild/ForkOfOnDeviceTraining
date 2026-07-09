@@ -46,7 +46,7 @@ typedef enum {
  *         converted; NULL for single-output ops (e.g. MaxPool1d's argmax
  *         indices live here). */
 typedef struct opSpec {
-    opKernelFn_t kernel;
+    opKernelFn_t kernel; // has nothing to do with convolution
     const void *ctx;
     tensor_t **inputs;
     size_t nInputs;

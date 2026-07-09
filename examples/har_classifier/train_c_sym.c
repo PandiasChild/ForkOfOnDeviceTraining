@@ -609,7 +609,13 @@ int main(void) {
      * those still hard-fail on a genuinely broken build. */
     fprintf(stdout, "train_loss first=%.6f last=%.6f\n", (double)g_firstTrainLoss,
             (double)g_lastTrainLoss);
-    if (g_lastTrainLoss < g_firstTrainLoss) {
+    if (g_epochs < 2) {
+        /* first/last are per-EPOCH means: with one epoch they are the same
+         * number by construction, so the comparison below would always WARN
+         * (bit the CI stack-watermark probe, which runs EPOCHS=1). */
+        fprintf(stdout, "CONVERGENCE SKIP: single-epoch run — first/last epoch means are "
+                        "identical by construction\n");
+    } else if (g_lastTrainLoss < g_firstTrainLoss) {
         fprintf(stdout, "CONVERGENCE OK: train loss decreased (%.6f -> %.6f)\n",
                 (double)g_firstTrainLoss, (double)g_lastTrainLoss);
     } else {
