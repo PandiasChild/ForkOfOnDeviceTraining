@@ -6,6 +6,15 @@ on:
   pull_request:
     branches: [main, develop]
 
+# develop and main are both push- and PR-targets, so a commit landing on
+# develop while a develop->main release PR is open fires push AND
+# pull_request for the identical SHA. Group by the actual commit (PR head
+# SHA if present, else the pushed SHA) so the redundant run is cancelled
+# instead of doubling CI cost/flake exposure.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
+
 # Least privilege: every job only reads the repo (build/test/cache; nothing
 # pushes, comments, or releases). Widen per-job if a future job needs more.
 permissions:
