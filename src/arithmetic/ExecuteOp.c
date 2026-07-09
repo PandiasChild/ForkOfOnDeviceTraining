@@ -47,53 +47,26 @@ void executeConvert(tensor_t *input, tensor_t *target) {
     writeOut(input, target);
 }
 
-/* PR3 packed SYM/ASYM arms (spec §4.1-4.2): the increment arrives as either
- * arithmetic representation (FLOAT32 or SYM_INT32); the packed primitives
- * below only take a float increment, so FLOAT32 intermediates are used
- * directly and SYM_INT32 intermediates are dequantized into VLA scratch --
- * the same idiom the FLOAT32 target arm already uses for its SYM_INT32
- * intermediate (above). Returns a pointer into either `intermediate->data`
- * or `scratch`, never both. */
-static const float *incrementAsFloatView(tensor_t *intermediate, uint8_t *scratch) {
-    if (intermediate->quantization->type == FLOAT32) {
-        return (const float *)intermediate->data;
-    }
-    quantization_t floatQ;
-    initFloat32Quantization(&floatQ);
-    tensor_t incFloat;
-    setTensorValuesForConversion(scratch, &floatQ, intermediate, &incFloat);
-    convertTensor(intermediate, &incFloat);
-    return (const float *)incFloat.data;
-}
-
-/* Phase 4, ACC modes. The SYM->SYM add is Strategy A via
- * addSymInt32TensorsInplace (bit-identical to Linear.c's weight-grad
- * accumulate); the FLOAT32-intermediate -> SYM arm first quantizes the
- * increment to operand width with the TARGET's roundingMode (reproduces the
- * former LayerNorm helper layerNormAccumulateGradSymInt32, deleted in PR1b;
- * semantics live here now). Fixed-scale reproduces the former
- * linearCalcBiasGradsSymInt32 behavior: rescale into the target's EXISTING
- * scale via rescaleIntoAccumulatorScale (spec D4 — honors the TARGET's
- * roundingMode; Conv1d.c:288 precedent), no clamp, scale never re-derived. */
+/* Phase 4, ACC modes. The SYM_INT32->SYM_INT32 add is Strategy A via
+ * accumulateSymInt32IntoSymInt32Rescale (bit-identical to Linear.c's
+ * weight-grad accumulate); the FLOAT32-intermediate -> SYM_INT32 arm first
+ * quantizes the increment to operand width with the TARGET's roundingMode
+ * (reproduces the former LayerNorm helper layerNormAccumulateGradSymInt32,
+ * deleted in PR1b; semantics live here now). Fixed-scale reproduces the
+ * former linearCalcBiasGradsSymInt32 behavior: rescale into the target's
+ * EXISTING scale via rescaleIntoAccumulatorScale (spec D4 — honors the
+ * TARGET's roundingMode; Conv1d.c:288 precedent), no clamp, scale never
+ * re-derived. The packed SYM/ASYM arms (spec §4.1-4.2) stream the increment
+ * chunk-wise via the tensor-typed accumulate*Into* entry points (#296 Stage
+ * 2) instead of staging a whole-tensor float view; a FLOAT32 intermediate is
+ * passed as a direct pointer (no view/VLA at all). */
 static void accumulateOut(tensor_t *intermediate, tensor_t *target, outputMode_t mode) {
     size_t n = calcNumberOfElementsByTensor(target);
 
     switch (target->quantization->type) {
-    case FLOAT32: {
-        if (intermediate->quantization->type == FLOAT32) {
-            addFloat32TensorsInplace(target, intermediate);
-            return;
-        }
-        /* SYM intermediate: dequantize, then exact float add. */
-        quantization_t floatQ;
-        initFloat32Quantization(&floatQ);
-        uint8_t incFloatData[(n > 0 ? n : 1) * sizeof(float)];
-        tensor_t incFloat;
-        setTensorValuesForConversion(incFloatData, &floatQ, intermediate, &incFloat);
-        convertTensor(intermediate, &incFloat);
-        addFloat32TensorsInplace(target, &incFloat);
+    case FLOAT32:
+        accumulateTensorIntoFloat32Inplace(target, intermediate);
         return;
-    }
     case SYM_INT32: {
         symInt32QConfig_t *targetQC = target->quantization->qConfig;
         if (targetQC->qMaxBits > ODT_SYM_GRAD_QMAXBITS) {
@@ -120,9 +93,15 @@ static void accumulateOut(tensor_t *intermediate, tensor_t *target, outputMode_t
         }
         /* OUT_ACC_DYNAMIC_RESCALE */
         if (intermediate->quantization->type == SYM_INT32) {
-            addSymInt32TensorsInplace(target, intermediate);
+            accumulateSymInt32IntoSymInt32Rescale(target, intermediate);
             return;
         }
+        /* #296 residual (spec §5): this arm quantizes the whole increment
+         * before the add — two sequential rounding blocks. An O(chunk)
+         * version would have to re-draw or reorder the SR stream (bit-parity
+         * break), so it keeps whole-tensor staging until an RNG-state
+         * snapshot/replay exists. Reached only by SYM_INT32-STORED grads,
+         * which #261 already discourages. */
         /* FLOAT32 intermediate: quantize to operand width first, roundingMode
          * from the TARGET's qConfig (LayerNorm.c:446-463 reproduction). */
         symInt32QConfig_t incQC;
@@ -143,12 +122,18 @@ static void accumulateOut(tensor_t *intermediate, tensor_t *target, outputMode_t
                         (unsigned)targetQC->qBits, (unsigned)ODT_SYM_GRAD_QMAXBITS);
             exit(1);
         }
-        uint8_t incFloatData[(n > 0 ? n : 1) * sizeof(float)];
-        const float *inc = incrementAsFloatView(intermediate, incFloatData);
-        if (mode == OUT_ACC_FIXED_SCALE) {
-            accumulateFloatIntoSymTensorFixedGrid(target, inc, n);
+        if (intermediate->quantization->type == FLOAT32) {
+            if (mode == OUT_ACC_FIXED_SCALE) {
+                accumulateFloatIntoSymTensorFixedGrid(target, (const float *)intermediate->data, n);
+            } else {
+                accumulateFloatIntoSymTensorRescale(target, (const float *)intermediate->data, n);
+            }
         } else {
-            accumulateFloatIntoSymTensorRescale(target, inc, n);
+            if (mode == OUT_ACC_FIXED_SCALE) {
+                accumulateTensorIntoSymFixedGrid(target, intermediate);
+            } else {
+                accumulateTensorIntoSymRescale(target, intermediate);
+            }
         }
         return;
     }
@@ -164,9 +149,11 @@ static void accumulateOut(tensor_t *intermediate, tensor_t *target, outputMode_t
                         "accumulate under OUT_ACC_DYNAMIC_RESCALE only (PR3 spec, #261)");
             exit(1);
         }
-        uint8_t incFloatData[(n > 0 ? n : 1) * sizeof(float)];
-        const float *inc = incrementAsFloatView(intermediate, incFloatData);
-        accumulateFloatIntoAsymTensorRescale(target, inc, n);
+        if (intermediate->quantization->type == FLOAT32) {
+            accumulateFloatIntoAsymTensorRescale(target, (const float *)intermediate->data, n);
+        } else {
+            accumulateTensorIntoAsymRescale(target, intermediate);
+        }
         return;
     }
     default:
@@ -255,6 +242,9 @@ void executeOp(const opSpec_t *spec, tensor_t *target) {
             }
         }
     }
+    /* outElems == 0 with aliasing: raw.data may be NULL for N=0 tensors
+     * (target->data straight from a calloc(1,0), #160) — safe because the
+     * kernel below iterates 0 elements. */
     uint8_t rawData[(aliasOut || outElems == 0 ? 1 : outElems) * sizeof(int32_t)];
     tensor_t raw;
     quantization_t rawQ;

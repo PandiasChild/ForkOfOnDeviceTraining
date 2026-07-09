@@ -19,18 +19,19 @@ import sys
 SLACK_B = 8192
 
 # Measured peaks are bit-exact across seeds AND sym widths (scratch is held
-# unpacked, width-independent). Provenance: #296 Stage 1 (bounded-scratch
-# PR A), 2026-07-09, devenv build, macOS arm64, EPOCHS=1 SEED=1 — float
-# 27328 B (peak moved to the conv3 weight-grad OUT_ACC op: accumulate
-# intermediates cannot alias, rawData 24576 B + frames), sym 100080 B
-# (converted-operand row + rawData + the 49152 B repack chain that #296
-# Stage 2 removes). Pre-Stage-1 values were float 99560 / sym 149008
-# (2026-07-07, develop 6a4da1ad, 60-run sweep).
+# unpacked, width-independent). Provenance: #296 Stage 2 (bounded-scratch
+# PR B), 2026-07-10, devenv build, macOS arm64, EPOCHS=1 SEED=1 — float
+# 27768 B (conv3 weight-grad OUT_ACC rawData 24576 B + frames incl. the
+# fixed conversion chunk buffers, +440 B vs Stage 1), sym 51968 B
+# (converted-operand row 24576 + rawData 24576 + frames; the 49152 B
+# repack chain is gone — conversions stream in O(chunk)). History:
+# pre-#296 float 99560 / sym 149008 (2026-07-07, 60-run sweep); Stage 1
+# float 27328 / sym 100080 (2026-07-09).
 # linux: deliberately uncalibrated until the CI job has produced peaks;
 # calibrate from the c-stack-watermark job logs, then set + --enforce in a
 # dedicated PR.
 BUDGETS_B: dict[str, dict[str, int | None]] = {
-    "darwin": {"float": 27328 + SLACK_B, "sym": 100080 + SLACK_B},
+    "darwin": {"float": 27768 + SLACK_B, "sym": 51968 + SLACK_B},
     "linux": {"float": None, "sym": None},
 }
 

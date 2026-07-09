@@ -60,7 +60,9 @@ typedef struct opSpec {
      * directly is safe. Zero-init (false) = conservative staging. Aliasing
      * additionally requires FLOAT32 arithmetic AND a FLOAT32 target — for any
      * other combination the epilogue's conversion/width-restore is load-
-     * bearing and the funnel always stages. */
+     * bearing and the funnel always stages. Alias detection is exact-base-
+     * pointer equality; overlapping sub-views (raw-pointer tensor wiring) are
+     * outside the contract. */
     bool writesInPlaceSafe;
 } opSpec_t;
 

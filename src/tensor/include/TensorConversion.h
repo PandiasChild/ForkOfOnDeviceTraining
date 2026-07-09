@@ -6,6 +6,14 @@
 typedef void (*conversionFunction_t)(tensor_t *inputTensor, tensor_t *outputTensor);
 
 void convertTensor(tensor_t *inputTensor, tensor_t *outputTensor);
+
+#define ODT_CONVERSION_CHUNK_ELEMS 256
+/* Streams `count` elements of src (FLOAT32/SYM_INT32/SYM/ASYM) starting at
+ * element `elemOffset` into out[] as dequantized floats. Contract:
+ * count <= ODT_CONVERSION_CHUNK_ELEMS, elemOffset % 8 == 0 (packed-width
+ * byte alignment); violations fail fast. */
+void dequantChunkToFloat(const tensor_t *src, size_t elemOffset, size_t count, float *out);
+
 /*! @brief SYM_INT32 -> SYM_INT32 requantization with a FRESH dynamic scale.
  *
  * Pass A (reads only): absMax = max_i |mantissa_i * inScale|.
@@ -63,6 +71,17 @@ void repackSymInt32ToSymNoRescale(tensor_t *inputTensor, tensor_t *outputTensor)
 void accumulateFloatIntoSymTensorFixedGrid(tensor_t *target, const float *inc, size_t n);
 void accumulateFloatIntoSymTensorRescale(tensor_t *target, const float *inc, size_t n);
 void accumulateFloatIntoAsymTensorRescale(tensor_t *target, const float *inc, size_t n);
+
+/* Tensor-typed accumulate entry points (#296 Stage 2) — stream the increment
+ * chunk-wise via dequantChunkToFloat; float* variants keep their signatures.
+ * accumulateSymInt32IntoSymInt32Rescale reproduces addSymInt32TensorsInplace's
+ * Strategy-A semantics (dequant both -> float add -> fresh-absmax requant with
+ * the TARGET's roundingMode) in O(chunk); Add.c stays untouched. */
+void accumulateTensorIntoSymFixedGrid(tensor_t *target, const tensor_t *increment);
+void accumulateTensorIntoSymRescale(tensor_t *target, const tensor_t *increment);
+void accumulateTensorIntoAsymRescale(tensor_t *target, const tensor_t *increment);
+void accumulateTensorIntoFloat32Inplace(tensor_t *target, const tensor_t *increment);
+void accumulateSymInt32IntoSymInt32Rescale(tensor_t *target, const tensor_t *increment);
 
 extern conversionFunction_t conversionMatrix[6][6];
 
