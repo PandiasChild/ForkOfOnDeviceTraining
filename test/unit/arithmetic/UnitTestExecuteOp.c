@@ -49,6 +49,23 @@ static tensor_t *buildFloat(size_t n, const float *values) {
     return t;
 }
 
+/* SYM_INT32 (HALF_AWAY, default qMaxBits=ODT_SYM_OPERAND_QMAXBITS) tensor
+ * seeded from float values via tensorFillFromFloatBuffer ->
+ * convertFloatTensorToSymInt32Tensor (absmax -> scale, round-clamp) — the
+ * same idiom buildSymInt32TensorND uses in the other funnel-consumer test
+ * files (UnitTestLayerNorm.c, UnitTestGroupNorm.c, UnitTestReduce.c). */
+static tensor_t *buildSymInt32Tensor1dFromFloats(size_t n, const float *values) {
+    size_t *dims = reserveMemory(sizeof(size_t));
+    dims[0] = n;
+    size_t *order = reserveMemory(sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, 1, order);
+    tensor_t *t = initTensor(shape, quantizationInitSymInt32(HALF_AWAY), NULL);
+    tensorFillFromFloatBuffer(t, (float *)values, n);
+    return t;
+}
+
 /* Packed sub-byte SYM tensor (PR3 targets), distinct from buildSym's
  * SYM_INT32 compute format above. Mantissas are packed verbatim via
  * byteConversion (the same seeding idiom UnitTestTensorConversion.c uses for
@@ -172,6 +189,50 @@ void testPrologueConvertsFloatOperandIntoSymArithmetic(void) {
     TEST_ASSERT_EQUAL_INT32_ARRAY(want, got, 3);
     TEST_ASSERT_EQUAL_FLOAT(wantScale, gotScale);
     TEST_ASSERT_EQUAL_FLOAT(0.5f, srcV0); /* source untouched */
+}
+
+static void probeSum3Kernel(tensor_t **operands, size_t nOperands, tensor_t *rawOut,
+                            tensor_t *auxOut, const void *ctx) {
+    (void)auxOut;
+    (void)ctx;
+    size_t n = calcNumberOfElementsByTensor(rawOut);
+    float *out = (float *)rawOut->data;
+    for (size_t i = 0; i < n; i++) {
+        out[i] = 0.f;
+        for (size_t k = 0; k < nOperands; k++) {
+            out[i] += ((const float *)operands[k]->data)[i];
+        }
+    }
+}
+
+/* inputs: FLOAT32 (passthrough), SYM_INT32 (row), SYM_INT32 (row) under
+ * ARITH_FLOAT32 -> result = elementwise sum of dequantized values. Pins the
+ * prologue's conversion correctness across MULTIPLE rows -- the offset
+ * arithmetic of the Task-2 rewrite lives or dies here. `b`/`c` are seeded
+ * so every mantissa round-trips losslessly at default qMaxBits=12 (absmax
+ * element hits qMax=2047 exactly; the third element is an exact multiple of
+ * the resulting quantum) -- so the sums below are exact, not just "close". */
+void testExecuteOpConvertsOnlyMismatchedOperands(void) {
+    tensor_t *a = buildFloat(3, (float[]){0.5f, 1.0f, -1.5f});
+    tensor_t *b = buildSymInt32Tensor1dFromFloats(3, (float[]){2.047f, -2.047f, 0.5f});
+    tensor_t *c = buildSymInt32Tensor1dFromFloats(3, (float[]){1.0f, 1.0f, 1.0f});
+    tensor_t *out = buildFloat(3, (float[]){0, 0, 0});
+    executeOp(
+        &(opSpec_t){.kernel = probeSum3Kernel,
+                    .inputs = (tensor_t *[]){a, b, c},
+                    .nInputs = 3,
+                    .arithmetic = (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY},
+                    .mode = OUT_WRITE,
+                    .auxOut = NULL},
+        out);
+    float r0 = ((float *)out->data)[0], r1 = ((float *)out->data)[1], r2 = ((float *)out->data)[2];
+    freeTensor(a);
+    freeTensor(b);
+    freeTensor(c);
+    freeTensor(out);
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, 3.547f, r0);
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, -0.047f, r1);
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.0f, r2);
 }
 
 /* OUT_WRITE SYM->SYM must be bit-identical to requantSymInt32Tensor (the
@@ -862,6 +923,106 @@ void testAccFixedScaleHonorsTargetSrRoundingMode(void) {
     TEST_ASSERT_FLOAT_WITHIN(1e-9f, 0.02f, gScale);
 }
 
+/* ---- #296 Stage 1: writesInPlaceSafe / rawData aliasing (OUT_WRITE only,
+ * FLOAT32 arithmetic + FLOAT32 target) ------------------------------------ */
+
+/* probeAddOneKernel is elementwise (reads in[i] before writing out[i]). */
+static const void *g_probeRawOutData;
+static void probeAddOneKernel(tensor_t **operands, size_t nOperands, tensor_t *rawOut,
+                              tensor_t *auxOut, const void *ctx) {
+    (void)nOperands;
+    (void)auxOut;
+    (void)ctx;
+    g_probeRawOutData = rawOut->data;
+    size_t n = calcNumberOfElementsByTensor(rawOut);
+    const float *in = (const float *)operands[0]->data;
+    float *out = (float *)rawOut->data;
+    for (size_t i = 0; i < n; i++) {
+        out[i] = in[i] + 1.0f;
+    }
+}
+
+void testExecuteOpAliasesTargetForMatchingFloatWrite(void) {
+    /* FLOAT32 arithmetic, FLOAT32 target, OUT_WRITE, target not an input:
+     * the kernel must receive target->data directly (no rawData staging). */
+    tensor_t *in = buildFloat(4, (float[]){1, 2, 3, 4});
+    tensor_t *out = buildFloat(4, (float[]){0, 0, 0, 0});
+    executeOp(
+        &(opSpec_t){.kernel = probeAddOneKernel,
+                    .ctx = NULL,
+                    .inputs = (tensor_t *[]){in},
+                    .nInputs = 1,
+                    .arithmetic = (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY},
+                    .mode = OUT_WRITE,
+                    .auxOut = NULL},
+        out);
+    /* CAPTURE -> free -> assert per file convention. */
+    const void *rawPtr = g_probeRawOutData;
+    float o1 = ((float *)out->data)[1];
+    freeTensor(in);
+    /* assert BEFORE freeing out so the pointer comparison target is stable */
+    TEST_ASSERT_EQUAL_PTR(out->data, rawPtr);
+    TEST_ASSERT_EQUAL_FLOAT(3.0f, o1);
+    freeTensor(out);
+}
+
+void testExecuteOpDoesNotAliasWhenTargetIsAnInput(void) {
+    /* target == inputs[0], flag NOT set -> funnel must stage via rawData. */
+    tensor_t *t = buildFloat(4, (float[]){1, 2, 3, 4});
+    executeOp(
+        &(opSpec_t){.kernel = probeAddOneKernel,
+                    .inputs = (tensor_t *[]){t},
+                    .nInputs = 1,
+                    .arithmetic = (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY},
+                    .mode = OUT_WRITE,
+                    .auxOut = NULL},
+        t);
+    const void *rawPtr = g_probeRawOutData;
+    float v2 = ((float *)t->data)[2];
+    TEST_ASSERT_TRUE_MESSAGE(rawPtr != t->data, "unsafe self-target must stage through rawData");
+    TEST_ASSERT_EQUAL_FLOAT(4.0f, v2);
+    freeTensor(t);
+}
+
+void testExecuteOpAliasesSelfTargetWithWritesInPlaceSafe(void) {
+    /* Same self-target op, flag SET (kernel is elementwise) -> direct write. */
+    tensor_t *t = buildFloat(4, (float[]){1, 2, 3, 4});
+    executeOp(
+        &(opSpec_t){.kernel = probeAddOneKernel,
+                    .inputs = (tensor_t *[]){t},
+                    .nInputs = 1,
+                    .arithmetic = (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY},
+                    .mode = OUT_WRITE,
+                    .auxOut = NULL,
+                    .writesInPlaceSafe = true},
+        t);
+    const void *rawPtr = g_probeRawOutData;
+    float v2 = ((float *)t->data)[2];
+    TEST_ASSERT_EQUAL_PTR(t->data, rawPtr);
+    TEST_ASSERT_EQUAL_FLOAT(4.0f, v2);
+    freeTensor(t);
+}
+
+void testExecuteOpNeverAliasesSymTarget(void) {
+    /* SYM_INT32 target under ARITH_FLOAT32: epilogue must width-restore via
+     * the conversionMatrix — aliasing would skip it. Assert staging happens. */
+    tensor_t *in = buildFloat(4, (float[]){1, 2, 3, 4});
+    tensor_t *out = buildSym(4, (int32_t[]){0, 0, 0, 0}, 1.0f);
+    executeOp(
+        &(opSpec_t){.kernel = probeAddOneKernel,
+                    .inputs = (tensor_t *[]){in},
+                    .nInputs = 1,
+                    .arithmetic = (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY},
+                    .mode = OUT_WRITE,
+                    .auxOut = NULL,
+                    .writesInPlaceSafe = true},
+        out);
+    const void *rawPtr = g_probeRawOutData;
+    freeTensor(in);
+    TEST_ASSERT_TRUE_MESSAGE(rawPtr != out->data, "non-FLOAT32 target must never alias");
+    freeTensor(out);
+}
+
 /* executeConvert SYM->SYM must requant through the conversionMatrix diagonal
  * (matches writeOut's OUT_WRITE trap) — raw accumulator-range mantissas come
  * out width-restored, bit-identical to conversionMatrix[SYM_INT32][SYM_INT32],
@@ -918,6 +1079,7 @@ int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testProloguePassesMatchingOperandThroughUntouched);
     RUN_TEST(testPrologueConvertsFloatOperandIntoSymArithmetic);
+    RUN_TEST(testExecuteOpConvertsOnlyMismatchedOperands);
     RUN_TEST(testOutWriteSymToSymBitEqualsDiagonalRequant);
     RUN_TEST(testOutWriteSymToFloatEqualsConvertTensor);
     RUN_TEST(testAccDynamicIntoFloatIsExactAndAccumulates);
@@ -937,5 +1099,9 @@ int main(void) {
     RUN_TEST(testAccFixedScaleHonorsTargetSrRoundingMode);
     RUN_TEST(testExecuteConvertSymToSymRequantsThroughDiagonal);
     RUN_TEST(testExecuteConvertFloatToSymMatchesConvertTensor);
+    RUN_TEST(testExecuteOpAliasesTargetForMatchingFloatWrite);
+    RUN_TEST(testExecuteOpDoesNotAliasWhenTargetIsAnInput);
+    RUN_TEST(testExecuteOpAliasesSelfTargetWithWritesInPlaceSafe);
+    RUN_TEST(testExecuteOpNeverAliasesSymTarget);
     return UNITY_END();
 }

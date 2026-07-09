@@ -17,7 +17,7 @@ def _log(tmp_path: Path, name: str, sym_bits: int, stack_peak_b) -> str:
 
 
 def test_under_budget_passes(tmp_path, capsys):
-    log = _log(tmp_path, "f.json", -1, 99560)
+    log = _log(tmp_path, "f.json", -1, 27328)  # #296 Stage 1 measured peak
     assert csw.main(["--platform", "darwin", log]) == 0
     assert "OK" in capsys.readouterr().out
 
@@ -34,7 +34,7 @@ def test_over_budget_fails_under_enforce(tmp_path):
 
 
 def test_sym_config_uses_sym_budget(tmp_path):
-    ok = _log(tmp_path, "s8.json", 8, 149008)
+    ok = _log(tmp_path, "s8.json", 8, 100080)  # #296 Stage 1 measured peak
     over = _log(tmp_path, "s4.json", 4, 158000)
     assert csw.main(["--enforce", "--platform", "darwin", ok]) == 0
     assert csw.main(["--enforce", "--platform", "darwin", over]) == 1

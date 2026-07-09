@@ -118,6 +118,9 @@ void sgdStepM(optimizer_t *optim) {
         for (size_t i = 0; i < optim->sizeStates; i++) {
             parameter_t *p = optim->parameter[i];
             sgdUpdateCtx_t ctx = {.lr = sgd->learningRate, .weightDecay = sgd->weightDecay};
+            /* #296 Stage 1: all three update kernels are elementwise (read i before
+             * write i), so the FLOAT32 fast paths may write params/state in place
+             * instead of staging through rawData. */
             executeOp(
                 &(opSpec_t){
                     .kernel = sgdUpdateKernel,
@@ -127,6 +130,7 @@ void sgdStepM(optimizer_t *optim) {
                     .arithmetic = sgd->updateMath,
                     .mode = OUT_WRITE,
                     .auxOut = NULL,
+                    .writesInPlaceSafe = true,
                 },
                 p->param);
         }
@@ -147,6 +151,7 @@ void sgdStepM(optimizer_t *optim) {
                 .arithmetic = sgd->updateMath,
                 .mode = OUT_WRITE,
                 .auxOut = NULL,
+                .writesInPlaceSafe = true,
             },
             state);
 
@@ -160,6 +165,7 @@ void sgdStepM(optimizer_t *optim) {
                 .arithmetic = sgd->updateMath,
                 .mode = OUT_WRITE,
                 .auxOut = NULL,
+                .writesInPlaceSafe = true,
             },
             p->param);
     }

@@ -189,53 +189,73 @@ void executeOp(const opSpec_t *spec, tensor_t *target) {
         exit(1);
     }
 
-    /* Phase 1 — prologue: convert mismatched operands into stack scratch.
-     * Sizes are data-dependent (VLAs), so scratch lives in this frame. */
-    size_t maxElems = 0;
+    /* Phase 1 — prologue: convert mismatched operands into stack scratch,
+     * sized per actually-converted operand (#296 Stage 1). All-matching ops
+     * (the whole FLOAT32 training path) allocate nothing. */
+    size_t rowBytes[EXECUTE_OP_MAX_INPUTS] = {0};
+    size_t totalScratchBytes = 0;
     for (size_t i = 0; i < nInputs; i++) {
-        size_t n = calcNumberOfElementsByTensor(inputs[i]);
-        if (n > maxElems) {
-            maxElems = n;
-        }
-    }
-    /* One worst-case-sized backing row per operand slot; 4 bytes/element for
-     * both FLOAT32 and SYM_INT32 arithmetic. */
-    uint8_t scratch[EXECUTE_OP_MAX_INPUTS][(maxElems > 0 ? maxElems : 1) * sizeof(int32_t)];
-    tensor_t scratchTensors[EXECUTE_OP_MAX_INPUTS];
-    quantization_t scratchQ[EXECUTE_OP_MAX_INPUTS];
-    symInt32QConfig_t scratchQC[EXECUTE_OP_MAX_INPUTS];
-    tensor_t *ops[EXECUTE_OP_MAX_INPUTS];
-
-    for (size_t i = 0; i < nInputs; i++) {
+        bool matches;
         switch (arithmetic.type) {
         case ARITH_FLOAT32:
-            if (inputs[i]->quantization->type == FLOAT32) {
-                ops[i] = inputs[i];
-                continue;
-            }
-            initFloat32Quantization(&scratchQ[i]);
+            matches = inputs[i]->quantization->type == FLOAT32;
             break;
         case ARITH_SYM_INT32:
-            if (inputs[i]->quantization->type == SYM_INT32) {
-                ops[i] = inputs[i];
-                continue;
-            }
-            initSymInt32QConfig(arithmetic.roundingMode, &scratchQC[i]);
-            initSymInt32Quantization(&scratchQC[i], &scratchQ[i]);
+            matches = inputs[i]->quantization->type == SYM_INT32;
             break;
         default:
             PRINT_ERROR("executeOp: arithmetic dtype %d not supported (FLOAT32/SYM_INT32)",
                         (int)arithmetic.type);
             exit(1);
         }
-        setTensorValuesForConversion(scratch[i], &scratchQ[i], inputs[i], &scratchTensors[i]);
+        if (!matches) {
+            size_t n = calcNumberOfElementsByTensor(inputs[i]);
+            rowBytes[i] = (n > 0 ? n : 1) * sizeof(int32_t);
+            totalScratchBytes += rowBytes[i];
+        }
+    }
+    uint8_t scratch[totalScratchBytes > 0 ? totalScratchBytes : 1];
+    tensor_t scratchTensors[EXECUTE_OP_MAX_INPUTS];
+    quantization_t scratchQ[EXECUTE_OP_MAX_INPUTS];
+    symInt32QConfig_t scratchQC[EXECUTE_OP_MAX_INPUTS];
+    tensor_t *ops[EXECUTE_OP_MAX_INPUTS];
+
+    size_t scratchOffset = 0;
+    for (size_t i = 0; i < nInputs; i++) {
+        if (rowBytes[i] == 0) {
+            ops[i] = inputs[i];
+            continue;
+        }
+        if (arithmetic.type == ARITH_FLOAT32) {
+            initFloat32Quantization(&scratchQ[i]);
+        } else { /* ARITH_SYM_INT32 — validated above */
+            initSymInt32QConfig(arithmetic.roundingMode, &scratchQC[i]);
+            initSymInt32Quantization(&scratchQC[i], &scratchQ[i]);
+        }
+        setTensorValuesForConversion(&scratch[scratchOffset], &scratchQ[i], inputs[i],
+                                     &scratchTensors[i]);
         convertTensor(inputs[i], &scratchTensors[i]);
         ops[i] = &scratchTensors[i];
+        scratchOffset += rowBytes[i];
     }
 
-    /* Phase 2 — intermediate in the arithmetic representation, target shape. */
+    /* Phase 2 — intermediate in the arithmetic representation, target shape.
+     * FLOAT32->FLOAT32 OUT_WRITE needs no epilogue conversion, so the kernel
+     * may emit straight into the target ("aliasing") unless the target is
+     * also a live operand and the kernel did not declare elementwise safety
+     * (#296 Stage 1). */
     size_t outElems = calcNumberOfElementsByTensor(target);
-    uint8_t rawData[(outElems > 0 ? outElems : 1) * sizeof(int32_t)];
+    bool aliasOut = spec->mode == OUT_WRITE && arithmetic.type == ARITH_FLOAT32 &&
+                    target->quantization->type == FLOAT32;
+    if (aliasOut && !spec->writesInPlaceSafe) {
+        for (size_t i = 0; i < nInputs; i++) {
+            if (ops[i]->data == target->data) {
+                aliasOut = false;
+                break;
+            }
+        }
+    }
+    uint8_t rawData[(aliasOut || outElems == 0 ? 1 : outElems) * sizeof(int32_t)];
     tensor_t raw;
     quantization_t rawQ;
     symInt32QConfig_t rawQC;
@@ -252,7 +272,8 @@ void executeOp(const opSpec_t *spec, tensor_t *target) {
                     (int)arithmetic.type);
         exit(1);
     }
-    setTensorValues(&raw, rawData, target->shape, &rawQ, target->sparsity);
+    setTensorValues(&raw, aliasOut ? target->data : rawData, target->shape, &rawQ,
+                    target->sparsity);
 
     /* Phase 3 — kernel emits raw; auxOut/ctx pass through untouched by the
      * funnel (auxOut is NEVER funnel-converted). */
@@ -261,7 +282,9 @@ void executeOp(const opSpec_t *spec, tensor_t *target) {
     /* Phase 4 — epilogue (target only; auxOut already final). */
     switch (spec->mode) {
     case OUT_WRITE:
-        writeOut(&raw, target);
+        if (!aliasOut) {
+            writeOut(&raw, target);
+        }
         break;
     case OUT_ACC_DYNAMIC_RESCALE:
     case OUT_ACC_FIXED_SCALE:

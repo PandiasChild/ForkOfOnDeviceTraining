@@ -1,6 +1,7 @@
 #ifndef ENV5_RUNTIME_EXECUTE_OP_H
 #define ENV5_RUNTIME_EXECUTE_OP_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdlib.h>
 
@@ -53,6 +54,14 @@ typedef struct opSpec {
     arithmetic_t arithmetic;
     outputMode_t mode;
     tensor_t *auxOut;
+    /* #296 Stage 1: opt-in for OUT_WRITE aliasing when the target is also an
+     * input. true == the kernel reads element i of every input before writing
+     * element i of the output (elementwise), so writing the target's storage
+     * directly is safe. Zero-init (false) = conservative staging. Aliasing
+     * additionally requires FLOAT32 arithmetic AND a FLOAT32 target — for any
+     * other combination the epilogue's conversion/width-restore is load-
+     * bearing and the funnel always stages. */
+    bool writesInPlaceSafe;
 } opSpec_t;
 
 void executeOp(const opSpec_t *spec, tensor_t *target);
