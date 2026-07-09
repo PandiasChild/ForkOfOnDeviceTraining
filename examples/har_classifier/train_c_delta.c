@@ -716,5 +716,5 @@ int main(int argc, char *argv[]) {
                 (double)g_firstTrainLoss, (double)g_lastTrainLoss, g_symBits, (double)g_lr);
     }
 
-    return 0;
+    return (double)testStats.accuracy;
 }
