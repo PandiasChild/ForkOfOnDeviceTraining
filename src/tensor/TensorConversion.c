@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <float.h>
 
 #include "Common.h"
 #include "DTypes.h"
@@ -17,6 +18,21 @@ static void packFitGuarded(const int32_t *src, size_t n, uint8_t *dst, size_t ds
 static void packFloatBufferAsSym(const float *values, size_t n, symQConfig_t *outQC, uint8_t *dst,
                                  const char *what);
 static void quantizeFloatToAsym(const float *values, size_t n, asymQConfig_t *outQC, uint8_t *dst);
+
+float saturatingSubstraction(float minuend, float subtrahend, float min, float max)
+{
+    if (subtrahend > 0) {
+        if (minuend < min + subtrahend) {
+            return min;
+        }
+    } else {
+        if (minuend > max + subtrahend) {
+            return max;
+        }
+    }
+    int32_t difference = minuend - subtrahend;
+    return difference;
+}
 
 void zeroTensorData(tensor_t *tensor) {
     size_t numberOfElements = calcNumberOfElementsByTensor(tensor);
@@ -521,12 +537,15 @@ static void packFitGuarded(const int32_t *src, size_t n, uint8_t *dst, size_t ds
     byteConversion((uint8_t *)tmp, 32, dst, dstBits, n);
 }
 
+
+
 static void packFloatBufferAsSymForDelta(const float *values, size_t n, symQDeltaConfig_t *outQC, uint8_t *dst,
                                  const char *what) {
     float absMax = findAbsMaxFloat((uint8_t *)values, n);
+    printf("absMax = %f\n", absMax);
     const float qMax = powf(2, (float)outQC->qBits - 1) - 1;
     const float qMin = -powf(2, (float)outQC->qBits - 1);
-    //TODO: qbits in maxbits ändern
+    //TODO: Qbits durch deltabits ersetzen:
     const float deltaMax = powf(2, (float)outQC->qBits - 1) - 1;
     const float deltaMin = -powf(2, (float)outQC->qBits - 1);
     float scale = (absMax == 0.f) ? 1.f : absMax / qMax;
@@ -539,7 +558,11 @@ static void packFloatBufferAsSymForDelta(const float *values, size_t n, symQDelt
         codes[i] = clampInt32(roundByMode(values[i] / scale, outQC->roundingMode), (int32_t)deltaMin,
                               (int32_t)deltaMax);
     }
-    packFitGuardedForDelta(codes, n, dst, outQC->qBits, outQC->deltabits,what);
+    printf("Delta -----------------------------------------------------------------------------------------\n");
+    /*
+    packFitGuardedForDelta(codes, n, dst, outQC->qBits, outQC->qBits,what);
+    */
+    packFitGuarded(codes, n, dst, outQC->qBits ,what);
 }
 
 static void packFloatBufferAsSym(const float *values, size_t n, symQConfig_t *outQC, uint8_t *dst,
@@ -555,7 +578,24 @@ static void packFloatBufferAsSym(const float *values, size_t n, symQConfig_t *ou
         codes[i] = clampInt32(roundByMode(values[i] / scale, outQC->roundingMode), (int32_t)qMin,
                               (int32_t)qMax);
     }
+    printf("SYM--------------------------------------------------------------------------------------------------\n");
     packFitGuarded(codes, n, dst, outQC->qBits, what);
+}
+
+static void packFloatBufferAsSym2(const float *values, size_t n, symQConfig_t *outQC, uint8_t *dst,
+                                 const char *what) {
+    float absMax = findAbsMaxFloat((uint8_t *)values, n);
+    const float qMax = powf(2, (float)outQC->qBits - 1) - 1;
+    const float qMin = -powf(2, (float)outQC->qBits - 1);
+    float scale = (absMax == 0.f) ? 1.f : absMax / qMax;
+    outQC->scale = scale;
+    printf("scale = %f\n", scale);
+    int32_t codes[n];
+    for (size_t i = 0; i < n; i++) {
+        codes[i] = clampInt32(roundByMode(values[i] / scale, outQC->roundingMode), (int32_t)qMin,
+                              (int32_t)qMax);
+    }
+    packFitGuardedForDelta(codes, n, dst, outQC->qBits, outQC->qBits, what);
 }
 
 void convertSymInt32TensorToSymTensor(tensor_t *inputTensor, tensor_t *outputTensor) {
@@ -609,9 +649,15 @@ void convertDeltaTensorToSymInt32Tensor(tensor_t *inputTensor, tensor_t *outputT
         out[i] = out[i] + out[i-1];
     }
 }
+/*
+void convertFloatTensorToSymTensor(tensor_t *inputTensor, tensor_t *outputTensor) {
+    size_t n = calcNumberOfElementsByTensor(inputTensor);
+    symQConfig_t *outQC = outputTensor->quantization->qConfig;
+    packFloatBufferAsSym((float *)inputTensor->data, n, outQC, outputTensor->data,
+                         "convertFloatTensorToSymTensor");
+}*/
 
 void convertFloatTensorToDeltaTensor(tensor_t *inputTensor, tensor_t *outputTensor){
-    printf("printdeltatensor\n");
     size_t numberOfElements = calcNumberOfElementsByTensor(inputTensor);
     symQDeltaConfig_t *outQC = outputTensor->quantization->qConfig;
     float *inputData = (float *)inputTensor->data;
@@ -623,6 +669,7 @@ void convertFloatTensorToDeltaTensor(tensor_t *inputTensor, tensor_t *outputTens
     for (int i= firstIndex; i <= lastIndex; i++){
         deltaData[i] = inputData[i] - inputData[i-1];
     }
+
     packFloatBufferAsSymForDelta(deltaData, numberOfElements, outQC, outputTensor->data,
                          "convertFloatTensorToDeltaTensor");
 
