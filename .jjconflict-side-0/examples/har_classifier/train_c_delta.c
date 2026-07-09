@@ -440,7 +440,7 @@ static int ensureDir(const char *p) {
     return 1;
 }
 
-int main(void) {
+int main(int argc, char *argv[]) {
 
     /*g_symBits = envInt("SYM_BITS", g_symBits);
     g_deltaBits = envInt("DELTA_BITS", g_deltaBits);

@@ -410,7 +410,7 @@ static int ensureDir(const char *p) {
     return 1;
 }
 
-int main(void) {
+int main(int argc, char *argv[]) {
 
     if (ensureDir("examples/har_classifier/logs/without_deltas") != 0) {
         return 1;
