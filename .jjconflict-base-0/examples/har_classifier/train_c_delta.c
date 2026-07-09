@@ -488,6 +488,7 @@ int main(void) {
     const char *roundingEnv = getenv("SYM_ROUNDING");
     roundingMode_t symRounding =
         (roundingEnv != NULL && strcmp(roundingEnv, "det") == 0) ? HALF_AWAY : SR_HALF_AWAY;
+    printf("roundingMode  %d\n", symRounding);
 
     quantTemplate_t sq = {
         .floatQ = quantizationInitFloat(),
@@ -533,10 +534,11 @@ int main(void) {
                                              /*shuffle*/ false, 0, /*dropLast*/ true);
     dataLoader_t *testLoader = dataLoaderInit(getTestSample, getTestSize, 1, NULL, NULL,
                                               /*shuffle*/ false, 0, /*dropLast*/ true);
-
+    printf("main: start evaluationEpochWithMetrics\n");
     /* ---- Gate: sane initial loss (~ln(6)=1.7918 for 6-class near-uniform) -- */
     epochStats_t initStats = evaluationEpochWithMetrics(model, MODEL_SIZE, CROSS_ENTROPY, valLoader,
                                                         inferenceWithLoss, REDUCTION_MEAN);
+    printf("main: done evaluationEpochWithMetrics\n");
     fprintf(stdout, "initial_val_loss=%.6f initial_val_acc=%.6f (expected ~%.4f)\n",
             (double)initStats.loss, (double)initStats.accuracy, log(6.0));
     fflush(stdout);
@@ -561,8 +563,8 @@ int main(void) {
      * a FLOAT32 accumulator keeps velocity precise so ONLY the weights carry the memory win.
      */
     quantization_t *momentumQ = quantizationInitFloat();
-    optimizer_t *sgd = sgdMCreateOptim(g_lr, g_momentum, /*weightDecay*/ 0.0f, model, MODEL_SIZE,
-                                       SYM_INT32, momentumQ);
+    printf("main: start sgdMCreateOptim\n");
+    optimizer_t *sgd = sgdMCreateOptim(g_lr, g_momentum, /*weightDecay*/ 0.0f, model, MODEL_SIZE, momentumQ);
 #ifdef ODT_MEM_PROFILE
     size_t markAfterOpt = memProfileMark(); /* optstate_b = delta */
 #endif
