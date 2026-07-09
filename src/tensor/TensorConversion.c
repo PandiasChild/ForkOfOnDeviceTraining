@@ -545,9 +545,8 @@ static void packFloatBufferAsSymForDelta(const float *values, size_t n, symQDelt
     printf("absMax = %f\n", absMax);
     const float qMax = powf(2, (float)outQC->qBits - 1) - 1;
     const float qMin = -powf(2, (float)outQC->qBits - 1);
-    //TODO: Qbits durch deltabits ersetzen:
-    const float deltaMax = powf(2, (float)outQC->qBits - 1) - 1;
-    const float deltaMin = -powf(2, (float)outQC->qBits - 1);
+    const float deltaMax = powf(2, (float)outQC->deltabits - 1) - 1;
+    const float deltaMin = -powf(2, (float)outQC->deltabits - 1);
     float scale = (absMax == 0.f) ? 1.f : absMax / qMax;
     printf("scale = %f\n", scale);
     outQC->scale = scale;
@@ -559,10 +558,9 @@ static void packFloatBufferAsSymForDelta(const float *values, size_t n, symQDelt
                               (int32_t)deltaMax);
     }
     printf("Delta -----------------------------------------------------------------------------------------\n");
-    /*
-    packFitGuardedForDelta(codes, n, dst, outQC->qBits, outQC->qBits,what);
-    */
-    packFitGuarded(codes, n, dst, outQC->qBits ,what);
+
+    packFitGuardedForDelta(codes, n, dst, outQC->qBits, outQC->deltabits,what);
+
 }
 
 static void packFloatBufferAsSym(const float *values, size_t n, symQConfig_t *outQC, uint8_t *dst,
