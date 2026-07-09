@@ -446,6 +446,7 @@ int main(int argc, char *argv[]) {
     g_deltaBits = envInt("DELTA_BITS", g_deltaBits);
     g_lr = envFloat("LR", g_lr);
     g_momentum = envFloat("MOMENTUM", g_momentum);
+    g_momentum = envFloat("MOMENTUM", g_momentum);
     g_epochs = envInt("EPOCHS", g_epochs);
     g_seed = (unsigned)envInt("SEED", (int)g_seed);
     g_shuffleSeed = (unsigned)envInt("SHUFFLE_SEED", (int)g_shuffleSeed);
@@ -477,7 +478,7 @@ int main(int argc, char *argv[]) {
 
     if (argc > 2) {
         trial_number = atof(argv[1]);
-        delta_reduction = atoi(argv[2]);
+        size_t delta_reduction = atoi(argv[2]);
         g_deltaBits = g_symBits - delta_reduction;
         g_lr = atof(argv[3]);
         g_momentum = atof(argv[4]);
