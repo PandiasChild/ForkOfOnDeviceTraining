@@ -395,7 +395,53 @@ static void epochCallback(size_t epoch, float trainLoss, epochStats_t evalStats)
     clock_gettime(CLOCK_MONOTONIC, &g_epoch_t0);
 }
 
+static int ensureDir(const char *p) {
+    if (mkdir(p, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH) == 0) {
+        return 0;
+    }
+    if (errno == EEXIST) {
+        return 0;
+    }
+    fprintf(stderr, "ERROR: cannot create %s: %s\n", p, strerror(errno));
+    return 1;
+}
+
 int main(void) {
+
+    if (ensureDir("examples/har_classifier/logs/without_deltas") != 0) {
+        return 1;
+    }
+    if (ensureDir("examples/har_classifier/outputs/without_deltas") != 0) {
+        return 1;
+    }
+    if (argc < 2) {
+        printf("Keine (negative) trial_number angegeben\n");
+        return 1;
+    }
+
+    int trial_number = atof(argv[1]);
+    int batch = 64;
+    //const char *logPath = getenv("LOG_PATH_DELTA");
+    //g_log_file
+
+    if (argc > 2) {
+        trial_number = atof(argv[1]);
+        g_lr = atof(argv[2]);
+        g_momentum = atof(argv[3]);
+        g_epochs = atof(argv[4]);
+        batch = atof(argv[5]);
+        //rounding_mode = atof(argv[6]);
+    }
+
+    int len = snprintf(NULL, 0, "examples/har_classifier/logs/without_deltas/trial_%d_.json", trial_number);
+
+    char *logPath = malloc(len + 2);
+    if (logPath == NULL) {
+        return 1;
+    }
+
+    snprintf(logPath, len + 2, "examples/har_classifier/logs/without_deltas/trial_%d.json", trial_number);
+    /*
     g_symBits = envInt("SYM_BITS", g_symBits);
     g_lr = envFloat("LR", g_lr);
     g_momentum = envFloat("MOMENTUM", g_momentum);
@@ -403,6 +449,7 @@ int main(void) {
     g_seed = (unsigned)envInt("SEED", (int)g_seed);
     g_shuffleSeed = (unsigned)envInt("SHUFFLE_SEED", (int)g_shuffleSeed);
     const char *logPath = getenv("LOG_PATH");
+    */
 
     /* Packed-SYM STORAGE supports up to 31 bits, but this example's forward is
      * ARITH_SYM_INT32: it multiplies the packed-SYM weights as integer operands
@@ -522,11 +569,12 @@ int main(void) {
         g_log_file = fopen(logPath, "w");
         if (g_log_file != NULL) {
             fprintf(g_log_file,
-                    "{\n  \"impl\": \"c-sym-weights\", \"example\": \"har_classifier\",\n"
-                    "  \"config\": {\"sym_bits\": %d, \"epochs\": %d, \"batch\": %d, \"lr\": %.6f, "
-                    "\"momentum\": %.6f, \"seed\": %u, \"shuffle_seed\": %u},\n  \"epochs\": [\n",
-                    g_symBits, g_epochs, BATCH, (double)g_lr, (double)g_momentum, g_seed,
-                    g_shuffleSeed);
+            "{\n  \"impl\": \"c-sym-weights\", \"example\": \"har_classifier\",\n"
+            "  \"config\": {\"trial_number\": %d, \"sym_bits\": %d, \"delta_bits\": %d, \"epochs\": %d, "
+            "\"batch\": %d, \"lr\": %.6f, "
+            "\"momentum\": %.6f, \"seed\": %u, \"shuffle_seed\": %u, \"symRounding\": %u},\n  \"epochs\": [\n",
+            trial_number, g_symBits, g_symBits, g_epochs, batch, (double)g_lr, (double)g_momentum,
+            g_seed, g_shuffleSeed, symRounding);
         }
     }
 
