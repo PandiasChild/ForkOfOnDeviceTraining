@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import optuna
+import subprocess
 import string
 from pathlib import Path
 import json
@@ -51,49 +52,47 @@ def objective(trial) -> int| float:
             capture_output=True,
             text=True
         )
+        test_duration_delta = 0
         prefix = 'examples/har_classifier/logs/with_deltas/trial_'
         with open(prefix + trial_number + '.json', 'r') as f:
             data = json.load(f)
-            yield data
 
-        test_duration_delta = 0
+            for epochs in data["epochs"]:
+                test_duration_delta += epochs.get("wall_s")
 
-        for epochs in data["epochs"]:
-            test_duration_delta += epochs.get("wall_s")
+            test_loss_delta = data.get("final", {}).get("test_loss")
+            test_acc_delta = data.get("final", {}).get("test_acc")
 
-        test_loss_delta = data.get("final", {}).get("test_loss")
-        test_acc_delta = data.get("final", {}).get("test_acc")
+            #test_loss = data["final"]["test_loss"]
+            #test_acc = data["final"]["test_acc"]
+            #print('FINAL test_loss=' + test_loss + '  test_acc=' + test_acc )
+            #optuna_element{
+            #    "optuna": [
+            #        {"name": "Max"},
+            #        {"name": "Lisa"}
+            #    ]
+            #}
+            #data["items"].insert(3, neues_element)
 
-        #test_loss = data["final"]["test_loss"]
-        #test_acc = data["final"]["test_acc"]
-        #print('FINAL test_loss=' + test_loss + '  test_acc=' + test_acc )
-        #optuna_element{
-        #    "optuna": [
-        #        {"name": "Max"},
-        #        {"name": "Lisa"}
-        #    ]
-        #}
-        #data["items"].insert(3, neues_element)
+            trial.set_user_attr("delta_reduction", delta_reduction)
+            trial.set_user_attr("lr", learning_rate)
+            trial.set_user_attr("momentum", momentum)
+            #trial.set_user_attr("rounding_mode", rounding_mode)
 
-        trial.set_user_attr("delta_reduction", delta_reduction)
-        trial.set_user_attr("lr", learning_rate)
-        trial.set_user_attr("momentum", momentum)
-        #trial.set_user_attr("rounding_mode", rounding_mode)
+            trial.set_user_attr("test_loss_delta", test_loss_delta)
+            trial.set_user_attr("test_acc_delta", test_acc_delta)
+            trial.set_user_attr("test_duration_delta", test_duration_delta)
 
-        trial.set_user_attr("test_loss_delta", test_loss_delta)
-        trial.set_user_attr("test_acc_delta", test_acc_delta)
-        trial.set_user_attr("test_duration_delta", test_duration_delta)
-
-        trial.set_user_attr("epochs", epochs)
-        trial.set_user_attr("batch", batch)
+            trial.set_user_attr("epochs", epochs)
+            trial.set_user_attr("batch", batch)
     except Exception as e:
         with open('telegram_bot.json', 'r') as f:
             telegram_bot = json.load(f)
-            yield telegram_bot
-        bot_token = telegram_bot.get("BOT_TOKEN", {})
-        chat_id = telegram_bot.get("CHAT_ID", {})
-        message = f"Training DELTA fehlgeschlagen:\ntrial_number {trial_number}\nexception: {e}\n"
-        send_notification(bot_token, chat_id, message)
+
+            bot_token = telegram_bot.get("BOT_TOKEN", {})
+            chat_id = telegram_bot.get("CHAT_ID", {})
+            message = f"Training DELTA fehlgeschlagen:\ntrial_number {trial_number}\nexception: {e}\n"
+            send_notification(bot_token, chat_id, message)
     try:
         result = subprocess.run(
             [
@@ -108,31 +107,28 @@ def objective(trial) -> int| float:
             capture_output=True,
             text=True
         )
-
+        test_duration_sym = 0
         prefix = 'examples/har_classifier/logs/without_deltas/trial_'
         with open(prefix + trial_number + '.json', 'r') as f:
             data_sym = json.load(f)
-            yield data_sym
 
-        test_duration_sym = 0
+            for epochs in data_sym["epochs"]:
+                test_duration_sym += epochs.get("wall_s")
 
-        for epochs in data_sym["epochs"]:
-            test_duration_sym += epochs.get("wall_s")
+            test_loss_sym = data_sym.get("final", {}).get("test_loss")
+            test_acc_sym = data_sym.get("final", {}).get("test_acc")
 
-        test_loss_sym = data_sym.get("final", {}).get("test_loss")
-        test_acc_sym = data_sym.get("final", {}).get("test_acc")
-
-        trial.set_user_attr("test_loss_sym", test_loss_sym)
-        trial.set_user_attr("test_acc_sym", test_acc_sym)
-        trial.set_user_attr("test_duration_sym", test_duration_sym)
+            trial.set_user_attr("test_loss_sym", test_loss_sym)
+            trial.set_user_attr("test_acc_sym", test_acc_sym)
+            trial.set_user_attr("test_duration_sym", test_duration_sym)
     except Exception as e:
         with open('telegram_bot.json', 'r') as f:
             telegram_bot = json.load(f)
-            yield telegram_bot
-    bot_token = telegram_bot.get("BOT_TOKEN", {})
-    chat_id = telegram_bot.get("CHAT_ID", {})
-    message = f"Training SYM fehlgeschlagen:\ntrial_number {trial_number}\nexception: {e}\n"
-    send_notification(bot_token, chat_id, message)
+
+            bot_token = telegram_bot.get("BOT_TOKEN", {})
+            chat_id = telegram_bot.get("CHAT_ID", {})
+            message = f"Training SYM fehlgeschlagen:\ntrial_number {trial_number}\nexception: {e}\n"
+            send_notification(bot_token, chat_id, message)
     return test_acc_delta
 
 
