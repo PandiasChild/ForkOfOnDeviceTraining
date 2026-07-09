@@ -71,7 +71,7 @@
 
 #include "mem_instrument.h"
 
-#define BATCH 64 /* macro-batch: loader groups 64 samples per optimizer step */
+//#define BATCH 64 /* macro-batch: loader groups 64 samples per optimizer step */
                  /* Micro-batch = concurrent samples per forward/backward. The training loop
                   * streams the macro-batch one sample at a time (loss.md B=1), so peak activation
                   * memory is ONE sample's worth — this is what the analytic footprint must use.
@@ -91,6 +91,8 @@
 
 /* 3 x (Conv1d + ReLU + Pool) + Flatten + Linear + Softmax = 12 layers */
 #define MODEL_SIZE 12
+
+typedef enum deltaStatus { WITH_DELTAS, WITHOUT_DELTAS } deltaStatus_t;
 
 static dataset_t g_trainDataset;
 static dataset_t g_valDataset;
@@ -427,15 +429,63 @@ static void epochCallback(size_t epoch, float trainLoss, epochStats_t evalStats)
     clock_gettime(CLOCK_MONOTONIC, &g_epoch_t0);
 }
 
+static int ensureDir(const char *p) {
+    if (mkdir(p, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH) == 0) {
+        return 0;
+    }
+    if (errno == EEXIST) {
+        return 0;
+    }
+    fprintf(stderr, "ERROR: cannot create %s: %s\n", p, strerror(errno));
+    return 1;
+}
+
 int main(void) {
-    g_symBits = envInt("SYM_BITS", g_symBits);
+
+    /*g_symBits = envInt("SYM_BITS", g_symBits);
     g_deltaBits = envInt("DELTA_BITS", g_deltaBits);
     g_lr = envFloat("LR", g_lr);
     g_momentum = envFloat("MOMENTUM", g_momentum);
     g_epochs = envInt("EPOCHS", g_epochs);
     g_seed = (unsigned)envInt("SEED", (int)g_seed);
     g_shuffleSeed = (unsigned)envInt("SHUFFLE_SEED", (int)g_shuffleSeed);
-    const char *logPath = getenv("LOG_PATH_DELTA");
+    const char *logPath = getenv("LOG_PATH_DELTA");*/
+
+    if (ensureDir("examples/har_classifier/logs/with_deltas") != 0) {
+        return 1;
+    }
+    if (ensureDir("examples/har_classifier/outputs/with_deltas") != 0) {
+        return 1;
+    }
+    if (argc < 2) {
+        printf("Keine (negative) trial_number angegeben\n");
+        return 1;
+    }
+
+    int trial_number = atof(argv[1]);
+    int batch = 64;
+
+    int len = snprintf(NULL, 0, "examples/har_classifier/logs/with_deltas/trial_%d_.json", trial_number);
+
+    char *logPath = malloc(len + 2);
+    if (logPath == NULL) {
+        return 1;
+    }
+
+    snprintf(logPath, len + 2, "examples/har_classifier/logs/with_deltas/trial_%d.json", trial_number);
+
+
+    if (argc > 2) {
+        trial_number = atof(argv[1]);
+        delta_reduction = atoi(argv[2]);
+        g_deltaBits = g_symBits - delta_reduction;
+        g_lr = atof(argv[3]);
+        g_momentum = atof(argv[4]);
+        g_epochs = atof(argv[5]);
+        batch = atof(argv[6]);
+        //rounding_mode = atof(argv[7]);
+    }
+
 
     /* Packed-SYM STORAGE supports up to 31 bits, but this example's forward is
      * ARITH_SYM_INT32: it multiplies the packed-SYM weights as integer operands
@@ -528,7 +578,7 @@ int main(void) {
             g_symBits);
     fflush(stdout);
 
-    dataLoader_t *trainLoader = dataLoaderInit(getTrainSample, getTrainSize, BATCH, NULL, NULL,
+    dataLoader_t *trainLoader = dataLoaderInit(getTrainSample, getTrainSize, batch, NULL, NULL,
                                                /*shuffle*/ true, g_shuffleSeed, /*dropLast*/ true);
     dataLoader_t *valLoader = dataLoaderInit(getValSample, getValSize, 1, NULL, NULL,
                                              /*shuffle*/ false, 0, /*dropLast*/ true);
@@ -574,11 +624,11 @@ int main(void) {
         if (g_log_file != NULL) {
             fprintf(g_log_file,
                     "{\n  \"impl\": \"c-delta-weights\", \"example\": \"har_classifier\",\n"
-                    "  \"config\": {\"sym_bits\": %d, \"delta_bits\": %d, \"epochs\": %d, "
+                    "  \"config\": {\"trial_number\": %d, \"sym_bits\": %d, \"delta_bits\": %d, \"epochs\": %d, "
                     "\"batch\": %d, \"lr\": %.6f, "
-                    "\"momentum\": %.6f, \"seed\": %u, \"shuffle_seed\": %u},\n  \"epochs\": [\n",
-                    g_symBits, g_deltaBits, g_epochs, BATCH, (double)g_lr, (double)g_momentum,
-                    g_seed, g_shuffleSeed);
+                    "\"momentum\": %.6f, \"seed\": %u, \"shuffle_seed\": %u, \"symRounding\": %u},\n  \"epochs\": [\n",
+                    trial_number, g_symBits, g_deltaBits, g_epochs, batch, (double)g_lr, (double)g_momentum,
+                    g_seed, g_shuffleSeed, symRounding);
         }
     }
 
