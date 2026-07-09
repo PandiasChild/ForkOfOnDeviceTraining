@@ -6,22 +6,46 @@ on:
   pull_request:
     branches: [main, develop]
 
-# develop and main are both push- and PR-targets, so a commit landing on
-# develop while a develop->main release PR is open fires push AND
-# pull_request for the identical SHA. Group by the actual commit (PR head
-# SHA if present, else the pushed SHA) so the redundant run is cancelled
-# instead of doubling CI cost/flake exposure.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.head.sha || github.sha }}
-  cancel-in-progress: true
-
 # Least privilege: every job only reads the repo (build/test/cache; nothing
 # pushes, comments, or releases). Widen per-job if a future job needs more.
 permissions:
   contents: read
 
 jobs:
+  # develop and main are both push- and PR-targets, so a commit landing on
+  # develop while a develop->main release PR is open fires push AND
+  # pull_request for the identical SHA (surfaced by #320/#324): the push
+  # run would re-verify a commit the open PR's own pull_request run already
+  # covers. Skip (not cancel) the redundant push run before any real job
+  # starts, so duplicates show a clean "skipped" rather than a cancelled/
+  # failed-looking check.
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      proceed: ${{ steps.check.outputs.proceed }}
+
+    steps:
+      - name: Skip push runs already covered by an open PR's checks
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          proceed=true
+          if [ "${{ github.event_name }}" = "push" ]; then
+            dup=$(gh pr list --repo "${{ github.repository }}" --state open \
+              --json headRefOid --jq "[.[] | select(.headRefOid == \"${{ github.sha }}\")] | length")
+            if [ "$dup" -gt 0 ]; then
+              echo "Commit ${{ github.sha }} is already the head of an open PR; that PR's pull_request-triggered run covers this commit."
+              proceed=false
+            fi
+          fi
+          echo "proceed=$proceed" >> "$GITHUB_OUTPUT"
+
   alloc-locality:
+    needs: gate
+    if: needs.gate.outputs.proceed == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -46,6 +70,8 @@ jobs:
           fi
 
   c-format-check:
+    needs: gate
+    if: needs.gate.outputs.proceed == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -64,6 +90,8 @@ jobs:
             xargs -0 clang-format-21 --dry-run -Werror
 
   c-build-and-test:
+    needs: gate
+    if: needs.gate.outputs.proceed == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -101,6 +129,8 @@ jobs:
         run: ctest --preset unit_test
 
   c-asan-build-and-test:
+    needs: gate
+    if: needs.gate.outputs.proceed == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -128,6 +158,8 @@ jobs:
         run: ctest --preset unit_test_asan
 
   c-ubsan-build-and-test:
+    needs: gate
+    if: needs.gate.outputs.proceed == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -155,6 +187,8 @@ jobs:
         run: ctest --preset unit_test_ubsan
 
   c-bit-parity:
+    needs: gate
+    if: needs.gate.outputs.proceed == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -340,6 +374,8 @@ jobs:
   # version. Deliberately NON-required for now; propose making it required
   # once it has been stable for a few weeks.
   c-arm-cross-compile:
+    needs: gate
+    if: needs.gate.outputs.proceed == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -393,6 +429,8 @@ jobs:
   # budgets are uncalibrated until this job has produced stable peaks;
   # calibration + --enforce promotion is a dedicated later PR.
   c-stack-watermark:
+    needs: gate
+    if: needs.gate.outputs.proceed == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -436,6 +474,8 @@ jobs:
         run: uv run examples/_shared/check_stack_watermark.py --platform linux /tmp/wm_float.json /tmp/wm_sym8.json
 
   python-test:
+    needs: gate
+    if: needs.gate.outputs.proceed == 'true'
     runs-on: ubuntu-latest
 
     steps:
