@@ -34,8 +34,10 @@ jobs:
         run: |
           proceed=true
           if [ "${{ github.event_name }}" = "push" ]; then
-            dup=$(gh pr list --repo "${{ github.repository }}" --state open \
-              --json headRefOid --jq "[.[] | select(.headRefOid == \"${{ github.sha }}\")] | length")
+            # Fail open: if the PR lookup itself errors (API hiccup), dup=0 and
+            # this run proceeds normally rather than the gate job going red.
+            dup=$(gh pr list --repo "${{ github.repository }}" --state open --limit 100 \
+              --json headRefOid --jq "[.[] | select(.headRefOid == \"${{ github.sha }}\")] | length") || dup=0
             if [ "$dup" -gt 0 ]; then
               echo "Commit ${{ github.sha }} is already the head of an open PR; that PR's pull_request-triggered run covers this commit."
               proceed=false
