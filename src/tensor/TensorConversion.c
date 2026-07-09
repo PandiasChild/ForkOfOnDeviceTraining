@@ -542,13 +542,11 @@ static void packFitGuarded(const int32_t *src, size_t n, uint8_t *dst, size_t ds
 static void packFloatBufferAsSymForDelta(const float *values, size_t n, symQDeltaConfig_t *outQC, uint8_t *dst,
                                  const char *what) {
     float absMax = findAbsMaxFloat((uint8_t *)values, n);
-    printf("absMax = %f\n", absMax);
     const float qMax = powf(2, (float)outQC->qBits - 1) - 1;
     const float qMin = -powf(2, (float)outQC->qBits - 1);
     const float deltaMax = powf(2, (float)outQC->deltabits - 1) - 1;
     const float deltaMin = -powf(2, (float)outQC->deltabits - 1);
     float scale = (absMax == 0.f) ? 1.f : absMax / qMax;
-    printf("scale = %f\n", scale);
     outQC->scale = scale;
     int32_t codes[n];
     codes[0] = clampInt32(roundByMode(values[0] / scale, outQC->roundingMode), (int32_t)qMin,
@@ -557,7 +555,6 @@ static void packFloatBufferAsSymForDelta(const float *values, size_t n, symQDelt
         codes[i] = clampInt32(roundByMode(values[i] / scale, outQC->roundingMode), (int32_t)deltaMin,
                               (int32_t)deltaMax);
     }
-    printf("Delta -----------------------------------------------------------------------------------------\n");
 
     packFitGuardedForDelta(codes, n, dst, outQC->qBits, outQC->deltabits,what);
 
@@ -570,13 +567,11 @@ static void packFloatBufferAsSym(const float *values, size_t n, symQConfig_t *ou
     const float qMin = -powf(2, (float)outQC->qBits - 1);
     float scale = (absMax == 0.f) ? 1.f : absMax / qMax;
     outQC->scale = scale;
-    printf("scale = %f\n", scale);
     int32_t codes[n];
     for (size_t i = 0; i < n; i++) {
         codes[i] = clampInt32(roundByMode(values[i] / scale, outQC->roundingMode), (int32_t)qMin,
                               (int32_t)qMax);
     }
-    printf("SYM--------------------------------------------------------------------------------------------------\n");
     packFitGuarded(codes, n, dst, outQC->qBits, what);
 }
 
