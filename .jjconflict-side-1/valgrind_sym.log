@@ -1,0 +1,111 @@
+==179663== Memcheck, a memory error detector
+==179663== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.
+==179663== Using Valgrind-3.26.0 and LibVEX; rerun with -h for copyright info
+==179663== Command: ./build/examples/examples/har_classifier/train_c_har_classifier_sym
+==179663== Parent PID: 166380
+==179663== 
+==179663== Invalid write of size 8
+==179663==    at 0x4888964: memmove (in /nix/store/l8kvr38dk84afq0bffmsdybfix0wdvci-valgrind-3.26.0/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==179663==    by 0x4008194: copyShape (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x40082E9: copyTensor (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400EA1B: inferenceWithLoss (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400B7F8: evaluateEpochInternal (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400C083: evaluationEpochWithMetrics (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x4002A73: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==  Address 0x8a07fd8 is 0 bytes after a block of size 8 alloc'd
+==179663==    at 0x4881549: calloc (in /nix/store/l8kvr38dk84afq0bffmsdybfix0wdvci-valgrind-3.26.0/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==179663==    by 0x4006B60: getShapeLike (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400E8B6: reserveInferenceStats (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400EA0C: inferenceWithLoss (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400B7F8: evaluateEpochInternal (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400C083: evaluationEpochWithMetrics (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x4002A73: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663== 
+==179663== Invalid write of size 8
+==179663==    at 0x4888964: memmove (in /nix/store/l8kvr38dk84afq0bffmsdybfix0wdvci-valgrind-3.26.0/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==179663==    by 0x40081AD: copyShape (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x40082E9: copyTensor (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400EA1B: inferenceWithLoss (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400B7F8: evaluateEpochInternal (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400C083: evaluationEpochWithMetrics (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x4002A73: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==  Address 0x8a08028 is 0 bytes after a block of size 8 alloc'd
+==179663==    at 0x4881549: calloc (in /nix/store/l8kvr38dk84afq0bffmsdybfix0wdvci-valgrind-3.26.0/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==179663==    by 0x4006B84: getShapeLike (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400E8B6: reserveInferenceStats (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400EA0C: inferenceWithLoss (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400B7F8: evaluateEpochInternal (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400C083: evaluationEpochWithMetrics (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x4002A73: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663== 
+==179663== Invalid read of size 8
+==179663==    at 0x4007288: calcNumberOfElementsByShape (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x4008125: copyData (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400EA1B: inferenceWithLoss (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400B7F8: evaluateEpochInternal (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400C083: evaluationEpochWithMetrics (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x4002A73: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==  Address 0x8a07fd8 is 0 bytes after a block of size 8 alloc'd
+==179663==    at 0x4881549: calloc (in /nix/store/l8kvr38dk84afq0bffmsdybfix0wdvci-valgrind-3.26.0/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==179663==    by 0x4006B60: getShapeLike (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400E8B6: reserveInferenceStats (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400EA0C: inferenceWithLoss (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400B7F8: evaluateEpochInternal (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400C083: evaluationEpochWithMetrics (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x4002A73: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663== 
+==179663== 
+==179663== Process terminating with default action of signal 2 (SIGINT)
+==179663==    at 0x40078B0: min (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x4007987: byteConversionWithOffsets (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x4007B8F: byteConversion (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400958B: unpackSignExtend (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400977E: convertSymTensorToFloat32Tensor (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x401E067: executeOp (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x40116C6: conv1dBackward (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400CCB5: calculateGradsImpl.isra.0 (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400CE26: calculateGradsSequential (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400F2E5: trainingBatchDefault (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400CF5A: trainingEpochDefault (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400C295: trainingRun (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663== 
+==179663== HEAP SUMMARY:
+==179663==     in use at exit: 51,143,669 bytes in 185,772 blocks
+==179663==   total heap usage: 1,027,259 allocs, 841,487 frees, 770,873,271 bytes allocated
+==179663== 
+==179663== 16 bytes in 1 blocks are definitely lost in loss record 94 of 286
+==179663==    at 0x4881549: calloc (in /nix/store/l8kvr38dk84afq0bffmsdybfix0wdvci-valgrind-3.26.0/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==179663==    by 0x4006201: quantizationInitFloat (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x4002B04: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663== 
+==179663== 28 (16 direct, 12 indirect) bytes in 1 blocks are definitely lost in loss record 134 of 286
+==179663==    at 0x4881549: calloc (in /nix/store/l8kvr38dk84afq0bffmsdybfix0wdvci-valgrind-3.26.0/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==179663==    by 0x400632B: quantizationInitSym (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400251E: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663== 
+==179663== 61,756 (16 direct, 61,740 indirect) bytes in 1 blocks are definitely lost in loss record 260 of 286
+==179663==    at 0x4881549: calloc (in /nix/store/l8kvr38dk84afq0bffmsdybfix0wdvci-valgrind-3.26.0/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==179663==    by 0x4003C0A: npyLoad (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x4002459: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663== 
+==179663== 247,564 (16 direct, 247,548 indirect) bytes in 1 blocks are definitely lost in loss record 282 of 286
+==179663==    at 0x4881549: calloc (in /nix/store/l8kvr38dk84afq0bffmsdybfix0wdvci-valgrind-3.26.0/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==179663==    by 0x4003C0A: npyLoad (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x4002495: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663== 
+==179663== 555,844 (16 direct, 555,828 indirect) bytes in 1 blocks are definitely lost in loss record 283 of 286
+==179663==    at 0x4881549: calloc (in /nix/store/l8kvr38dk84afq0bffmsdybfix0wdvci-valgrind-3.26.0/libexec/valgrind/vgpreload_memcheck-amd64-linux.so)
+==179663==    by 0x4003C0A: npyLoad (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663==    by 0x400241D: main (in /home/jasmin/Dokumente/Uni/Bachelorarbeit/ForkOfOnDeviceTraining/build/examples/examples/har_classifier/train_c_har_classifier_sym)
+==179663== 
+==179663== LEAK SUMMARY:
+==179663==    definitely lost: 80 bytes in 5 blocks
+==179663==    indirectly lost: 865,128 bytes in 61,798 blocks
+==179663==      possibly lost: 0 bytes in 0 blocks
+==179663==    still reachable: 50,278,461 bytes in 123,969 blocks
+==179663==         suppressed: 0 bytes in 0 blocks
+==179663== Reachable blocks (those to which a pointer was found) are not shown.
+==179663== To see them, rerun with: --leak-check=full --show-leak-kinds=all
+==179663== 
+==179663== For lists of detected and suppressed errors, rerun with: -s
+==179663== ERROR SUMMARY: 2210 errors from 8 contexts (suppressed: 0 from 0)

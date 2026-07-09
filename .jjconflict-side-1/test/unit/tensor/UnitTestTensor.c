@@ -198,7 +198,7 @@ void testByteConversion_NarrowingInt32ToSubByte_DoesNotOverreadOutputBuffer() {
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, captured, numBytesDataOut);
 }
 
-// does not read into next value
+//companion to the test above
 void testByteConversionOffsets_startbitInOffset5() {
     /* Four int32 values, (after 0xA) low 24 bits matter (numValues): 0, 0xC, 0xD.
      * 0xFF should not be read     */
