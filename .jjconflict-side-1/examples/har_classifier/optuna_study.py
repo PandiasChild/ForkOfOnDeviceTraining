@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import optuna
 import subprocess
 import string
@@ -239,6 +240,17 @@ def objective(trial) -> int| float:
 def main():
     optuna_results_dir = OPTUNA_LOGS
     optuna_results_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create a file handler
+    file_handler = logging.FileHandler(str(optuna_results_dir) + "optuna.log")
+    file_handler.setLevel(logging.INFO)
+
+    # Add it to Optuna's logger
+    optuna_logger = logging.getLogger("optuna")
+    optuna_logger.addHandler(file_handler)
+
+    # Optional: keep console quiet
+    optuna.logging.disable_default_handler()
 
     study_name = "har_classifier_delta_vs_sym"
     study_db_path: Path = optuna_results_dir / f"{study_name}.db"
