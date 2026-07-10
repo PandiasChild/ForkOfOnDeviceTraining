@@ -361,7 +361,7 @@ static void paramGateSink(void *ctxVoid, size_t layerIdx, layerType_t layerType,
 
     if (ctx->isGrad) {
         if (tensor->quantization->type != FLOAT32) {
-            fprintf(stderr, "GATE FAIL: layer %zu %s expected FLOAT32 grad, got qtype %d\n",
+            fprintf(stderr, "GATE FAIL DELTA: layer %zu %s expected FLOAT32 grad, got qtype %d\n",
                     layerIdx, phase, (int)tensor->quantization->type);
             ctx->fails++;
             return;
@@ -371,20 +371,20 @@ static void paramGateSink(void *ctxVoid, size_t layerIdx, layerType_t layerType,
     }
 
     if (tensor->quantization->type != DELTA) {
-        fprintf(stderr, "GATE FAIL: layer %zu %s expected DELTA param, got qtype %d\n", layerIdx,
+        fprintf(stderr, "GATE FAIL DELTA: layer %zu %s expected DELTA param, got qtype %d\n", layerIdx,
                 phase, (int)tensor->quantization->type);
         ctx->fails++;
         return;
     }
     symQDeltaConfig_t *qc = tensor->quantization->qConfig;
     if ((int)qc->qBits != ctx->expectBits) {
-        fprintf(stderr, "GATE FAIL: layer %zu %s expected DELTA qBits %d, got %u\n", layerIdx,
+        fprintf(stderr, "GATE FAIL DELTA: layer %zu %s expected DELTA qBits %d, got %u\n", layerIdx,
                 phase, ctx->expectBits, (unsigned)qc->qBits);
         ctx->fails++;
         return;
     }
-    if ((int)qc->qBits != ctx->expectDeltaBits) {
-        fprintf(stderr, "GATE FAIL: layer %zu %s expected DELTA deltabits %d, got %u\n", layerIdx,
+    if ((int)qc->deltabits != ctx->expectDeltaBits) {
+        fprintf(stderr, "GATE FAIL DELTA: layer %zu %s expected DELTA deltabits %d, got %u\n", layerIdx,
                 phase, ctx->expectDeltaBits, (unsigned)qc->deltabits);
         ctx->fails++;
         return;
@@ -468,12 +468,12 @@ int main(int argc, char *argv[]) {
 
     int len = snprintf(NULL, 0, "examples/har_classifier/logs/with_deltas/trial_%d_.json", trial_number);
 
-    char *logPath = malloc(len + 2);
+    char *logPath = malloc(len + 3);
     if (logPath == NULL) {
         return 1;
     }
 
-    snprintf(logPath, len + 2, "examples/har_classifier/logs/with_deltas/trial_%d.json", trial_number);
+    snprintf(logPath, len + 3, "examples/har_classifier/logs/with_deltas/trial_%d.json", trial_number);
 
 
     if (argc > 2) {
@@ -571,11 +571,11 @@ int main(int argc, char *argv[]) {
     traceModelGrads(model, MODEL_SIZE, "gate", paramGateSink, &gCtx);
     /* 4 trainable layers x (weight + bias) = 8 each. */
     if (wCtx.fails != 0 || gCtx.fails != 0 || wCtx.count != 8 || gCtx.count != 8) {
-        fprintf(stderr, "GATES FAILED (weight ok=%d fails=%d; grad ok=%d fails=%d)\n", wCtx.count,
+        fprintf(stderr, "GATES FAILED  DELTA (weight ok=%d fails=%d; grad ok=%d fails=%d)\n", wCtx.count,
                 wCtx.fails, gCtx.count, gCtx.fails);
         return 2;
     }
-    fprintf(stdout, "GATES PASS: weights+bias=DELTA@%d grads=FLOAT32 (8 param + 8 grad checks)\n",
+    fprintf(stdout, "GATES PASS DELTA: weights+bias=DELTA@%d grads=FLOAT32 (8 param + 8 grad checks)\n",
             g_symBits);
     fflush(stdout);
 
@@ -585,17 +585,35 @@ int main(int argc, char *argv[]) {
                                              /*shuffle*/ false, 0, /*dropLast*/ true);
     dataLoader_t *testLoader = dataLoaderInit(getTestSample, getTestSize, 1, NULL, NULL,
                                               /*shuffle*/ false, 0, /*dropLast*/ true);
-    printf("main: start evaluationEpochWithMetrics\n");
     /* ---- Gate: sane initial loss (~ln(6)=1.7918 for 6-class near-uniform) -- */
     epochStats_t initStats = evaluationEpochWithMetrics(model, MODEL_SIZE, CROSS_ENTROPY, valLoader,
                                                         inferenceWithLoss, REDUCTION_MEAN);
-    printf("main: done evaluationEpochWithMetrics\n");
     fprintf(stdout, "initial_val_loss=%.6f initial_val_acc=%.6f (expected ~%.4f)\n",
             (double)initStats.loss, (double)initStats.accuracy, log(6.0));
     fflush(stdout);
     if (!(fabs((double)initStats.loss - log(6.0)) < 0.25)) {
-        fprintf(stderr, "GATE FAIL: initial val loss %.6f not near ln(6)=%.4f\n",
+        fprintf(stderr, "GATE FAIL DELTA: initial val loss %.6f not near ln(6)=%.4f\n",
                 (double)initStats.loss, log(6.0));
+        if (logPath != NULL && logPath[0] != '\0') {
+            g_log_file = fopen(logPath, "w");
+            if (g_log_file != NULL) {
+                fprintf(g_log_file,
+                        "{\n  \"impl\": \"c-delta-weights\", \"example\": \"har_classifier\",\n"
+                        "  \"config\": {\"trial_number\": %d, \"sym_bits\": %d, \"delta_bits\": %d, \"epochs\": %d, "
+                        "\"batch\": %d, \"lr\": %.6f, "
+                        "\"momentum\": %.6f, \"seed\": %u, \"shuffle_seed\": %u, \"symRounding\": %u},\n  \"epochs\": [\n",
+                        trial_number, g_symBits, g_deltaBits, g_epochs, batch, (double)g_lr, (double)g_momentum,
+                        g_seed, g_shuffleSeed, symRounding);
+                fflush(g_log_file);
+                fprintf(g_log_file,
+                "    {\"epoch\": 0, \"initial_val_loss\": %.6f, \"initial_val_acc\": %.6f, "
+                "\"expected\": %.4f\n}",
+                (double)initStats.loss, (double)initStats.accuracy, log(6.0));
+                fflush(g_log_file);
+                fprintf(g_log_file, "\n  ],\n  \"final\": {\"test_loss\": %.6f, \"test_acc\": %.6f}\n}\n", (double)initStats.loss, (double)initStats.accuracy);
+                fclose(g_log_file);
+            }
+        }
         return 2;
     }
 
@@ -614,7 +632,6 @@ int main(int argc, char *argv[]) {
      * a FLOAT32 accumulator keeps velocity precise so ONLY the weights carry the memory win.
      */
     quantization_t *momentumQ = quantizationInitFloat();
-    printf("main: start sgdMCreateOptim\n");
     optimizer_t *sgd = sgdMCreateOptim(g_lr, g_momentum, /*weightDecay*/ 0.0f, model, MODEL_SIZE, momentumQ);
 #ifdef ODT_MEM_PROFILE
     size_t markAfterOpt = memProfileMark(); /* optstate_b = delta */

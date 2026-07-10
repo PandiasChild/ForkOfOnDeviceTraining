@@ -337,7 +337,7 @@ static void paramGateSink(void *ctxVoid, size_t layerIdx, layerType_t layerType,
 
     if (ctx->isGrad) {
         if (tensor->quantization->type != FLOAT32) {
-            fprintf(stderr, "GATE FAIL: layer %zu %s expected FLOAT32 grad, got qtype %d\n",
+            fprintf(stderr, "GATE FAIL SYM: layer %zu %s expected FLOAT32 grad, got qtype %d\n",
                     layerIdx, phase, (int)tensor->quantization->type);
             ctx->fails++;
             return;
@@ -347,14 +347,14 @@ static void paramGateSink(void *ctxVoid, size_t layerIdx, layerType_t layerType,
     }
 
     if (tensor->quantization->type != SYM) {
-        fprintf(stderr, "GATE FAIL: layer %zu %s expected SYM param, got qtype %d\n", layerIdx,
+        fprintf(stderr, "GATE FAIL SYM: layer %zu %s expected SYM param, got qtype %d\n", layerIdx,
                 phase, (int)tensor->quantization->type);
         ctx->fails++;
         return;
     }
     symQConfig_t *qc = tensor->quantization->qConfig;
     if ((int)qc->qBits != ctx->expectBits) {
-        fprintf(stderr, "GATE FAIL: layer %zu %s expected SYM qBits %d, got %u\n", layerIdx, phase,
+        fprintf(stderr, "GATE FAIL SYM: layer %zu %s expected SYM qBits %d, got %u\n", layerIdx, phase,
                 ctx->expectBits, (unsigned)qc->qBits);
         ctx->fails++;
         return;
@@ -439,12 +439,12 @@ int main(int argc, char *argv[]) {
 
     int len = snprintf(NULL, 0, "examples/har_classifier/logs/without_deltas/trial_%d_.json", trial_number);
 
-    char *logPath = malloc(len + 2);
+    char *logPath = malloc(len + 3);
     if (logPath == NULL) {
         return 1;
     }
 
-    snprintf(logPath, len + 2, "examples/har_classifier/logs/without_deltas/trial_%d.json", trial_number);
+    snprintf(logPath, len + 3, "examples/har_classifier/logs/without_deltas/trial_%d.json", trial_number);
     /*
     g_symBits = envInt("SYM_BITS", g_symBits);
     g_lr = envFloat("LR", g_lr);
@@ -522,11 +522,11 @@ int main(int argc, char *argv[]) {
     traceModelGrads(model, MODEL_SIZE, "gate", paramGateSink, &gCtx);
     /* 4 trainable layers x (weight + bias) = 8 each. */
     if (wCtx.fails != 0 || gCtx.fails != 0 || wCtx.count != 8 || gCtx.count != 8) {
-        fprintf(stderr, "GATES FAILED (weight ok=%d fails=%d; grad ok=%d fails=%d)\n", wCtx.count,
+        fprintf(stderr, "GATES FAILED SYM   <(weight ok=%d fails=%d; grad ok=%d fails=%d)\n", wCtx.count,
                 wCtx.fails, gCtx.count, gCtx.fails);
         return 2;
     }
-    fprintf(stdout, "GATES PASS: weights+bias=SYM@%d grads=FLOAT32 (8 param + 8 grad checks)\n",
+    fprintf(stdout, "GATES PASS SYM: weights+bias=SYM@%d grads=FLOAT32 (8 param + 8 grad checks)\n",
             g_symBits);
     fflush(stdout);
 
@@ -544,8 +544,28 @@ int main(int argc, char *argv[]) {
             (double)initStats.loss, (double)initStats.accuracy, log(6.0));
     fflush(stdout);
     if (!(fabs((double)initStats.loss - log(6.0)) < 0.25)) {
-        fprintf(stderr, "GATE FAIL: initial val loss %.6f not near ln(6)=%.4f\n",
+        fprintf(stderr, "GATE FAIL SYM: initial val loss %.6f not near ln(6)=%.4f\n",
                 (double)initStats.loss, log(6.0));
+        if (logPath != NULL && logPath[0] != '\0') {
+            g_log_file = fopen(logPath, "w");
+            if (g_log_file != NULL) {
+                fprintf(g_log_file,
+                        "{\n  \"impl\": \"c-sym-weights\", \"example\": \"har_classifier\",\n"
+                        "  \"config\": {\"trial_number\": %d, \"sym_bits\": %d, \"delta_bits\": %d, \"epochs\": %d, "
+                        "\"batch\": %d, \"lr\": %.6f, "
+                        "\"momentum\": %.6f, \"seed\": %u, \"shuffle_seed\": %u, \"symRounding\": %u},\n  \"epochs\": [\n",
+                        trial_number, g_symBits, g_symBits, g_epochs, batch, (double)g_lr, (double)g_momentum,
+                        g_seed, g_shuffleSeed, symRounding);
+                fflush(g_log_file);
+                fprintf(g_log_file,
+                "    {\"epoch\": 0, \"initial_val_loss\": %.6f, \"initial_val_acc\": %.6f, "
+                "\"expected\": %.4f\n}",
+                (double)initStats.loss, (double)initStats.accuracy, log(6.0));
+                fflush(g_log_file);
+                fprintf(g_log_file, "\n  ],\n  \"final\": {\"test_loss\": %.6f, \"test_acc\": %.6f}\n}\n", (double)initStats.loss, (double)initStats.accuracy);
+                fclose(g_log_file);
+            }
+        }
         return 2;
     }
 
