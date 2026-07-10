@@ -2651,6 +2651,100 @@ void testDequantChunkToFloatRejectsMisalignedOffset(void) {
     ASSERT_EXITS_WITH_FAILURE(dequantChunkToFloat(&t, 3, 4, out));
 }
 
+void testDequantChunkToFloatRejectsOutOfRangeOffset(void) {
+    /* Fix 1 (release-review, PR #324): [elemOffset, elemOffset+count) must not
+     * exceed the source tensor's own element count. Before the fix, only
+     * count > ODT_CONVERSION_CHUNK_ELEMS and elemOffset % 8 != 0 were guarded --
+     * an offset that starts exactly AT the tensor's end (still 8-aligned, still
+     * <= chunk size) sailed through both and fell into an out-of-bounds
+     * FLOAT32 memcpy. Mutation guard: removing the new range guard lets the
+     * child run to completion (or crash outside the exit(1) path) -> RED
+     * either way. */
+    size_t n = 8;
+    size_t dims[] = {n};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    float vals[8] = {0.f, 1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f};
+    quantization_t q;
+    initFloat32Quantization(&q);
+    tensor_t t;
+    setTensorValues(&t, (uint8_t *)vals, &shape, &q, NULL);
+
+    float out[1];
+    ASSERT_EXITS_WITH_FAILURE(dequantChunkToFloat(&t, 8, 1, out));
+}
+
+void testQuantizeFloatToAsymNoOpOnEmptyTensor(void) {
+    /* Fix 2 (release-review, PR #324): n==0 must no-op, never read values[0].
+     * Before the fix, quantizeFloatToAsym's findMinFloat/findMaxFloat both
+     * unconditionally dereference values[0] regardless of n -- UB for an
+     * empty payload. Since both reads land on the same element, mn==mx
+     * unconditionally at n==0, so deriveAsymGridFromMinMax's degenerate
+     * branch fires and overwrites the output qConfig's scale/zeroPoint from
+     * whatever sits at values[0] -- even though there is nothing to
+     * quantize. Pin: pre-set sentinel scale/zeroPoint on the output qConfig
+     * and a deterministic non-zero value at the input's element 0; both must
+     * survive the n==0 call untouched.
+     * Mutation guard: dropping the n==0 guard lets deriveAsymGridFromMinMax's
+     * mn==mx branch overwrite scale with fabsf(42.f)=42.f and zeroPoint with
+     * round(42/42)=1, failing both asserts below -> RED. */
+    size_t dims[] = {0};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    quantization_t floatQ;
+    initFloat32Quantization(&floatQ);
+    float floatDummy = 42.f; /* n==0: logically unreachable, but real backing
+                              * storage so a would-be values[0] read stays
+                              * inside owned memory (well-defined RED). */
+    tensor_t floatTensor;
+    setTensorValues(&floatTensor, (uint8_t *)&floatDummy, &shape, &floatQ, NULL);
+
+    asymQConfig_t asymQC;
+    initAsymQConfig(5, HALF_AWAY, &asymQC);
+    asymQC.scale = 123.f; /* sentinel: must survive untouched */
+    asymQC.zeroPoint = 7;
+    quantization_t asymQ;
+    initAsymQuantization(&asymQC, &asymQ);
+    uint8_t asymDummy;
+    tensor_t asymTensor;
+    setTensorValues(&asymTensor, &asymDummy, &shape, &asymQ, NULL);
+
+    convertTensor(&floatTensor, &asymTensor);
+
+    TEST_ASSERT_EQUAL_FLOAT(123.f, asymQC.scale);
+    TEST_ASSERT_EQUAL_INT16(7, asymQC.zeroPoint);
+}
+
+void testAccumulateTensorIntoSymRescaleRejectsSelfAliasedIncrement(void) {
+    /* Fix 3 (release-review, PR #324): the rescale engine rewrites the
+     * target's qConfig scale between phase A (fresh-grid derivation, reads
+     * only) and phase B (chunked decode+requant+pack). If increment aliases
+     * target, phase B's incSrcChunk dequantizes the (not-yet-repacked) shared
+     * bytes using the ALREADY-overwritten fresh scale instead of the old one
+     * phase A used -- silently wrong output, no crash, no exit. The funnel
+     * epilogue always passes a distinct intermediate; this guards a caller
+     * that violates that contract directly.
+     * Mutation guard: removing the alias check lets the child run to
+     * completion and exit 0 (no death) -> RED. */
+    size_t n = 4;
+    size_t dims[] = {n};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    symQConfig_t qc = {.scale = 0.1f, .qBits = 6, .roundingMode = HALF_AWAY};
+    quantization_t q;
+    initSymQuantization(&qc, &q);
+    uint8_t data[calcNumberOfBytesForData(&q, n)];
+    int32_t mant[] = {5, -2, 3, -4};
+    byteConversion((uint8_t *)mant, 32, data, 6, n);
+    tensor_t t;
+    setTensorValues(&t, data, &shape, &q, NULL);
+
+    ASSERT_EXITS_WITH_FAILURE(accumulateTensorIntoSymRescale(&t, &t));
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -2729,6 +2823,9 @@ int main(void) {
     RUN_TEST(testDequantChunkToFloatAsymUnpacksZeroExtendedAtOffsets);
     RUN_TEST(testDequantChunkToFloatRejectsCountAboveChunk);
     RUN_TEST(testDequantChunkToFloatRejectsMisalignedOffset);
+    RUN_TEST(testDequantChunkToFloatRejectsOutOfRangeOffset);
+    RUN_TEST(testQuantizeFloatToAsymNoOpOnEmptyTensor);
+    RUN_TEST(testAccumulateTensorIntoSymRescaleRejectsSelfAliasedIncrement);
 
     return UNITY_END();
 }

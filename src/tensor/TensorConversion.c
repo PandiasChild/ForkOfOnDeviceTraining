@@ -110,6 +110,12 @@ void dequantChunkToFloat(const tensor_t *src, size_t elemOffset, size_t count, f
                     ODT_CONVERSION_CHUNK_ELEMS, elemOffset);
         exit(1);
     }
+    size_t srcElems = calcNumberOfElementsByTensor((tensor_t *)src);
+    if (elemOffset > srcElems || count > srcElems - elemOffset) {
+        PRINT_ERROR("dequantChunkToFloat: range [%zu, %zu) exceeds source tensor (%zu elements)",
+                    elemOffset, elemOffset + count, srcElems);
+        exit(1);
+    }
     switch (src->quantization->type) {
     case FLOAT32:
         memcpy(out, (const float *)src->data + elemOffset, count * sizeof(float));
@@ -180,6 +186,12 @@ static void emitAsymChunk(const float *vals, size_t count, const asymQConfig_t *
  * no rounding); emission then streams in ODT_CONVERSION_CHUNK_ELEMS chunks so no
  * VLA/heap scratch scales with n (#296 Stage 2). */
 static void quantizeFloatToAsym(const float *values, size_t n, asymQConfig_t *outQC, uint8_t *dst) {
+    if (n == 0) {
+        /* n == 0: no grid can be derived from an empty payload -- leave the
+         * caller's qConfig untouched, write nothing (same no-op contract as
+         * the sibling n==0 guards; the old code read values[0] here, UB). */
+        return;
+    }
     float mn = findMinFloat((uint8_t *)values, n);
     float mx = findMaxFloat((uint8_t *)values, n);
     deriveAsymGridFromMinMax(mn, mx, outQC);
@@ -701,6 +713,18 @@ typedef struct {
     const tensor_t *tens;
 } incSrc_t;
 
+static void rejectAliasedIncrement(const tensor_t *target, const tensor_t *increment,
+                                   const char *what) {
+    /* Self-aliasing is rejected: the rescale engines rewrite the target's
+     * grid between phase A and phase B, so an aliased increment would be
+     * decoded against the wrong grid mid-stream (release-review finding,
+     * PR #324). The funnel epilogue always passes a distinct intermediate. */
+    if (increment->data == target->data) {
+        PRINT_ERROR("%s: increment must not alias the target", what);
+        exit(1);
+    }
+}
+
 static void incSrcChunk(const incSrc_t *src, size_t off, size_t count, float *out) {
     if (src->flat != NULL) {
         memcpy(out, src->flat + off, count * sizeof(float));
@@ -781,6 +805,7 @@ void accumulateTensorIntoSymFixedGrid(tensor_t *target, const tensor_t *incremen
         PRINT_ERROR("accumulateTensorIntoSymFixedGrid: element-count mismatch");
         exit(1);
     }
+    rejectAliasedIncrement(target, increment, "accumulateTensorIntoSymFixedGrid");
     incSrc_t src = {.flat = NULL, .tens = increment};
     accumulateIntoSymFixedGridEngine(target, &src, n);
 }
@@ -845,6 +870,7 @@ void accumulateTensorIntoSymRescale(tensor_t *target, const tensor_t *increment)
         PRINT_ERROR("accumulateTensorIntoSymRescale: element-count mismatch");
         exit(1);
     }
+    rejectAliasedIncrement(target, increment, "accumulateTensorIntoSymRescale");
     incSrc_t src = {.flat = NULL, .tens = increment};
     accumulateIntoSymRescaleEngine(target, &src, n);
 }
@@ -912,6 +938,7 @@ void accumulateTensorIntoAsymRescale(tensor_t *target, const tensor_t *increment
         PRINT_ERROR("accumulateTensorIntoAsymRescale: element-count mismatch");
         exit(1);
     }
+    rejectAliasedIncrement(target, increment, "accumulateTensorIntoAsymRescale");
     incSrc_t src = {.flat = NULL, .tens = increment};
     accumulateIntoAsymRescaleEngine(target, &src, n);
 }

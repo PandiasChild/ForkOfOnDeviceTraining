@@ -76,7 +76,11 @@ void accumulateFloatIntoAsymTensorRescale(tensor_t *target, const float *inc, si
  * chunk-wise via dequantChunkToFloat; float* variants keep their signatures.
  * accumulateSymInt32IntoSymInt32Rescale reproduces addSymInt32TensorsInplace's
  * Strategy-A semantics (dequant both -> float add -> fresh-absmax requant with
- * the TARGET's roundingMode) in O(chunk); Add.c stays untouched. */
+ * the TARGET's roundingMode) in O(chunk); Add.c stays untouched.
+ * accumulateTensorIntoSymFixedGrid/accumulateTensorIntoSymRescale/
+ * accumulateTensorIntoAsymRescale reject a self-aliased increment (increment
+ * and target sharing the same data pointer) with exit(1) — the funnel
+ * epilogue always passes a distinct intermediate (release-review, PR #324). */
 void accumulateTensorIntoSymFixedGrid(tensor_t *target, const tensor_t *increment);
 void accumulateTensorIntoSymRescale(tensor_t *target, const tensor_t *increment);
 void accumulateTensorIntoAsymRescale(tensor_t *target, const tensor_t *increment);
