@@ -32,11 +32,20 @@ def send_notification(bot_token, chat_id, message):
 def objective(trial) -> int| float:
     trial_number = trial.number
     delta_reduction = trial.suggest_int("delta_reduction", 1, 4, step=1)
-    learning_rate = trial.suggest_int("learning_rate", 1, 4, step=1)
-    momentum = trial.suggest_int("momentum", 1, 4, step=1)
+    learning_rate = trial.suggest_float("learning_rate", 0.001, 0.1, step=0.004) #0.001
+    momentum = trial.suggest_float("momentum", 1, 0.95, step=0.05) #0.9
     # rounding_mode = 0 # HALF_AWAY
     epochs = 50
     batch = 64 # möchte ich klein haben, weil für embedded device
+
+    trial.set_user_attr("delta_reduction", delta_reduction)
+    trial.set_user_attr("lr", learning_rate)
+    trial.set_user_attr("momentum", momentum)
+    #trial.set_user_attr("rounding_mode", rounding_mode)
+
+    trial.set_user_attr("epochs", epochs)
+    trial.set_user_attr("batch", batch)
+
     try:
         result = subprocess.run(
             [
@@ -49,6 +58,7 @@ def objective(trial) -> int| float:
                 str(batch),
                 #str(rounding_mode)
             ],
+            check = True,
             capture_output=True,
             text=True
         )
@@ -63,36 +73,63 @@ def objective(trial) -> int| float:
             test_loss_delta = data.get("final", {}).get("test_loss")
             test_acc_delta = data.get("final", {}).get("test_acc")
 
-            #test_loss = data["final"]["test_loss"]
-            #test_acc = data["final"]["test_acc"]
-            #print('FINAL test_loss=' + test_loss + '  test_acc=' + test_acc )
-            #optuna_element{
-            #    "optuna": [
-            #        {"name": "Max"},
-            #        {"name": "Lisa"}
-            #    ]
-            #}
-            #data["items"].insert(3, neues_element)
-
-            trial.set_user_attr("delta_reduction", delta_reduction)
-            trial.set_user_attr("lr", learning_rate)
-            trial.set_user_attr("momentum", momentum)
-            #trial.set_user_attr("rounding_mode", rounding_mode)
-
             trial.set_user_attr("test_loss_delta", test_loss_delta)
             trial.set_user_attr("test_acc_delta", test_acc_delta)
             trial.set_user_attr("test_duration_delta", test_duration_delta)
 
-            trial.set_user_attr("epochs", epochs)
-            trial.set_user_attr("batch", batch)
-    except Exception as e:
+    except subprocess.CalledProcessError as e:
         with open('telegram_bot.json', 'r') as f:
             telegram_bot = json.load(f)
 
             bot_token = telegram_bot.get("BOT_TOKEN", {})
             chat_id = telegram_bot.get("CHAT_ID", {})
-            message = f"Training DELTA fehlgeschlagen:\ntrial_number {trial_number}\nexception: {e}\n"
+            message = f"Training DELTA fehlgeschlagen:\ntrial_number {trial_number}\nDas Skript ist mit Exit-Code {e.returncode} beendet worden: {e.stderr}, {e}\n"
             send_notification(bot_token, chat_id, message)
+
+    except OSError as e:
+        with open('telegram_bot.json', 'r') as f:
+            telegram_bot = json.load(f)
+
+            bot_token = telegram_bot.get("BOT_TOKEN", {})
+            chat_id = telegram_bot.get("CHAT_ID", {})
+            message = f"Training SYM fehlgeschlagen:\ntrial_number {trial_number}\nBetriebssystemfehler: {e}\n"
+            send_notification(bot_token, chat_id, message)
+
+    except FileNotFoundError:
+        with open('telegram_bot.json', 'r') as f:
+            telegram_bot = json.load(f)
+
+            bot_token = telegram_bot.get("BOT_TOKEN", {})
+            chat_id = telegram_bot.get("CHAT_ID", {})
+            message = f"Training DELTA fehlgeschlagen:\ntrial_number {trial_number}\nPython oder das Skript wurde nicht gefunden: {e}\n"
+            send_notification(bot_token, chat_id, message)
+
+    except PermissionError:
+        with open('telegram_bot.json', 'r') as f:
+            telegram_bot = json.load(f)
+
+            bot_token = telegram_bot.get("BOT_TOKEN", {})
+            chat_id = telegram_bot.get("CHAT_ID", {})
+            message = f"Training DELTA fehlgeschlagen:\ntrial_number {trial_number}\nKeine Berechtigung zum Ausführen: {e}\n"
+            send_notification(bot_token, chat_id, message)
+
+    except TimeoutError:
+        with open('telegram_bot.json', 'r') as f:
+            telegram_bot = json.load(f)
+
+            bot_token = telegram_bot.get("BOT_TOKEN", {})
+            chat_id = telegram_bot.get("CHAT_ID", {})
+            message = f"Training DELTA fehlgeschlagen:\ntrial_number {trial_number}\nZeitüberschreitung: {e}\n"
+            send_notification(bot_token, chat_id, message)
+
+    except Exception as e:
+            with open('telegram_bot.json', 'r') as f:
+                telegram_bot = json.load(f)
+
+                bot_token = telegram_bot.get("BOT_TOKEN", {})
+                chat_id = telegram_bot.get("CHAT_ID", {})
+                message = f"Training DELTA fehlgeschlagen:\ntrial_number {trial_number}\nexception: {e}\n"
+                send_notification(bot_token, chat_id, message)
     try:
         result = subprocess.run(
             [
@@ -121,6 +158,52 @@ def objective(trial) -> int| float:
             trial.set_user_attr("test_loss_sym", test_loss_sym)
             trial.set_user_attr("test_acc_sym", test_acc_sym)
             trial.set_user_attr("test_duration_sym", test_duration_sym)
+
+    except subprocess.CalledProcessError as e:
+        with open('telegram_bot.json', 'r') as f:
+            telegram_bot = json.load(f)
+
+            bot_token = telegram_bot.get("BOT_TOKEN", {})
+            chat_id = telegram_bot.get("CHAT_ID", {})
+            message = f"Training SYM fehlgeschlagen:\ntrial_number {trial_number}\nDas Skript ist mit Exit-Code {e.returncode} beendet worden: {e.stderr}, {e}\n"
+            send_notification(bot_token, chat_id, message)
+
+    except OSError as e:
+        with open('telegram_bot.json', 'r') as f:
+            telegram_bot = json.load(f)
+
+            bot_token = telegram_bot.get("BOT_TOKEN", {})
+            chat_id = telegram_bot.get("CHAT_ID", {})
+            message = f"Training SYM fehlgeschlagen:\ntrial_number {trial_number}\nBetriebssystemfehler: {e}\n"
+            send_notification(bot_token, chat_id, message)
+
+    except FileNotFoundError:
+        with open('telegram_bot.json', 'r') as f:
+            telegram_bot = json.load(f)
+
+            bot_token = telegram_bot.get("BOT_TOKEN", {})
+            chat_id = telegram_bot.get("CHAT_ID", {})
+            message = f"Training SYM fehlgeschlagen:\ntrial_number {trial_number}\nPython oder das Skript wurde nicht gefunden: {e}\n"
+            send_notification(bot_token, chat_id, message)
+
+    except PermissionError:
+        with open('telegram_bot.json', 'r') as f:
+            telegram_bot = json.load(f)
+
+            bot_token = telegram_bot.get("BOT_TOKEN", {})
+            chat_id = telegram_bot.get("CHAT_ID", {})
+            message = f"Training SYM fehlgeschlagen:\ntrial_number {trial_number}\nKeine Berechtigung zum Ausführen: {e}\n"
+            send_notification(bot_token, chat_id, message)
+
+    except TimeoutError:
+        with open('telegram_bot.json', 'r') as f:
+            telegram_bot = json.load(f)
+
+            bot_token = telegram_bot.get("BOT_TOKEN", {})
+            chat_id = telegram_bot.get("CHAT_ID", {})
+            message = f"Training SYM fehlgeschlagen:\ntrial_number {trial_number}\nZeitüberschreitung: {e}\n"
+            send_notification(bot_token, chat_id, message)
+
     except Exception as e:
         with open('telegram_bot.json', 'r') as f:
             telegram_bot = json.load(f)
@@ -145,7 +228,7 @@ def main():
         storage = f"sqlite:///{study_db_path.resolve()}",
         load_if_exists=True)
 
-    study.optimize(objective, n_trials=30)
+    study.optimize(objective, n_trials=30, n_jobs = 2)
     space = intersection_search_space(study.get_trials())
 
     fig = plot_optimization_history(study)
