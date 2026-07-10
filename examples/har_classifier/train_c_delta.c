@@ -468,12 +468,12 @@ int main(int argc, char *argv[]) {
 
     int len = snprintf(NULL, 0, "examples/har_classifier/logs/with_deltas/trial_%d_.json", trial_number);
 
-    char *logPath = malloc(len + 3);
+    char *logPath = malloc(len + 4);
     if (logPath == NULL) {
         return 1;
     }
 
-    snprintf(logPath, len + 3, "examples/har_classifier/logs/with_deltas/trial_%d.json", trial_number);
+    snprintf(logPath, len + 4, "examples/har_classifier/logs/with_deltas/trial_%d.json", trial_number);
 
 
     if (argc > 2) {
