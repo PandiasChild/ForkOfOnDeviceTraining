@@ -7,6 +7,7 @@ import string
 from pathlib import Path
 import json
 import requests
+import time
 #NOTE: c-sym-weights vs c-delta-weights for plotting!
 
 # you need to uv add kaleido and uv add optuna
@@ -33,7 +34,7 @@ def send_notification(bot_token, chat_id, message):
 def objective(trial) -> int| float:
     trial_number = trial.number
     delta_reduction = trial.suggest_int("delta_reduction", 1, 4, step=1)
-    learning_rate = trial.suggest_float("learning_rate", 0.001, 0.1, step=0.005) #0.001
+    learning_rate = trial.suggest_float("learning_rate", 0.00001, 0.1, log=True) #0.001 = 1e-3 & 0.1 = 1e-1
     momentum = trial.suggest_float("momentum", 0, 0.95, step=0.05) #0.9
     # rounding_mode = 0 # HALF_AWAY
     epochs = 50
@@ -49,11 +50,11 @@ def objective(trial) -> int| float:
 
     test_loss_delta = 0
     test_acc_delta = 0
-
+    start = time.time()
     try:
         result = subprocess.run(
             [
-                './build/examples/examples/har_classifier/train_c_delta',
+                './build/examples/examples/har_classifier/train_c_har_classifier_delta',
                 str(trial_number),
                 str(delta_reduction),
                 str(learning_rate),
@@ -63,12 +64,16 @@ def objective(trial) -> int| float:
                 #str(rounding_mode)
             ],
             check = True,
-            capture_output=True,
+            #capture_output=True,
             text=True
         )
+        #result.wait()
+        print("C fertig nach", time.time() - start, "Sekunden")
+        print("Returncode:", result.returncode)
+        print("Output:", result.stdout)
         test_duration_delta = 0
         prefix = 'examples/har_classifier/logs/with_deltas/trial_'
-        with open(prefix + trial_number + '.json', 'r') as f:
+        with open(prefix + str(trial_number) + '.json', 'r') as f:
             data = json.load(f)
 
             for epochs in data["epochs"]:
@@ -82,6 +87,19 @@ def objective(trial) -> int| float:
             trial.set_user_attr("test_duration_delta", test_duration_delta)
 
     except subprocess.CalledProcessError as e:
+        if(e.returncode == 2):
+            trial.set_user_attr("gates", "GATES FAILED DELTA")
+            prefix = 'examples/har_classifier/logs/with_deltas/trial_'
+            with open(prefix + str(trial_number) + '.json', 'r') as f:
+                data = json.load(f)
+
+            initial_val_loss = data.get("final", {}).get("test_loss")
+            initial_val_acc = data.get("final", {}).get("test_acc")
+
+            trial.set_user_attr("initial_val_loss", initial_val_loss)
+            trial.set_user_attr("initial_val_acc", initial_val_acc)
+
+            return initial_val_acc, initial_val_loss
         with open('telegram_bot.json', 'r') as f:
             telegram_bot = json.load(f)
 
@@ -137,7 +155,7 @@ def objective(trial) -> int| float:
     try:
         result = subprocess.run(
             [
-                './build/examples/examples/har_classifier/train_c_sym',
+                './build/examples/examples/har_classifier/train_c_har_classifier_sym',
                 str(trial_number),
                 str(learning_rate),
                 str(momentum),
@@ -145,12 +163,13 @@ def objective(trial) -> int| float:
                 str(batch),
                 #str(rounding_mode)
             ],
-            capture_output=True,
+            check=True,
+            #capture_output=True,
             text=True
         )
         test_duration_sym = 0
         prefix = 'examples/har_classifier/logs/without_deltas/trial_'
-        with open(prefix + trial_number + '.json', 'r') as f:
+        with open(prefix + str(trial_number) + '.json', 'r') as f:
             data_sym = json.load(f)
 
             for epochs in data_sym["epochs"]:
@@ -164,6 +183,19 @@ def objective(trial) -> int| float:
             trial.set_user_attr("test_duration_sym", test_duration_sym)
 
     except subprocess.CalledProcessError as e:
+        if(e.returncode == 2):
+            trial.set_user_attr("gates", "GATES FAILED DELTA")
+            prefix = 'examples/har_classifier/logs/without_deltas/trial_'
+            with open(prefix + str(trial_number) + '.json', 'r') as f:
+                data = json.load(f)
+
+            initial_val_loss = data.get("epochs", {}).get("initial_val_loss")
+            initial_val_acc = data.get("epochs", {}).get("initial_val_acc")
+
+            trial.set_user_attr("initial_val_loss", initial_val_loss)
+            trial.set_user_attr("initial_val_acc", initial_val_acc)
+
+            return initial_val_acc, initial_val_loss
         with open('telegram_bot.json', 'r') as f:
             telegram_bot = json.load(f)
 
@@ -216,6 +248,7 @@ def objective(trial) -> int| float:
             chat_id = telegram_bot.get("CHAT_ID", {})
             message = f"Training SYM fehlgeschlagen:\ntrial_number {trial_number}\nexception: {e}\n"
             send_notification(bot_token, chat_id, message)
+    trial.set_user_attr("gates", "GATES PASSED")
     if (test_acc_delta == 0):
         with open('telegram_bot.json', 'r') as f:
             telegram_bot = json.load(f)
@@ -224,7 +257,6 @@ def objective(trial) -> int| float:
             chat_id = telegram_bot.get("CHAT_ID", {})
             message = f"trial_number {trial_number} probably failed: test_acc_delta = 0\n"
             send_notification(bot_token, chat_id, message)
-
     if (test_loss_delta == 0):
         with open('telegram_bot.json', 'r') as f:
             telegram_bot = json.load(f)
@@ -233,7 +265,6 @@ def objective(trial) -> int| float:
             chat_id = telegram_bot.get("CHAT_ID", {})
             message = f"trial_number {trial_number} probably failed: test_loss_delta = 0\n"
             send_notification(bot_token, chat_id, message)
-        return 0
     return test_acc_delta, test_loss_delta
 
 
@@ -261,38 +292,38 @@ def main():
         storage = f"sqlite:///{study_db_path.resolve()}",
         load_if_exists=True)
 
-    study.optimize(objective, n_trials=30, n_jobs = 2)
-    space = intersection_search_space(study.get_trials())
+    study.optimize(objective, n_trials=99, n_jobs = 1)
+    #space = intersection_search_space(study.get_trials())
 
-    fig = plot_optimization_history(study)
-    fig.write_html("optimization_history.html")
-    fig.write_image("optimization_history.png")
+    #fig = plot_optimization_history(study)
+    #fig.write_html("optimization_history.html")
+    #fig.write_image("optimization_history.png")
 
     # Optimierungsverlauf
-    plot_optimization_history(study).show()
+    #plot_optimization_history(study).show()
 
     # Wichtigkeit der Hyperparameter
-    plot_param_importances(study).show()
+    #plot_param_importances(study).show()
 
     # Parallel Coordinates
-    plot_parallel_coordinate(study).show()
+    #plot_parallel_coordinate(study).show()
 
     # Slice Plot
-    plot_slice(study).show()
+    #plot_slice(study).show()
 
     # Konturdiagramm
-    plot_contour(study).show()
+    #plot_contour(study).show()
 
     # Empirical Distribution Function
-    plot_edf(study).show()
+    #plot_edf(study).show()
 
-    print(f"Intersection Search Space Of Trials : {space}")
+    #print(f"Intersection Search Space Of Trials : {space}")
 
-    print(f"Best Trial Number : {study.best_trial.number}")
-    print(f"Best Trial Value : {study.best_trial.value}")
-    print(f"Best Trial Params : {study.best_trial.params}")
-    print(f"Best Value : {study.best_value}")
-    print(f"Best Params : {study.best_params}")
+    #print(f"Best Trial Number : {study.best_trial.number}")
+    #print(f"Best Trial Value : {study.best_trial.value}")
+    #print(f"Best Trial Params : {study.best_trial.params}")
+    #print(f"Best Value : {study.best_value}")
+    #print(f"Best Params : {study.best_params}")
 
 if __name__ == "__main__":
     main()
