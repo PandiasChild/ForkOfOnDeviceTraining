@@ -292,7 +292,7 @@ def main():
         storage = f"sqlite:///{study_db_path.resolve()}",
         load_if_exists=True)
 
-    study.optimize(objective, n_trials=99, n_jobs = 1)
+    study.optimize(objective, n_trials=999, n_jobs = 1)
     #space = intersection_search_space(study.get_trials())
 
     #fig = plot_optimization_history(study)
