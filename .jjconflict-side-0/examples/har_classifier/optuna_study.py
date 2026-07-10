@@ -233,7 +233,7 @@ def objective(trial) -> int| float:
             message = f"trial_number {trial_number} probably failed: test_loss_delta = 0\n"
             send_notification(bot_token, chat_id, message)
         return 0
-    return test_acc_delta
+    return test_acc_delta, test_loss_delta
 
 
 def main():
@@ -245,7 +245,7 @@ def main():
 
     study = optuna.create_study(
         study_name = study_name,
-        direction="maximize",
+        directions=["maximize", "minimize"],
         storage = f"sqlite:///{study_db_path.resolve()}",
         load_if_exists=True)
 
