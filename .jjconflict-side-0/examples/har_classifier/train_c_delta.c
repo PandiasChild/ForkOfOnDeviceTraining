@@ -468,12 +468,12 @@ int main(int argc, char *argv[]) {
 
     int len = snprintf(NULL, 0, "examples/har_classifier/logs/with_deltas/trial_%d_.json", trial_number);
 
-    char *logPath = malloc(len + 4);
+    char *logPath = malloc(len + 10);
     if (logPath == NULL) {
         return 1;
     }
 
-    snprintf(logPath, len + 4, "examples/har_classifier/logs/with_deltas/trial_%d.json", trial_number);
+    snprintf(logPath, len + 10, "examples/har_classifier/logs/with_deltas/trial_%d.json", trial_number);
 
 
     if (argc > 2) {
@@ -591,7 +591,7 @@ int main(int argc, char *argv[]) {
     fprintf(stdout, "initial_val_loss=%.6f initial_val_acc=%.6f (expected ~%.4f)\n",
             (double)initStats.loss, (double)initStats.accuracy, log(6.0));
     fflush(stdout);
-    if (!(fabs((double)initStats.loss - log(6.0)) < 0.25)) {
+    if (!(fabs((double)initStats.loss - log(6.0)) < 0.25)) { //TODO: change - originally was 0.25
         fprintf(stderr, "GATE FAIL DELTA: initial val loss %.6f not near ln(6)=%.4f\n",
                 (double)initStats.loss, log(6.0));
         if (logPath != NULL && logPath[0] != '\0') {
