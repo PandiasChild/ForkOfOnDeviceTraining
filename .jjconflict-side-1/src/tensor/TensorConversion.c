@@ -537,8 +537,6 @@ static void packFitGuarded(const int32_t *src, size_t n, uint8_t *dst, size_t ds
     byteConversion((uint8_t *)tmp, 32, dst, dstBits, n);
 }
 
-
-
 static void packFloatBufferAsSymForDelta(const float *values, size_t n, symQDeltaConfig_t *outQC, uint8_t *dst,
                                  const char *what) {
     float absMax = findAbsMaxFloat((uint8_t *)values, n);
@@ -573,22 +571,6 @@ static void packFloatBufferAsSym(const float *values, size_t n, symQConfig_t *ou
                               (int32_t)qMax);
     }
     packFitGuarded(codes, n, dst, outQC->qBits, what);
-}
-
-static void packFloatBufferAsSym2(const float *values, size_t n, symQConfig_t *outQC, uint8_t *dst,
-                                 const char *what) {
-    float absMax = findAbsMaxFloat((uint8_t *)values, n);
-    const float qMax = powf(2, (float)outQC->qBits - 1) - 1;
-    const float qMin = -powf(2, (float)outQC->qBits - 1);
-    float scale = (absMax == 0.f) ? 1.f : absMax / qMax;
-    outQC->scale = scale;
-    printf("scale = %f\n", scale);
-    int32_t codes[n];
-    for (size_t i = 0; i < n; i++) {
-        codes[i] = clampInt32(roundByMode(values[i] / scale, outQC->roundingMode), (int32_t)qMin,
-                              (int32_t)qMax);
-    }
-    packFitGuardedForDelta(codes, n, dst, outQC->qBits, outQC->qBits, what);
 }
 
 void convertSymInt32TensorToSymTensor(tensor_t *inputTensor, tensor_t *outputTensor) {
@@ -642,13 +624,6 @@ void convertDeltaTensorToSymInt32Tensor(tensor_t *inputTensor, tensor_t *outputT
         out[i] = out[i] + out[i-1];
     }
 }
-/*
-void convertFloatTensorToSymTensor(tensor_t *inputTensor, tensor_t *outputTensor) {
-    size_t n = calcNumberOfElementsByTensor(inputTensor);
-    symQConfig_t *outQC = outputTensor->quantization->qConfig;
-    packFloatBufferAsSym((float *)inputTensor->data, n, outQC, outputTensor->data,
-                         "convertFloatTensorToSymTensor");
-}*/
 
 void convertFloatTensorToDeltaTensor(tensor_t *inputTensor, tensor_t *outputTensor){
     size_t numberOfElements = calcNumberOfElementsByTensor(inputTensor);
