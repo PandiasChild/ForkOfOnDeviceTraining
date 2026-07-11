@@ -33,9 +33,10 @@ def send_notification(bot_token, chat_id, message):
 
 def objective(trial) -> int| float:
     trial_number = trial.number
-    delta_reduction = trial.suggest_int("delta_reduction", 1, 4, step=1)
-    learning_rate = trial.suggest_float("learning_rate", 0.00001, 0.1, log=True) #0.001 = 1e-3 & 0.1 = 1e-1
-    momentum = trial.suggest_float("momentum", 0, 0.95, step=0.05) #0.9
+    #delta_reduction = trial.suggest_int("delta_reduction", 1, 4, step=1)
+    delta_reduction = 1
+    learning_rate = trial.suggest_float("learning_rate", 0.00001, 0.005, log=True) #0.001 = 1e-3 & 0.1 = 1e-1 & 5e-3 = 0.005
+    momentum = trial.suggest_float("momentum", 0.7, 0.95, step=0.05) #0.9
     # rounding_mode = 0 # HALF_AWAY
     epochs = 50
     batch = 64 # möchte ich klein haben, weil für embedded device
@@ -67,7 +68,7 @@ def objective(trial) -> int| float:
             #capture_output=True,
             text=True
         )
-        #result.wait()
+        result.wait()
         print("C fertig nach", time.time() - start, "Sekunden")
         print("Returncode:", result.returncode)
         print("Output:", result.stdout)
@@ -145,13 +146,13 @@ def objective(trial) -> int| float:
             send_notification(bot_token, chat_id, message)
 
     except Exception as e:
-            with open('telegram_bot.json', 'r') as f:
-                telegram_bot = json.load(f)
+        with open('telegram_bot.json', 'r') as f:
+            telegram_bot = json.load(f)
 
-                bot_token = telegram_bot.get("BOT_TOKEN", {})
-                chat_id = telegram_bot.get("CHAT_ID", {})
-                message = f"Training DELTA fehlgeschlagen:\ntrial_number {trial_number}\nexception: {e}\n"
-                send_notification(bot_token, chat_id, message)
+            bot_token = telegram_bot.get("BOT_TOKEN", {})
+            chat_id = telegram_bot.get("CHAT_ID", {})
+            message = f"Training DELTA fehlgeschlagen:\ntrial_number {trial_number}\nexception: {e}\n"
+            send_notification(bot_token, chat_id, message)
     try:
         result = subprocess.run(
             [
@@ -167,6 +168,7 @@ def objective(trial) -> int| float:
             #capture_output=True,
             text=True
         )
+        result.wait()
         test_duration_sym = 0
         prefix = 'examples/har_classifier/logs/without_deltas/trial_'
         with open(prefix + str(trial_number) + '.json', 'r') as f:
@@ -283,7 +285,7 @@ def main():
     # Optional: keep console quiet
     optuna.logging.disable_default_handler()
 
-    study_name = "har_classifier_delta_vs_sym"
+    study_name = "har_classifier_sym_vs_delta_1"
     study_db_path: Path = optuna_results_dir / f"{study_name}.db"
 
     study = optuna.create_study(
