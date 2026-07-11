@@ -17,6 +17,8 @@ arithmetic_t arithmeticFromQuantization(const quantization_t *q) {
     case ASYM:
         a.roundingMode = ((asymQConfig_t *)q->qConfig)->roundingMode;
         break;
+    case DELTA:
+        a.roundingMode = ((symQDeltaConfig_t *)q->qConfig)->roundingMode;
     case FLOAT32:
     case INT32:
     case BOOL:
