@@ -1,5 +1,6 @@
 add_subdirectory(arithmetic)
 add_subdirectory(common)
+add_subdirectory(continual_learning)
 add_subdirectory(csv)
 add_subdirectory(data_loader)
 add_subdirectory(layer)

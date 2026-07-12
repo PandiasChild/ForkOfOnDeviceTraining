@@ -1,0 +1,30 @@
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
+        PpcaReplay
+        MORE_LIBS
+        m
+        PpcaReplayApi
+        Tensor
+        TensorApi
+        QuantizationApi
+        Quantization
+        Rounding
+        TensorConversion
+        ExecuteOp
+        Common
+        ArithmeticType
+        Matmul
+        Reduce
+        Axpby
+        RowBroadcast
+        JacobiEig
+        Sub
+        Add
+        Mul
+        MinMax
+        Distributions
+        RNG
+        StorageApi
+        DataLoader
+        odt_test_death
+)

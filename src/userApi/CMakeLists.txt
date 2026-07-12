@@ -1,3 +1,4 @@
+add_subdirectory(continual_learning)
 add_subdirectory(data_loader)
 add_subdirectory(layer)
 add_subdirectory(optimizer)
