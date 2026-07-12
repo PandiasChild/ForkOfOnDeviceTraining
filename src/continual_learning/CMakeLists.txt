@@ -22,3 +22,18 @@ target_link_libraries(PpcaReplay PRIVATE
         Distributions
         RNG
 )
+
+add_library(PpcaReplaySerialize PpcaReplaySerialize.c)
+target_include_directories(PpcaReplaySerialize PUBLIC include)
+target_link_libraries(PpcaReplaySerialize PRIVATE
+        Common
+        PpcaReplay
+        Serialize
+        Deserialize
+        Tensor
+        Quantization
+        Rounding
+        Layer
+        RNG
+        ArithmeticType
+)

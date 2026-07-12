@@ -1,4 +1,4 @@
-add_library(PpcaReplayApi PpcaReplayApi.c)
+add_library(PpcaReplayApi PpcaReplayApi.c ReplayDataLoader.c)
 target_include_directories(PpcaReplayApi PUBLIC include)
 target_link_libraries(PpcaReplayApi PRIVATE
         Common
@@ -11,5 +11,6 @@ target_link_libraries(PpcaReplayApi PRIVATE
         Rounding
         RNG
         DataLoader
+        DataLoaderApi
         StorageApi
 )

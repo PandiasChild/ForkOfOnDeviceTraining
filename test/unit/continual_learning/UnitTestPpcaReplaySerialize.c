@@ -1,0 +1,284 @@
+#define SOURCE_FILE "UNIT_TEST_PPCA_REPLAY_SERIALIZE"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "DeathTest.h"
+#include "ExecuteOp.h" /* executeConvert for the packed-state snapshot */
+#include "PpcaReplay.h"
+#include "PpcaReplayApi.h"
+#include "PpcaReplaySerialize.h"
+#include "Quantization.h"
+#include "QuantizationApi.h"
+#include "StorageApi.h"
+#include "Tensor.h"
+#include "TensorApi.h"
+#include "unity.h"
+
+#define FILE_PATH PPCA_SERIALIZE_TEST_FILE_PATH
+
+void setUp(void) {}
+void tearDown(void) {}
+
+/* floatConfig / packedConfig: copied VERBATIM from UnitTestPpcaReplay.c
+ * (same file-local static pattern; Tasks 7/11). */
+static ppcaReplayConfig_t floatConfig(size_t dim, size_t rank, size_t maxM) {
+    static quantization_t floatQ; /* static: outlives the call; cloned by create */
+    initFloat32Quantization(&floatQ);
+    ppcaReplayConfig_t cfg = {
+        .dim = dim,
+        .rank = rank,
+        .maxSessionSamples = maxM,
+        .mergeMath = {.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY},
+        .streamMath = {.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY},
+        .sampleMath = {.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY},
+        .meanQ = &floatQ,
+        .basisQ = &floatQ,
+        .eigvalsQ = &floatQ,
+        .sigma2Floor = 1e-6f,
+        .shrinkageGamma = 0.0f,
+    };
+    return cfg;
+}
+
+static ppcaReplayConfig_t packedConfig(size_t dim, size_t rank, size_t maxM, qtype_t basisType) {
+    ppcaReplayConfig_t cfg = floatConfig(dim, rank, maxM);
+    static symQConfig_t symQc;
+    static quantization_t symQ;
+    static asymQConfig_t asymQc;
+    static quantization_t asymQ;
+    initSymQConfig(8, HALF_AWAY, &symQc);
+    initSymQuantization(&symQc, &symQ);
+    initAsymQConfig(8, HALF_AWAY, &asymQc);
+    initAsymQuantization(&asymQc, &asymQ);
+    if (basisType == SYM) {
+        cfg.basisQ = &symQ;
+        cfg.meanQ = &asymQ; /* mean has an offset -> ASYM */
+    } else {
+        cfg.basisQ = &asymQ;
+        cfg.meanQ = &asymQ;
+    }
+    return cfg;
+}
+
+/* Seed a set with NON-UNIFORM state so field-order swaps corrupt bytes
+ * detectably (serial-module fixture discipline). */
+static void seedSet(ppcaReplaySet_t *set) {
+    for (size_t c = 0; c < set->numClasses; c++) {
+        ppcaReplay_t *g = set->generators[c];
+        float *mu = (float *)g->mean->data; /* FLOAT32 config in tests */
+        float *b = (float *)g->basis->data;
+        float *lam = (float *)g->eigvals->data;
+        for (size_t j = 0; j < g->dim; j++) {
+            mu[j] = 0.25f * (float)(c + 1) * (float)j;
+        }
+        for (size_t i = 0; i < g->rank * g->dim; i++) {
+            b[i] = 0.01f * (float)i - 0.05f * (float)c;
+        }
+        for (size_t i = 0; i < g->rank; i++) {
+            lam[i] = 3.0f - (float)i - 0.1f * (float)c;
+        }
+        g->sigma2 = 0.5f + (float)c; /* != totalVar != count: order-swap trap */
+        g->totalVar = 100.0f + (float)c;
+        g->count = 42 + (uint32_t)c;
+    }
+}
+
+void testRoundTripFloat(void) {
+    ppcaReplayConfig_t cfg = floatConfig(6, 2, 8);
+    ppcaReplaySet_t *serial = ppcaReplaySetCreate(2, &cfg);
+    ppcaReplaySet_t *deserial = ppcaReplaySetCreate(2, &cfg);
+    seedSet(serial);
+
+    FILE *f = fopen(FILE_PATH, "wb");
+    ppcaReplaySetSerialize(serial, f);
+    fclose(f);
+    f = fopen(FILE_PATH, "rb");
+    ppcaReplaySetDeserialize(deserial, f);
+    fclose(f);
+
+    for (size_t c = 0; c < 2; c++) {
+        ppcaReplay_t *s = serial->generators[c];
+        ppcaReplay_t *d = deserial->generators[c];
+        TEST_ASSERT_EQUAL_UINT32(s->count, d->count);
+        TEST_ASSERT_EQUAL_FLOAT(s->sigma2, d->sigma2);
+        TEST_ASSERT_EQUAL_FLOAT(s->totalVar, d->totalVar);
+        TEST_ASSERT_EQUAL_FLOAT_ARRAY((float *)s->mean->data, (float *)d->mean->data, 6);
+        TEST_ASSERT_EQUAL_FLOAT_ARRAY((float *)s->basis->data, (float *)d->basis->data, 12);
+        TEST_ASSERT_EQUAL_FLOAT_ARRAY((float *)s->eigvals->data, (float *)d->eigvals->data, 2);
+    }
+    freePpcaReplaySet(deserial);
+    freePpcaReplaySet(serial);
+}
+
+void testRoundTripPacked(void) {
+    /* SYM@8 basis + ASYM@8 mean survive byte-tight (serializeTensor packed
+     * round-trip) — also the wire-layout-coupling test: the deserialize
+     * peek must consume EXACTLY the record header serializeTensor wrote,
+     * or the rewind lands wrong and this roundtrip fails loudly. */
+    ppcaReplayConfig_t cfgF = floatConfig(6, 2, 8);
+    ppcaReplaySet_t *train = ppcaReplaySetCreate(1, &cfgF);
+    seedSet(train);
+    ppcaReplayConfig_t cfgP = packedConfig(6, 2, 8, SYM);
+    ppcaReplaySet_t *serial = ppcaReplaySetCreate(1, &cfgP);
+    ppcaReplaySet_t *deserial = ppcaReplaySetCreate(1, &cfgP);
+    executeConvert(train->generators[0]->mean, serial->generators[0]->mean);
+    executeConvert(train->generators[0]->basis, serial->generators[0]->basis);
+    executeConvert(train->generators[0]->eigvals, serial->generators[0]->eigvals);
+    serial->generators[0]->sigma2 = 0.75f;
+    serial->generators[0]->totalVar = 12.5f;
+    serial->generators[0]->count = 9;
+
+    FILE *f = fopen(FILE_PATH, "wb");
+    ppcaReplaySetSerialize(serial, f);
+    fclose(f);
+    f = fopen(FILE_PATH, "rb");
+    ppcaReplaySetDeserialize(deserial, f);
+    fclose(f);
+
+    size_t basisBytes = calcNumberOfBytesForData(serial->generators[0]->basis->quantization, 12);
+    TEST_ASSERT_EQUAL_MEMORY(serial->generators[0]->basis->data,
+                             deserial->generators[0]->basis->data, basisBytes);
+    size_t meanBytes = calcNumberOfBytesForData(serial->generators[0]->mean->quantization, 6);
+    TEST_ASSERT_EQUAL_MEMORY(serial->generators[0]->mean->data, deserial->generators[0]->mean->data,
+                             meanBytes);
+    TEST_ASSERT_EQUAL_UINT32(9, deserial->generators[0]->count);
+    freePpcaReplaySet(deserial);
+    freePpcaReplaySet(serial);
+    freePpcaReplaySet(train);
+}
+
+void testDeserializeRejectsDtypeMismatch(void) {
+    /* FLOAT32 checkpoint into a packed-built skeleton = the #316 4x-overflow
+     * scenario. Must exit BEFORE any skeleton write. */
+    ppcaReplayConfig_t cfgF = floatConfig(6, 2, 8);
+    ppcaReplaySet_t *serial = ppcaReplaySetCreate(1, &cfgF);
+    seedSet(serial);
+    FILE *f = fopen(FILE_PATH, "wb");
+    ppcaReplaySetSerialize(serial, f);
+    fclose(f);
+
+    ppcaReplayConfig_t cfgP = packedConfig(6, 2, 8, SYM);
+    ppcaReplaySet_t *skeleton = ppcaReplaySetCreate(1, &cfgP);
+    f = fopen(FILE_PATH, "rb");
+    ASSERT_EXITS_WITH_FAILURE(ppcaReplaySetDeserialize(skeleton, f));
+    fclose(f);
+    freePpcaReplaySet(skeleton);
+    freePpcaReplaySet(serial);
+}
+
+void testDeserializeRejectsQBitsMismatch(void) {
+    /* SYM@8 record into a SYM@4 skeleton: SAME dtype enum — the type check
+     * alone is insufficient (#316), qBits must be compared too. */
+    ppcaReplayConfig_t cfg8 = packedConfig(6, 2, 8, SYM);
+    ppcaReplaySet_t *serial = ppcaReplaySetCreate(1, &cfg8);
+    FILE *f = fopen(FILE_PATH, "wb");
+    ppcaReplaySetSerialize(serial, f);
+    fclose(f);
+
+    ppcaReplayConfig_t cfg4 = floatConfig(6, 2, 8);
+    static symQConfig_t qc4;
+    static quantization_t q4;
+    initSymQConfig(4, HALF_AWAY, &qc4);
+    initSymQuantization(&qc4, &q4);
+    cfg4.basisQ = &q4;
+    static asymQConfig_t aqc;
+    static quantization_t aq;
+    initAsymQConfig(8, HALF_AWAY, &aqc);
+    initAsymQuantization(&aqc, &aq);
+    cfg4.meanQ = &aq;
+    ppcaReplaySet_t *skeleton = ppcaReplaySetCreate(1, &cfg4);
+    f = fopen(FILE_PATH, "rb");
+    ASSERT_EXITS_WITH_FAILURE(ppcaReplaySetDeserialize(skeleton, f));
+    fclose(f);
+    freePpcaReplaySet(skeleton);
+    freePpcaReplaySet(serial);
+}
+
+void testDeserializeRejectsDimMismatch(void) {
+    ppcaReplayConfig_t cfg = floatConfig(6, 2, 8);
+    ppcaReplaySet_t *serial = ppcaReplaySetCreate(1, &cfg);
+    FILE *f = fopen(FILE_PATH, "wb");
+    ppcaReplaySetSerialize(serial, f);
+    fclose(f);
+    ppcaReplayConfig_t cfgBig = floatConfig(8, 2, 8);
+    ppcaReplaySet_t *skeleton = ppcaReplaySetCreate(1, &cfgBig);
+    f = fopen(FILE_PATH, "rb");
+    ASSERT_EXITS_WITH_FAILURE(ppcaReplaySetDeserialize(skeleton, f));
+    fclose(f);
+    freePpcaReplaySet(skeleton);
+    freePpcaReplaySet(serial);
+}
+
+void testDeserializeRejectsBadMagicAndTruncation(void) {
+    ppcaReplayConfig_t cfg = floatConfig(6, 2, 8);
+    ppcaReplaySet_t *skeleton = ppcaReplaySetCreate(1, &cfg);
+
+    FILE *f = fopen(FILE_PATH, "wb");
+    fwrite("XXXX", 1, 4, f);
+    fclose(f);
+    f = fopen(FILE_PATH, "rb");
+    ASSERT_EXITS_WITH_FAILURE(ppcaReplaySetDeserialize(skeleton, f));
+    fclose(f);
+
+    /* Truncation: serialize a valid set, then cut the file short. */
+    ppcaReplaySet_t *serial = ppcaReplaySetCreate(1, &cfg);
+    f = fopen(FILE_PATH, "wb");
+    ppcaReplaySetSerialize(serial, f);
+    long full = ftell(f);
+    fclose(f);
+    FILE *in = fopen(FILE_PATH, "rb");
+    char *buf = reserveMemory((size_t)full);
+    fread(buf, 1, (size_t)full, in);
+    fclose(in);
+    f = fopen(FILE_PATH, "wb");
+    fwrite(buf, 1, (size_t)full / 2, f);
+    fclose(f);
+    freeReservedMemory(buf);
+    f = fopen(FILE_PATH, "rb");
+    ASSERT_EXITS_WITH_FAILURE(ppcaReplaySetDeserialize(skeleton, f));
+    fclose(f);
+    freePpcaReplaySet(serial);
+    freePpcaReplaySet(skeleton);
+}
+
+void testDeserializeRejectsPayloadTruncation(void) {
+    /* Cut INSIDE the last tensor's payload region (full-2 bytes): every
+     * header/scalar readOrDie and the peek still succeed, and the public
+     * deserializeTensor's payload fread is UNCHECKED — only the post-read
+     * record-length check can catch this. */
+    ppcaReplayConfig_t cfg = floatConfig(6, 2, 8);
+    ppcaReplaySet_t *skeleton = ppcaReplaySetCreate(1, &cfg);
+    ppcaReplaySet_t *serial = ppcaReplaySetCreate(1, &cfg);
+    seedSet(serial);
+    FILE *f = fopen(FILE_PATH, "wb");
+    ppcaReplaySetSerialize(serial, f);
+    long full = ftell(f);
+    fclose(f);
+    FILE *in = fopen(FILE_PATH, "rb");
+    char *buf = reserveMemory((size_t)full);
+    fread(buf, 1, (size_t)full, in);
+    fclose(in);
+    f = fopen(FILE_PATH, "wb");
+    fwrite(buf, 1, (size_t)full - 2, f);
+    fclose(f);
+    freeReservedMemory(buf);
+    f = fopen(FILE_PATH, "rb");
+    ASSERT_EXITS_WITH_FAILURE(ppcaReplaySetDeserialize(skeleton, f));
+    fclose(f);
+    freePpcaReplaySet(serial);
+    freePpcaReplaySet(skeleton);
+}
+
+int main(void) {
+    UNITY_BEGIN();
+    RUN_TEST(testRoundTripFloat);
+    RUN_TEST(testRoundTripPacked);
+    RUN_TEST(testDeserializeRejectsDtypeMismatch);
+    RUN_TEST(testDeserializeRejectsQBitsMismatch);
+    RUN_TEST(testDeserializeRejectsDimMismatch);
+    RUN_TEST(testDeserializeRejectsBadMagicAndTruncation);
+    RUN_TEST(testDeserializeRejectsPayloadTruncation);
+    return UNITY_END();
+}
