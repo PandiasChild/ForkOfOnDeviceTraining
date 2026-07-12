@@ -369,6 +369,35 @@ jobs:
             --c examples/kws_raw/outputs/6class/c_predictions.npy \
             --dtype int32
 
+      # Re-splits the HAR raw data (already restored/prepared above by the
+      # "Cache raw datasets" + "Prepare HAR data" steps) into T=5 sequential
+      # domains by subject. No network access -- fails fast if data/raw is
+      # missing.
+      - name: Prepare HAR domain splits (continual)
+        run: uv run examples/har_classifier/prepare_domains.py
+
+      # Machinery smoke test for the #326 continual-learning demo: single
+      # seed, 2 domains, 1 epoch each -- proves the PPCA-replay pipeline
+      # runs end-to-end, emits schema-valid JSON, and keeps replay memory
+      # footprint constant across domains. Deliberately NOT a BWT/accuracy
+      # gate (single seed is stochastic; see spec §9) -- the 10-seed
+      # continual-learning study is a separate, non-CI artifact.
+      - name: Continual-learning mini-gate (machinery smoke, no BWT threshold)
+        run: |
+          DOMAINS=2 PRETRAIN_EPOCHS=1 EPOCHS_PER_DOMAIN=1 RANK=4 REPLAY=1 \
+            LOG_PATH=continual_smoke.json \
+            build/examples/examples/har_classifier/train_c_continual
+          uv run - <<'PY'
+          import json
+          log = json.load(open("continual_smoke.json"))
+          rows = log["accuracy_matrix"]
+          assert len(rows) == 2 and len(rows[1]) == 2, rows
+          assert log["replay"]["enabled"] == 1
+          assert log["replay"]["footprint_constant"] is True
+          assert log["replay"]["bytes_per_class"] > 0
+          print("continual mini-gate OK")
+          PY
+
   # Compile-only ARM cross-build of the core src/ libraries. Surfaces the
   # 32-bit-size_t bug class (e.g. 1<<32 shift UB, PR #297) and newlib
   # behaviors (#160) that are structurally invisible on the LP64 host jobs.

@@ -120,6 +120,43 @@ Notes on the qualified cells:
   (no truncation detection). No save-to-disk of a full model exists above this layer —
   `StateDictApi` is weight-**load** only.
 
+## Continual learning (`src/continual_learning/`, `src/userApi/continual_learning/`)
+
+Memory-bounded generative replay against catastrophic forgetting under
+sequential domain shift (#326). Full guide: **`docs/CONTINUAL_LEARNING.md`**
+(when to use, memory formula, knob guidance, update paths, sequencing,
+checkpointing, limitations, literature).
+
+- **Per-class PPCA generator** — `ppcaReplay_t` holds `(mean[d], basis[k,d]`
+  orthonormal, `eigvals[k]` descending, `sigma2, totalVar, count)`;
+  `ppcaReplaySample` draws synthetic rehearsal samples reproducing the PPCA
+  marginal (Tipping & Bishop 1999). Persistent footprint is `O((k+1)·d)` per
+  class and **constant** in the number of domains absorbed so far
+  (`ppcaReplayBytes`, `ppcaReplayIsoExemplarCount` for the iso-byte
+  exemplar-buffer comparison).
+- **Two update paths** — `ppcaReplayUpdate` (session merge, recommended
+  default; Chan et al. 1983 two-set merge + the Ross et al. 2008
+  mean-correction column) and `ppcaReplayUpdateStreaming` (CCIPCA, Weng et
+  al. 2003, per-sample `O(k·d)`, deliberately **no** amnesic discount —
+  retention by design, not tracked as a gap).
+- **Training-loop integration is a `dataLoader_t` wrapper** —
+  `replayDataLoaderWrap`/`freeReplayDataLoader` (`src/userApi/
+  continual_learning/`), zero framework changes: appends `r` synthetic
+  samples per eligible class after the real batch, so the optimizer's
+  existing `batch->size` MEAN divisor scales them in automatically. Must be
+  freed with `freeReplayDataLoader`, **never** `freeDataLoader` (the
+  wrapper borrows the base loader's fields).
+- **Storage vs. arithmetic** — same split as layers: `meanQ`/`basisQ`/
+  `eigvalsQ` (FLOAT32/SYM/ASYM) are independent per-tensor storage configs;
+  compute (`mergeMath`/`streamMath`/`sampleMath`) is v1 `ARITH_FLOAT32`
+  only (`ppcaValidateFloatArith` fail-fasts on `ARITH_SYM_INT32`).
+  FLOAT32-active/packed-at-rest (SYM/ASYM@8 via `executeConvert`) is the
+  recommended pattern.
+- **Serialization** — `ppcaReplaySetSerialize`/`ppcaReplaySetDeserialize`
+  (`PpcaReplaySerialize.h`), the repo's first non-layer checkpoint format
+  (`"ODTR"` magic), with a peek-validate-rewind guard against the
+  #316-class deserialize-overwrite hazard; requires a seekable stream.
+
 ## Other subsystems
 
 - **Loss functions** — `MSE` (FLOAT32 + SYM_INT32, fwd+bwd) and `CROSS_ENTROPY`
@@ -162,3 +199,6 @@ Notes on the qualified cells:
 - Serialization: sparsity stub, non-portable wire format, no I/O error handling.
 - `sparsityType_t` is scaffolding only (propagated but no kernel exploits it).
 - Pooling layers are FLOAT32-only.
+- Continual-learning (PPCA replay, #326) arithmetic is `ARITH_FLOAT32` only;
+  no integer eigensolver exists yet. State storage is unaffected (FLOAT32/
+  SYM/ASYM all accepted).
