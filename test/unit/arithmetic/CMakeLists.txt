@@ -54,6 +54,17 @@ add_elastic_ai_unit_test(
 
 add_elastic_ai_unit_test(
         LIB_UNDER_TEST
+        Axpby
+        MORE_LIBS
+        Tensor
+        TensorApi
+        QuantizationApi
+        StorageApi
+        odt_test_death
+)
+
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
         Comparison
         MORE_LIBS
         Arithmetic
@@ -68,6 +79,11 @@ add_elastic_ai_unit_test(
         MinMax
         RNG
         Common
+        TensorApi
+        QuantizationApi
+        StorageApi
+        Tensor
+        odt_test_death
 )
 
 add_elastic_ai_unit_test(
@@ -76,6 +92,20 @@ add_elastic_ai_unit_test(
         MORE_LIBS
         Arithmetic
         Tensor
+)
+
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
+        JacobiEig
+        MORE_LIBS
+        m
+        Tensor
+        TensorApi
+        QuantizationApi
+        StorageApi
+        Reduce
+        MinMax
+        odt_test_death
 )
 
 add_elastic_ai_unit_test(
@@ -114,6 +144,17 @@ add_elastic_ai_unit_test(
         Arithmetic
         StorageApi
         MinMax
+        odt_test_death
+)
+
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
+        RowBroadcast
+        MORE_LIBS
+        Tensor
+        TensorApi
+        QuantizationApi
+        StorageApi
         odt_test_death
 )
 

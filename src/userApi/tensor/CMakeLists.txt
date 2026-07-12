@@ -9,12 +9,11 @@ target_link_libraries(QuantizationApi PRIVATE
 
 add_library(TensorApi TensorApi.c)
 target_include_directories(TensorApi PUBLIC include)
-target_link_libraries(TensorApi PRIVATE
+target_link_libraries(TensorApi PUBLIC Distributions PRIVATE
         Tensor
         Rounding
         StorageApi
         Common
         TensorConversion
-        Distributions
         QuantizationApi
 )

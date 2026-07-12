@@ -388,6 +388,73 @@ void testMeanSymInt32RejectsZeroWidthOperand(void) {
     freeTensor(in);
 }
 
+/* ---- sumSquaresOverTrailingAxesFloat32 + sqrtFloat32 (#326 Task 5) ---- */
+
+void testSumSquaresTrailingAxes(void) {
+    // in [2,3]: rows {1,2,3},{-2,0,2}; k=1 -> ssqOut [2] = {14, 8}.
+    size_t inDims[] = {2, 3};
+    tensor_t *in = buildFloatTensorND(2, inDims, (float[]){1.0f, 2.0f, 3.0f, -2.0f, 0.0f, 2.0f});
+    size_t outDims[] = {2};
+    tensor_t *ssq = buildFloatTensorND(1, outDims, NULL);
+
+    sumSquaresOverTrailingAxesFloat32(in, 1, ssq);
+
+    float s0 = ((float *)ssq->data)[0];
+    float s1 = ((float *)ssq->data)[1];
+
+    freeTensor(ssq);
+    freeTensor(in);
+
+    TEST_ASSERT_EQUAL_FLOAT(14.0f, s0);
+    TEST_ASSERT_EQUAL_FLOAT(8.0f, s1);
+}
+
+void testSumSquaresWholeTensor(void) {
+    // k == rank -> single scalar.
+    size_t inDims[] = {4};
+    tensor_t *in = buildFloatTensorND(1, inDims, (float[]){1.0f, 1.0f, 2.0f, 3.0f});
+    size_t outDims[] = {1};
+    tensor_t *ssq = buildFloatTensorND(1, outDims, NULL);
+
+    sumSquaresOverTrailingAxesFloat32(in, 1, ssq);
+
+    float s0 = ((float *)ssq->data)[0];
+
+    freeTensor(ssq);
+    freeTensor(in);
+
+    TEST_ASSERT_EQUAL_FLOAT(15.0f, s0);
+}
+
+void testSumSquaresPermutationAware(void) {
+    // Transposed view: [2,3] storage viewed as [3,2]; k=1 over the VIEW's
+    // trailing dim -> 3 row-SSQs of the transposed logical rows.
+    size_t inDims[] = {2, 3};
+    tensor_t *in = buildFloatTensorND(2, inDims, (float[]){1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f});
+    transposeTensor(in, 0, 1); // logical [3,2]: rows {1,4},{2,5},{3,6}
+    size_t outDims[] = {3};
+    tensor_t *ssq = buildFloatTensorND(1, outDims, NULL);
+
+    sumSquaresOverTrailingAxesFloat32(in, 1, ssq);
+
+    float s0 = ((float *)ssq->data)[0];
+    float s1 = ((float *)ssq->data)[1];
+    float s2 = ((float *)ssq->data)[2];
+
+    freeTensor(ssq);
+    transposeTensor(in, 0, 1);
+    freeTensor(in);
+
+    TEST_ASSERT_EQUAL_FLOAT(17.0f, s0);
+    TEST_ASSERT_EQUAL_FLOAT(29.0f, s1);
+    TEST_ASSERT_EQUAL_FLOAT(45.0f, s2);
+}
+
+void testSqrtFloat32(void) {
+    TEST_ASSERT_EQUAL_FLOAT(3.0f, sqrtFloat32(9.0f));
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, sqrtFloat32(0.0f));
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testAbsFloat32);
@@ -407,5 +474,9 @@ int main(void) {
     RUN_TEST(testMeanSymInt32RejectsWideOperand);
     RUN_TEST(testMeanSymInt32RejectsOverlongAxis);
     RUN_TEST(testMeanSymInt32RejectsZeroWidthOperand);
+    RUN_TEST(testSumSquaresTrailingAxes);
+    RUN_TEST(testSumSquaresWholeTensor);
+    RUN_TEST(testSumSquaresPermutationAware);
+    RUN_TEST(testSqrtFloat32);
     return UNITY_END();
 }

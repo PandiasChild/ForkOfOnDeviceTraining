@@ -46,6 +46,10 @@ uint32_t rngGetSeed(void) {
     return rng.state;
 }
 
+float rngNextFloatCtx(rng32_t *rngCtx) {
+    return (float)(rngNext(rngCtx) >> 8) / (float)(1 << 24);
+}
+
 float rngNextFloat(void) {
-    return (float)(rngNext(&rng) >> 8) / (float)(1 << 24);
+    return rngNextFloatCtx(&rng);
 }

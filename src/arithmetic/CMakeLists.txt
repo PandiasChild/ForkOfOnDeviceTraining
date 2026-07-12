@@ -29,6 +29,15 @@ target_link_libraries(ArithmeticType PRIVATE
         Rounding
 )
 
+add_library(Axpby Axpby.c)
+target_include_directories(Axpby PUBLIC include)
+target_link_libraries(Axpby PRIVATE
+        Tensor
+        DTypes
+        Arithmetic
+        Common
+)
+
 add_library(Comparison Comparison.c)
 target_include_directories(Comparison PUBLIC include)
 target_link_libraries(Comparison PRIVATE
@@ -39,10 +48,13 @@ target_link_libraries(Comparison PRIVATE
 
 add_library(Distributions Distributions.c)
 target_include_directories(Distributions PUBLIC include)
-target_link_libraries(Distributions PRIVATE
+target_link_libraries(Distributions PUBLIC RNG PRIVATE
         Common
-        RNG
         m
+        Tensor
+        DTypes
+        Quantization
+        Rounding
 )
 
 add_library(Div Div.c)
@@ -52,6 +64,18 @@ target_link_libraries(Div PRIVATE
         DTypes
         Arithmetic
         Common
+)
+
+add_library(JacobiEig JacobiEig.c)
+target_include_directories(JacobiEig PUBLIC include)
+target_link_libraries(JacobiEig PRIVATE
+        m
+        Common
+        Tensor
+        DTypes
+        Quantization
+        Reduce
+        MinMax
 )
 
 add_library(Kernel Kernel.c)
@@ -103,6 +127,15 @@ target_link_libraries(MinMax PRIVATE
 add_library(Reduce Reduce.c)
 target_include_directories(Reduce PUBLIC include)
 target_link_libraries(Reduce PRIVATE m Common Div Sub Add Mul Square Arithmetic Tensor DTypes Quantization Rounding MinMax)
+
+add_library(RowBroadcast RowBroadcast.c)
+target_include_directories(RowBroadcast PUBLIC include)
+target_link_libraries(RowBroadcast PRIVATE
+        Common
+        Tensor
+        DTypes
+        Quantization
+)
 
 add_library(Rounding Rounding.c)
 target_include_directories(Rounding PUBLIC include)

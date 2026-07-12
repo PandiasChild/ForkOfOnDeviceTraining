@@ -131,8 +131,28 @@ void varianceBiasedOverTrailingAxesFloat32(tensor_t *in, size_t k, tensor_t *mea
     }
 }
 
+void sumSquaresOverTrailingAxesFloat32(tensor_t *in, size_t k, tensor_t *ssqOut) {
+    size_t K;
+    size_t N;
+    blockGeom(in, k, &K, &N);
+    float *x = (float *)in->data;
+    float *s = (float *)ssqOut->data;
+    for (size_t b = 0; b < K; b++) {
+        float acc = 0.0f;
+        for (size_t j = 0; j < N; j++) {
+            float v = x[reducePhysOffset(in, k, b, j)];
+            acc = addFloat32s(acc, squareFloat32(v));
+        }
+        s[b] = acc;
+    }
+}
+
 float rsqrtFloat32(float x, float eps) {
     return divFloat32s(1.0f, sqrtf(addFloat32s(x, eps))); /* eps INSIDE sqrt guards x == 0 */
+}
+
+float sqrtFloat32(float x) {
+    return sqrtf(x);
 }
 
 /* A FLOAT32 buffer read as int32 mantissas is silent garbage, so fail fast on a

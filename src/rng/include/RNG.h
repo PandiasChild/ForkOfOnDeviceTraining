@@ -17,6 +17,11 @@ void rngSetSeed(uint32_t seed);
 
 uint32_t rngGetSeed(void);
 
+/* Context-passing variant: same draw math as rngNextFloat() on caller-owned
+ * state. Use for streams that must not perturb the module-global stream
+ * (e.g. PPCA replay sampling, #326). The global functions delegate here. */
+float rngNextFloatCtx(rng32_t *rng);
+
 float rngNextFloat(void);
 
 #endif // RNG_H

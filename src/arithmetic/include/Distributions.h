@@ -3,6 +3,11 @@
 
 #include <stddef.h>
 
+#include "RNG.h"
+
+/* Forward declaration to avoid circular includes with Tensor.h */
+typedef struct tensor tensor_t;
+
 typedef enum {
     ZEROS,
     ONES,
@@ -50,6 +55,15 @@ typedef struct {
  * @returns Float value
  */
 float randomNormal(float mean, float standardDeviation);
+
+/*! Context-passing Box-Muller draw; same math as randomNormal() on a
+ * caller-owned stream (see RNG.h). randomNormal() and this variant share the
+ * same Box-Muller core (bit-identical streams on both paths). */
+float randomNormalCtx(rng32_t *rng, float mean, float standardDeviation);
+
+/*! Fills a FLOAT32 tensor with i.i.d. N(mean, stddev^2) draws from the given
+ * stream, element-storage order. Fails fast on non-FLOAT32 tensors. */
+void fillNormalFloat32Tensor(tensor_t *out, rng32_t *rng, float mean, float stddev);
 
 /*! Gets random value from uniform distribution.
  *

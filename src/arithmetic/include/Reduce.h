@@ -26,8 +26,18 @@ void varianceBiasedOverTrailingAxesFloat32(tensor_t *in, size_t k, tensor_t *mea
 void varianceBiasedOverTrailingAxesSymInt32(tensor_t *in, size_t k, tensor_t *meanIn,
                                             tensor_t *varOut); /* varOut FLOAT32 */
 
+/* Sum of squares over the trailing k logical dims: one FLOAT32 scalar per
+ * leading-dims block (same block/permutation contract as the reductions
+ * above). Serves PPCA row norms and CCIPCA ||v_i|| (#326). */
+void sumSquaresOverTrailingAxesFloat32(tensor_t *in, size_t k, tensor_t *ssqOut);
+
 /* 1/sqrt(x + eps): eps INSIDE the sqrt guards x == 0 (matches LayerNorm). */
 float rsqrtFloat32(float x, float eps);
+
+/* sqrt(x), x >= 0: no guard -- callers (PPCA) clamp before calling, so a
+ * negative input is a caller bug, not something this function should mask.
+ * Fail-fast is wrong here; NaN propagates loudly instead. */
+float sqrtFloat32(float x);
 
 /* Elementwise 1/sqrt over a SYM_INT32 tensor: dequant each mantissa via in's
  * scale, rsqrtFloat32, then requant the whole result into `out` with a dynamic

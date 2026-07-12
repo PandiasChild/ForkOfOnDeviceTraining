@@ -83,6 +83,38 @@ void testRngSetSeedZeroNotAliasedToOne(void) {
     TEST_ASSERT_EQUAL_FLOAT(a0, a1);
 }
 
+void testRngNextFloatCtxReproducible(void) {
+    rng32_t a = {.state = 123};
+    rng32_t b = {.state = 123};
+    for (size_t i = 0; i < 100; i++) {
+        float val_a = rngNextFloatCtx(&a);
+        float val_b = rngNextFloatCtx(&b);
+        TEST_ASSERT_EQUAL_FLOAT(val_a, val_b);
+    }
+}
+
+void testRngNextFloatCtxMatchesGlobalStream(void) {
+    /* The global rngNextFloat() must be a bit-identical delegate of the ctx
+     * variant: same seed -> same sequence. Seed 123 maps to state 123. */
+    rng32_t ctx = {.state = 123};
+    rngSetSeed(123);
+    for (size_t i = 0; i < 100; i++) {
+        float global_val = rngNextFloat();
+        float ctx_val = rngNextFloatCtx(&ctx);
+        TEST_ASSERT_EQUAL_FLOAT(global_val, ctx_val);
+    }
+}
+
+void testRngNextFloatCtxDoesNotTouchGlobalStream(void) {
+    rngSetSeed(77);
+    uint32_t before = rngGetSeed();
+    rng32_t ctx = {.state = 999};
+    for (size_t i = 0; i < 50; i++) {
+        (void)rngNextFloatCtx(&ctx);
+    }
+    TEST_ASSERT_EQUAL_UINT32(before, rngGetSeed());
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testRngNextFloatInRange);
@@ -90,5 +122,8 @@ int main(void) {
     RUN_TEST(testRngNextFloatReproducible);
     RUN_TEST(testRngShuffleUsesGlobalState);
     RUN_TEST(testRngSetSeedZeroNotAliasedToOne);
+    RUN_TEST(testRngNextFloatCtxReproducible);
+    RUN_TEST(testRngNextFloatCtxMatchesGlobalStream);
+    RUN_TEST(testRngNextFloatCtxDoesNotTouchGlobalStream);
     return UNITY_END();
 }
