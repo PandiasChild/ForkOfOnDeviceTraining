@@ -194,7 +194,8 @@ def plot_anomaly_score_hist(
 # {"mean","std"}}, ...}}, "comparisons": {cfg: {"weight_bytes_drop_pct", ...}}}.
 # ---------------------------------------------------------------------------
 
-_MEM_CONFIG_ORDER = ["float", "sym16", "sym12", "sym8", "sym4"]
+# Real run_matrix.py sweep set (#322 — was drifted: sym16 never ran, sym10/sym6 missing).
+_MEM_CONFIG_ORDER = ["float", "sym12", "sym10", "sym8", "sym6", "sym4", "sym8cos", "sym4cos"]
 _MEM_CATEGORIES = ["params_b", "grads_b", "optstate_analytic_b", "activations_b", "io_b"]
 # Okabe-Ito palette, one per analytic category (colorblind-safe, distinguishable).
 _MEM_CAT_COLORS = {
@@ -285,15 +286,20 @@ def plot_accuracy_vs_memory_scatter(out_path: Path | str, agg: dict, dark: bool 
     cmap = plt.get_cmap("viridis")
     for i, c in enumerate(configs):
         st = per[c]["stats"]
-        xm, xs = st["mcu_total_b"]["mean"], st["mcu_total_b"]["std"]
+        # #322: mcu_total_b is an analytic formula — bit-identical across seeds, so it has
+        # no measurement error. Only y (test accuracy) carries a seed-std bar; a deterministic
+        # xerr would falsely imply the footprint was measured-with-uncertainty.
+        xm = st["mcu_total_b"]["mean"]
         ym, ys = st["test_acc"]["mean"], st["test_acc"]["std"]
         color = cmap(i / max(len(configs) - 1, 1))
-        ax.errorbar(xm / 1024.0, ym, xerr=xs / 1024.0, yerr=ys, fmt="o", markersize=8,
+        ax.errorbar(xm / 1024.0, ym, yerr=ys, fmt="o", markersize=8,
                     color=color, ecolor=color, capsize=3, elinewidth=1)
         ax.annotate(c, (xm / 1024.0, ym), textcoords="offset points", xytext=(8, 4),
                     fontsize=9, color=fg)
 
-    ax.set_xlabel("total on-device footprint (KB, micro-batch B=1)")
+    # #322: mcu_total_b is the HEAP categories only; the training-step stack high-water
+    # (stack_peak_b, reported separately) is excluded — say so on the axis.
+    ax.set_xlabel("on-device heap footprint (KB, B=1) — excl. training-step stack")
     ax.set_ylabel("test accuracy")
     ax.set_title("Accuracy vs on-device memory (packed SYM@x vs FLOAT32)")
     _mem_apply_theme(fig, ax, bg, fg, grid)

@@ -38,7 +38,11 @@ sys.path.insert(0, str(ROOT))
 from examples._shared.log_schema import RunLog, load_log  # noqa: E402
 
 # Config display order (float first as the reference, then descending SYM width).
-CONFIG_ORDER = ["float", "sym16", "sym12", "sym8", "sym4"]
+# The actual run_matrix.py sweep set (#322: was ["float","sym16","sym12","sym8","sym4"] —
+# sym16 never ran and sym10/sym6 were omitted, so those rows appended in dict order and
+# scrambled the table + color ramp). sym8cos/sym4cos are LR-schedule variants (memory-
+# identical to sym8/sym4) kept here so they order deterministically instead of appending.
+CONFIG_ORDER = ["float", "sym12", "sym10", "sym8", "sym6", "sym4", "sym8cos", "sym4cos"]
 
 # Analytic MCU categories, in report order. mcu_total_b is their sum.
 CATEGORIES = ["params_b", "grads_b", "optstate_analytic_b", "activations_b", "io_b"]

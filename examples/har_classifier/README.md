@@ -150,8 +150,14 @@ concurrent activation peak is *one sample's* worth — not 64×. That makes the 
 footprint roughly balanced: at FLOAT32 (~181 KB total) params, grads, and momentum are
 each ~22% and activations ~31%. At SYM@8 the weight *category* shrinks **75%** (40 KB →
 10 KB), which translates to a **material ~17% drop in total on-device training RAM**
-(~181 KB → ~151 KB; ~19% at SYM@4). `compare_memory.py` reports the weight-category
-drop and the total-footprint drop **separately** — they answer different questions. The
+(~181 KB → ~151 KB; ~19% at SYM@4). These totals are the **heap** categories only:
+`mcu_total_b` excludes the training-step **stack** high-water (`stack_peak_b`, reported
+separately, ≈27 KB float / ≈52 KB sym after the #296 packed-repack scratch). Including
+the stack, the SYM totals still come out ahead (SYM@8 ≈202 KiB vs FLOAT32 ≈208 KiB of
+provisioned RAM), so the stack **confirms** the SYM win rather than erasing it — this
+reverses the pre-#296 picture; see `check_stack_watermark.py` for the current numbers.
+`compare_memory.py` reports the weight-category drop and the total-footprint drop
+**separately** — they answer different questions. The
 next wins are grads and momentum (each another ~22%), reachable via the optimizer's
 per-config quant knob. Headline claims come **only** from the ≥10-seed aggregate; a
 `--min-seeds` guard warns loudly on smoke-sized runs.
