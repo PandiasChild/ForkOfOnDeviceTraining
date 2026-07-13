@@ -145,13 +145,13 @@ consumed by `initTensor` — that is a double-free. The cascade table:
 | `initTensor(s, q, sp)`                    | `freeTensor(t)`      | data, shape (+dims, +order), q, sp  |
 | `parameterInit(p, g)`                     | `freeParameter(par)` | param tensor + grad (if non-NULL)   |
 | `softmaxLayerInit(...)`                   | `freeSoftmaxLayer(l)`| layer config wrapper only           |
-| `sgdMCreateOptim(...)`                    | `freeOptimSgdM(o)`   | all registered parameters + states  |
+| `sgdMCreateOptim(...)`                    | `freeOptim(o)`       | all registered parameters + states  |
 | `inference(...)` (returns `tensor_t *`)   | `freeTensor(out)`    | as above                            |
 | `inferenceWithLoss(...)`                  | `freeInferenceStats` | stats struct + output tensor        |
 | `calculateGradsSequential(...)`           | `freeTrainingStats`  | stats struct                        |
 
 Layer free-functions release only the config wrapper, not the parameters
-they reference. When an optimizer is in play, `freeOptimSgdM` takes
+they reference. When an optimizer is in play, `freeOptim` takes
 ownership of the parameter cleanup — do not also call `freeParameter` on
 the same pointers.
 
@@ -234,6 +234,51 @@ Reference exemplars:
   `pyproject.toml`. The decoupling is intentional: generator scripts
   import `torch` directly, so the dependency belongs at the project
   level rather than inherited from `elasticai-creator`.
+
+### Torch-version coupling: pin, don't loosen
+
+The bit-exact golds pin torch's INTERNAL kernel rounding (lerp FMA fusion,
+addcdiv grouping, scheduler recursion paths), which torch does not guarantee
+across versions. Gold breakage on a torch bump is expected maintenance:
+RE-DERIVE the golds on the new pin — never loosen exact comparisons to
+tolerances.
+
+A separate, narrower caveat is the fp32-boundary/libm case: a fixture
+deliberately placed on a float32 rounding boundary can see torch's own
+computation disagree with the C-side closed form by a sub-ulp **double**
+difference that depends on the host's libm (observed: Apple libm and glibc
+`cos` land on opposite sides of the same boundary) — that drift is a
+torch/libm implementation detail, not a regression, and must not gate gold
+generation. The worked example is
+`test/unit/optimizer/generate_expected_lr_scheduler.py`'s
+`cos_discrim_b005_t26_e001` `CosineAnnealingLR` fixture (#327): it exists to
+discriminate the two double associations of `pi*e/T_max` (`(pi*e)/T_max`,
+torch's/correct, vs. `pi*(e/T_max)`, the bug #327 fixed), and incidentally
+also sits on a float32 rounding boundary at epoch 13. Its `record_sequence`
+call sets `boundary_tolerant=True`: the emitted gold is the closed-form value
+itself (bit-identical to the C computation by construction) and torch's
+output is merely sanity-checked within one float32 ULP, rather than compared
+bit-for-bit like every other fixture.
+
+A second worked example shows the same pattern triggered by a PLATFORM axis
+rather than a version axis: torch kernel rounding can also differ per host
+wheel, not just per torch release.
+`test/unit/arithmetic/generate_expected_pointwise_fused.py`'s `addcdivDenom`
+azero fixture (#353, found on the Linux CI runner while stabilizing #328) is
+the case — torch's addcdiv vectorization fuses the final multiply-add on
+Linux-AVX2 but not on macOS-ARM, and with an all-zero accumulator (0+x is
+exact) that <=1-ulp difference survives to the emitted bits, so the SAME
+torch version produces different golds on the two CI-relevant hosts. The
+STANDARD (a~O(1)) addcdiv fixture still passes bit-for-bit on both
+platforms — the term difference there sits below the accumulator's own ULP
+and is absorbed — so the divergence is real but narrow: only the
+zero-accumulator regime exposes it. Once a self-check exposes a platform (or
+version) split like this, the fix is the same move as the #327
+discriminator: demote torch from gold source to tolerance sanity check, and
+promote the documented order — here the numpy float32 replication of the
+six separate roundings (sqrt/div/mul/add, each correctly rounded) — to the
+gold source itself, since it is bit-identical on every IEEE host and to the
+C implementation by construction.
 
 ### CI implication: every job that runs `cmake --build` MUST install uv
 

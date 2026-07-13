@@ -93,7 +93,7 @@ Notes on the qualified cells:
   (no Nesterov/dampening), per-parameter momentum state (2 states for Linear/Conv/
   ConvT/LayerNorm, 0 for the rest, and 0 for every parameter when
   `momentumFactor == 0`), dtype-aware `scaleOptimizerGradients` (O(1) scale fold for
-  quantized grads), and `sgdZeroGrad`. No bias-correction.
+  quantized grads), and `optimizerZeroGrad`. No bias-correction.
 - **LR schedulers** (#327): `lrScheduler_t` (caller-owned, zero-alloc) with
   `STEP_LR`, `EXPONENTIAL_LR`, `COSINE_ANNEALING_LR` — PyTorch closed-form
   parity (double math, float cast at `setLr`), stepped by `trainingRun`
@@ -177,6 +177,31 @@ checkpointing, limitations, literature).
 - **Observer / trace** — `traceSink_t` callback facility (not a layer) that hands
   fwd/activation-grad/loss-grad/param tensors to a caller-supplied sink; used for
   layer-by-layer C-vs-PyTorch parity debugging (`npyDumpSink`, kws_raw harness).
+- **Fused pointwise primitives** (`src/arithmetic/PointwiseFused.c`, #328) — three
+  single-pass fused elementwise ops built for optimizer-state updates (AdamW's moment
+  math), each with a torch-parity **rounding contract**: `lerpFloat32TensorsInplace`
+  (`Tensor.lerp_`, small-weight branch) uses an explicit `fmaf()`, bit-identical to
+  ATen's FMA-fused CPU kernel for `|weight| < 0.5`; `addcmulFloat32TensorsInplace`
+  (`Tensor.addcmul_`) and `addcdivDenomFloat32TensorsInplace` (`Tensor.addcdiv_` parity
+  without materializing torch's denom tensor) keep their multiple roundings **separate
+  and left-associated** — no fusion. The separate-rounding contract is enforced by
+  `-ffp-contract=off` on the `PointwiseFused` compile target, not by the in-source
+  `#pragma STDC FP_CONTRACT OFF` alone: GCC ignores that pragma, and its default
+  `-ffp-contract=fast` silently fuses the non-lerp ops into `vfma` on ARM (invisible on
+  x86-64 CI, which needs `-mfma` to contract). A shared **identity-order gate** fail-fasts
+  unless every operand is FLOAT32 with matching dimensions and identity
+  `orderOfDimensions`, which deliberately sidesteps the permuted-Inplace aliasing hazard
+  (#339) and makes operand aliasing (e.g. `addcmul(a, b, b, s)`) safe by construction.
+  `addcdivDenomFloat32TensorsInplace`'s rounding contract is bit-identical to torch's
+  macOS-ARM kernel; torch's Linux-AVX2 vectorization fuses the final multiply-add and may
+  differ by up to 1 ulp in zero-accumulator regimes (#353), so its gold fixtures pin the
+  documented rounding order itself rather than a torch capture.
+  A latent `ODT_TRACK_INSTRUCTIONS` CMake cache var (ON in the `unit_test_debug`/
+  `unit_test_asan` presets, and, by inheritance, `unit_test_ubsan`; OFF by default
+  elsewhere) compiles in per-element instruction
+  counters (`getLerpInstructionCounter` et al.); no caller/estimator consumes them yet —
+  this is the first library wired for the mechanism (#351 tracks enabling it on the
+  legacy `Square`/`Matmul` libs, which predate it and have known blockers).
 - **Quantization machinery** — the 4-phase `executeOp` funnel + `executeConvert`, a
   6×6 `conversionMatrix` (every FLOAT32/INT32/SYM_INT32/SYM/ASYM pair; BOOL unsupported
   in every direction), grad-accumulate modes, and `quantizeFloatToAsym` as the single
@@ -202,3 +227,6 @@ checkpointing, limitations, literature).
 - Continual-learning (PPCA replay, #326) arithmetic is `ARITH_FLOAT32` only;
   no integer eigensolver exists yet. State storage is unaffected (FLOAT32/
   SYM/ASYM all accepted).
+- `TRACK_INSTRUCTIONS` counters exist on the legacy `Square`/`Matmul` libs but are
+  unsafe to enable: a name mismatch fails compilation for `Square`, both libs lack a
+  reset helper, and `Matmul`'s SYM_INT32 path double-increments (#351).
