@@ -2,7 +2,9 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 
+#include "Common.h"
 #include "Quantization.h"
 #include "Rounding.h"
 
@@ -14,6 +16,15 @@ void initSymInt32QConfig(roundingMode_t roundingMode, symInt32QConfig_t *symInt3
 
 void initSymInt32QConfigWithQMaxBits(roundingMode_t roundingMode,
                                      symInt32QConfig_t *symInt32QConfig, uint8_t qMaxBits) {
+    /* #202: qMaxBits > 31 makes the float32 clamp bound powf(2, qMaxBits - 1) - 1
+     * round up past INT32_MAX, so the (int32_t) cast in the SYM_INT32 converters is
+     * out of range (UB). 31 stays valid (raw-int/scale=1 regime, #227). This init is
+     * the single chokepoint every SYM_INT32 qConfig passes through. */
+    if (qMaxBits > 31) {
+        PRINT_ERROR("qMaxBits (%u) exceeds the cast-safe SYM_INT32 ceiling of 31 (#202)",
+                    (unsigned)qMaxBits);
+        exit(1);
+    }
     symInt32QConfig->roundingMode = roundingMode;
     symInt32QConfig->scale = 1.f;
     symInt32QConfig->qMaxBits = qMaxBits;

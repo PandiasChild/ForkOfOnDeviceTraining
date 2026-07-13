@@ -18,6 +18,7 @@ add_library(Quantization
 )
 target_include_directories(Quantization PUBLIC include)
 target_link_libraries(Quantization PRIVATE
+        Common
         Rounding
         m
 )

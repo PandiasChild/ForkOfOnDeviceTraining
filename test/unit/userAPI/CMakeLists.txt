@@ -411,6 +411,7 @@ target_link_libraries(UnitTestQuantizationApiBitsControl PRIVATE
         QuantizationApi
         Quantization
         Rounding
+        odt_test_death
 )
 __register_target_as_unit_test(UnitTestQuantizationApiBitsControl)
 add_executable(UnitTestQuantLayerIntegration UnitTestQuantLayerIntegration.c)
