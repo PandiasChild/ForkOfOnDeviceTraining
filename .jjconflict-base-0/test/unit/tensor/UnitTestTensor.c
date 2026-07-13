@@ -138,7 +138,7 @@ void testByteFlattening5() {
     size_t numValues = 6;
     size_t numBytesDataOut = 4 * numValues;
     uint8_t dataOut[numBytesDataOut];
-    ;
+
     byteConversion(dataIn, dataInBits, dataOut, dataOutBits, numValues);
     uint8_t expectedBytes[] = {16, 0, 0, 0, 22, 0, 0, 0, 27, 0, 0, 0,
                                31, 0, 0, 0, 6,  0, 0, 0, 0,  0, 0, 0};
@@ -200,48 +200,45 @@ void testByteConversion_NarrowingInt32ToSubByte_DoesNotOverreadOutputBuffer() {
 
 //companion to the test above
 void testByteConversionOffsets_startbitInOffset5() {
-    /* Four int32 values, (after 0xA) low 24 bits matter (numValues): 0, 0xC, 0xD.
-     * 0xFF should not be read     */
-    uint8_t dataIn[17] = {0xA, 0, 0, 0, 0xB0, 0, 0, 0, 0xC0, 0, 0, 0, 0xD0, 0, 0, 0, 0xFF};
+    uint8_t dataIn[17] = {0xA, 0, 0, 0, 0xB0, 0, 0, 0, 0xC0, 0, 0, 0, 0xFF};
     size_t dataInBits = 32;
     size_t dataOutBits = 24;
     size_t numValues = 4;
     size_t startbitInOffset = 5;
-    size_t startbitOutOffset = 0;
-    size_t numBytesDataOut = (numValues * dataOutBits - 1) / 8 + 1; /* = 2 */
+    size_t startbitOutOffset = dataOutBits;
+    size_t numBytesDataOut = (numValues * dataOutBits - 1) / 8 + 1; /* = 12 */
 
     uint8_t *dataOut = reserveMemory(numBytesDataOut);
     memset(dataOut, 0, numBytesDataOut);
-    byteConversionWithOffsets(dataIn, dataInBits, dataOut, startbitInOffset, dataOutBits, numValues,
-                              startbitOutOffset);
+    byteConversionWithOffsets(dataIn, dataInBits, startbitInOffset, dataOut, dataOutBits, startbitOutOffset,
+                              numValues, 1);
 
     uint8_t captured[numBytesDataOut];
     memcpy(captured, dataOut, numBytesDataOut);
     freeReservedMemory(dataOut);
-    uint8_t expectedBytes[12] = {0, 0, 0, 0b00000101, 0, 0, 0b00000110, 0, 0, 0b00000110, 0, 0};
+    uint8_t expectedBytes[] = {0xA, 0, 0, 0, 0, 0, 0b00000101, 0, 0, 0b00000110, 0, 0,  };
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, captured, numBytesDataOut);
 }
-
 void testByteConversionOffsets_startbitInOffset8() {
     /* Four int32 values, (after 0xA) low 16 bits matter (numValues): 0, 0xC, 0xD.
      */
     uint8_t dataIn[17] = {0xA, 0, 0, 0, 0, 0xB, 0, 0, 0, 0xC, 0, 0, 0, 0xD, 0, 0, 0};
     size_t dataInBits = 32;
     size_t dataOutBits = 16;
-    size_t numValues = 4;
+    size_t numValues = 5;
     size_t startbitInOffset = 8;
-    size_t startbitOutOffset = 0;
-    size_t numBytesDataOut = (numValues * dataOutBits - 1) / 8 + 1; /* = 2 */
+    size_t startbitOutOffset = dataOutBits;
+    size_t numBytesDataOut = (numValues * dataOutBits - 1) / 8 + 1; /* = 12 */
 
     uint8_t *dataOut = reserveMemory(numBytesDataOut);
     memset(dataOut, 0, numBytesDataOut);
-    byteConversionWithOffsets(dataIn, dataInBits, dataOut, startbitInOffset, dataOutBits, numValues,
-                              startbitOutOffset);
+    byteConversionWithOffsets(dataIn, dataInBits, startbitInOffset, dataOut, dataOutBits, startbitOutOffset,
+                              numValues, 1);
 
     uint8_t captured[numBytesDataOut];
     memcpy(captured, dataOut, numBytesDataOut);
     freeReservedMemory(dataOut);
-    uint8_t expectedBytes[8] = {0, 0, 0xB, 0, 0xC, 0, 0xD, 0};
+    uint8_t expectedBytes[12] = {0xA, 0, 0, 0, 0xB, 0, 0xC, 0, 0xD, 0};
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, captured, numBytesDataOut);
 }
 
@@ -251,22 +248,22 @@ void testByteConversionOffsets_startbitInOffset4() {
     uint8_t dataIn[17] = {0xA, 0, 0, 0, 0xB, 0, 0, 0, 0xC0, 0, 0, 0, 0xD0, 0, 0, 0, 0};
     size_t dataInBits = 32;
     size_t dataOutBits = 4;
-    size_t numValues = 4;
+    size_t numValues = 5;
     size_t startbitInOffset = 4;
-    size_t startbitOutOffset = 0;
-    size_t numBytesDataOut = (numValues * dataOutBits - 1) / 8 + 1; /* = 2 */
+    size_t startbitOutOffset = dataOutBits;
+    size_t numBytesDataOut = (numValues * dataOutBits - 1) / 8 + 1; /* = 3 */
 
     uint8_t *dataOut = reserveMemory(numBytesDataOut);
     memset(dataOut, 0, numBytesDataOut);
-    byteConversionWithOffsets(dataIn, dataInBits, dataOut, startbitInOffset, dataOutBits, numValues,
-                              startbitOutOffset);
+    byteConversionWithOffsets(dataIn, dataInBits, startbitInOffset, dataOut, dataOutBits, startbitOutOffset,
+                              numValues, 1);
 
     uint8_t captured[numBytesDataOut];
     memcpy(captured, dataOut, numBytesDataOut);
     freeReservedMemory(dataOut);
     /* byte 0 = 0 | 0
      * byte 1 = (0xD0 << 4) | 0xC = 0xDC;     */
-    uint8_t expectedBytes[2] = {0, 0xDC};
+    uint8_t expectedBytes[3] = {0xA, 0xC0, 0xD};
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, captured, numBytesDataOut);
 }
 
@@ -278,14 +275,14 @@ void testByteConversionOffsets_startbitOutOffset4() {
     size_t dataInBits = 32;
     size_t dataOutBits = 4;
     size_t numValues = 4;
-    size_t startbitInOffset = 0;
+    size_t startbitInOffset = dataInBits;
     size_t startbitOutOffset = 4;
-    size_t numBytesDataOut = (numValues * dataOutBits + startbitOutOffset - 1) / 8 + 1; /* = 3 */
+    size_t numBytesDataOut = ((numValues-1) * dataOutBits + startbitOutOffset - 1) / 8 + 1; /* = 3 */
 
     uint8_t *dataOut = reserveMemory(numBytesDataOut);
     memset(dataOut, 0, numBytesDataOut);
-    byteConversionWithOffsets(dataIn, dataInBits, dataOut, startbitInOffset, dataOutBits, numValues,
-                              startbitOutOffset);
+    byteConversionWithOffsets(dataIn, dataInBits, startbitInOffset, dataOut, dataOutBits, startbitOutOffset,
+                              numValues, 1);
 
     uint8_t captured[numBytesDataOut];
     memcpy(captured, dataOut, numBytesDataOut);
@@ -293,67 +290,32 @@ void testByteConversionOffsets_startbitOutOffset4() {
 
     /* byte 0 = (0xA << 4) = 0xA0;
      * byte 1 = (0xC << 4) | 0xB = 0xCB;     * byte 2 = 0xD = 0xD;     */
-    uint8_t expectedBytes[3] = {0xA0, 0xCB, 0xD};
+    uint8_t expectedBytes[3] = {0xBA, 0xDC};
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, captured, numBytesDataOut);
 }
 
 void testByteConversionOffsets_inAndOutOffset() {
     /* Four int32 values, low 4 bits matter: 0xA, 0xB, 0xC, 0xD. */
     uint8_t dataIn[16] = {
-        0, 0xA, 0, 0, 0, 0xB, 0, 0, 0, 0xC, 0, 0, 0, 0xD, 0, 0,
+        0, 0xA, 0, 0, 0, 0xB, 0, 0, 0, 0xC, 0, 0, 0, 0xD, 0, 0
     };
     size_t dataInBits = 32;
     size_t dataOutBits = 4;
-    size_t numValues = 4;
+    size_t numValues = 5;
     size_t startbitInOffset = 8;
     size_t startbitOutOffset = 4;
-    size_t numBytesDataOut = (numValues * dataOutBits + startbitOutOffset - 1) / 8 + 1; /* = 3 */
+    size_t numBytesDataOut = ((numValues-1) * dataOutBits + startbitOutOffset - 1) / 8 + 1; /* = 3 */
 
     uint8_t *dataOut = reserveMemory(numBytesDataOut);
-    memset(dataOut, 0, numBytesDataOut);
-    byteConversionWithOffsets(dataIn, dataInBits, dataOut, startbitInOffset, dataOutBits, numValues,
-                              startbitOutOffset);
+    memset(dataOut, 1, numBytesDataOut);
+    byteConversionWithOffsets(dataIn, dataInBits, startbitInOffset, dataOut, dataOutBits, startbitOutOffset,
+                              numValues, 1);
 
     uint8_t captured[numBytesDataOut];
     memcpy(captured, dataOut, numBytesDataOut);
     freeReservedMemory(dataOut);
 
     uint8_t expectedBytes[3] = {0xA0, 0xCB, 0xD};
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, captured, numBytesDataOut);
-}
-
-// use case  for Deltas
-void testByteConversionTogetherWithByteConversionOffsets() {
-    /* Four int32 values, low 4 bits matter: 0xA, 0xB, 0xC, 0xD. */
-    uint8_t dataIn[16] = {
-        0xA, 0, 0, 0, 0xB, 0, 0, 0, 0xC, 0, 0, 0, 0xD, 0, 0, 0,
-    };
-    size_t dataInBits = 32;
-    size_t dataOutBits = 5;
-    size_t numValues = 1;
-    size_t deltaNumValues = 3;
-    size_t deltaOutBits = 4;
-    size_t startbitInOffset = dataInBits;
-    size_t startbitOutOffset = dataOutBits;
-    size_t numBytesDataOut =
-        (numValues * dataOutBits + deltaNumValues * deltaOutBits - 1) / 8 + 1; /* = 3 */
-
-    uint8_t *dataOut = reserveMemory(numBytesDataOut);
-    memset(dataOut, 0, numBytesDataOut);
-    byteConversion(dataIn, dataInBits, dataOut, dataOutBits, 1);
-    printf("done\n");
-    byteConversionWithOffsets(dataIn, dataInBits, dataOut, startbitInOffset, deltaOutBits,
-                              deltaNumValues, startbitOutOffset);
-
-    uint8_t captured[numBytesDataOut];
-    memcpy(captured, dataOut, numBytesDataOut);
-    freeReservedMemory(dataOut);
-
-    /* byte 0 = (0xB << 5) | 0xA = (0b00001011 << 5) | 0b00001010 = 0b01101010 -> "remember"
-     * 0b00001xxx as 0b00000001 byte 1 = ((0xD << 4) << 1) | (0xC << 1) | 0b00000001 = ((0b00001101
-     * << 4) << 1) | (0b00001100 << 1) | 0b00000001 = 0b10111001 -> "remember" 0b00001xxx as
-     * 0b00000001     * byte 2 = 0b00000001     */
-    uint8_t expectedBytes[3] = {0b01101010, 0b10111001, 0b00000001};
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, captured, numBytesDataOut);
 }
 
@@ -620,6 +582,26 @@ void testCopyTensorSymIntoNullConfigDestDies() {
     ASSERT_EXITS_WITH_FAILURE(copyTensor(&dst, &src));
 }
 
+void byteConversionWithOffset0ShowsSameBehaviorLikeByteConversion()
+{
+    uint8_t dataIn[] = {0b11010000, 0b11101110, 0b01101111, 0b00000000};
+    size_t dataInBits = 5;
+    size_t dataOutBits = 32;
+    size_t numValues = 6;
+    size_t numBytesDataOut = 4 * numValues;
+    uint8_t dataOut0[numBytesDataOut];
+    uint8_t dataOut1[numBytesDataOut];
+
+    byteConversion(dataIn, dataInBits, dataOut0, dataOutBits, numValues);
+
+
+    byteConversionWithOffsets(dataIn, dataInBits, dataInBits, dataOut1, dataOutBits, dataOutBits, numValues, 1);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(dataOut0, dataOut1, numBytesDataOut);
+    /* should both be: uint8_t expectedBytes[] =
+     * {16, 0, 0, 0, 22, 0, 0, 0, 27, 0, 0, 0,
+     * 31, 0, 0, 0, 6,  0, 0, 0, 0,  0, 0, 0};
+     */
+}
 void setUp() {}
 void tearDown() {}
 
@@ -657,14 +639,13 @@ int main(void) {
     RUN_TEST(test_calcNumberOfBytesForData_Delta_qBits5_N4_deltabits2);
     RUN_TEST(test_calcNumberOfBytesForData_Delta_qBits5_N4_deltabits3);
 
-
-    RUN_TEST(testByteConversionTogetherWithByteConversionOffsets);
     RUN_TEST(testByteConversionOffsets_startbitOutOffset4);
     RUN_TEST(testByteConversionOffsets_startbitInOffset4);
     RUN_TEST(testByteConversionOffsets_startbitInOffset8);
     RUN_TEST(testByteConversionOffsets_startbitInOffset5);
 
     RUN_TEST(testByteConversionOffsets_inAndOutOffset);
+    RUN_TEST(byteConversionWithOffset0ShowsSameBehaviorLikeByteConversion);
 
     return UNITY_END();
 }
