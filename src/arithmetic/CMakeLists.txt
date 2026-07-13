@@ -218,3 +218,22 @@ target_link_libraries(ExecuteOp PRIVATE
         Rounding
         Common
 )
+
+add_library(PointwiseFused PointwiseFused.c)
+target_include_directories(PointwiseFused PUBLIC include)
+target_link_libraries(PointwiseFused PRIVATE
+        Tensor
+        Common
+        m
+)
+# Rounding order is the torch-parity contract. The in-source pragma is NOT
+# enough: GCC ignores `#pragma STDC FP_CONTRACT` and its default
+# (-ffp-contract=fast) fuses a+t*c into vfma on ARM (verified on
+# arm-none-eabi-gcc 10.3 / Cortex-M4F) — invisible on x86-64 CI, which
+# cannot contract without -mfma. The flag binds on both GCC and Clang.
+target_compile_options(PointwiseFused PRIVATE -ffp-contract=off)
+# Latent instruction counters (ODT_MEM_PROFILE pattern, src/userApi/CMakeLists.txt:43):
+# the define must sit on the LIBRARY (a test-target define is inert); PUBLIC so
+# guarded test TUs inherit it through the link edge.
+target_compile_definitions(PointwiseFused PUBLIC
+        $<$<BOOL:${ODT_TRACK_INSTRUCTIONS}>:TRACK_INSTRUCTIONS>)

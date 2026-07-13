@@ -238,3 +238,26 @@ add_elastic_ai_unit_test(
         Common
         odt_test_death
 )
+
+set(GEN_POINTWISE_FUSED_HEADER ${CMAKE_CURRENT_BINARY_DIR}/expected_pointwise_fused.h)
+add_custom_command(
+        OUTPUT ${GEN_POINTWISE_FUSED_HEADER}
+        COMMAND uv run ${CMAKE_CURRENT_SOURCE_DIR}/generate_expected_pointwise_fused.py
+                --out ${GEN_POINTWISE_FUSED_HEADER}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/generate_expected_pointwise_fused.py
+        COMMENT "Generating expected_pointwise_fused.h via PyTorch"
+        VERBATIM
+)
+add_custom_target(generate_expected_pointwise_fused
+        DEPENDS ${GEN_POINTWISE_FUSED_HEADER})
+
+add_elastic_ai_unit_test(
+        LIB_UNDER_TEST
+        PointwiseFused
+        MORE_LIBS
+        Tensor
+        Common
+        odt_test_death
+)
+add_dependencies(UnitTestPointwiseFused generate_expected_pointwise_fused)
+target_include_directories(UnitTestPointwiseFused PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
