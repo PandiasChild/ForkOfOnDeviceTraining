@@ -69,7 +69,7 @@ static layer_t *buildBorrowedLinearLayer(parameter_t *weights, parameter_t *bias
 
 /*! Frees only the layer_t + layerConfig_t + linearConfig_t shells — NOT the
  *  weight/bias parameters (caller-owned, either freed explicitly or via
- *  freeOptimSgdM's cascade — matches the deleted freeLinearLayerLegacy's
+ *  freeOptim's cascade — matches the deleted freeLinearLayerLegacy's
  *  wrapper-only teardown contract). */
 static void freeLinearLayerShellOnly(layer_t *layer) {
     freeReservedMemory(layer->config->linear);
@@ -122,7 +122,7 @@ void testCalculateGradsSequential_MatchesPyTorch() {
                         (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     optimizerFunctions_t sgdFns = optimizerFunctions[SGD_M];
     /* Pre-existing test hack: only step weights, leaving bias unchanged across
-     * iterations. freeOptimSgdM frees the registered parameters; no state
+     * iterations. freeOptim frees the registered parameters; no state
      * buffers exist at momentum==0 (#308). */
     sgd->sizeStates = 1;
 
@@ -163,10 +163,10 @@ void testCalculateGradsSequential_MatchesPyTorch() {
         }
     }
 
-    /* FREE in reverse-init order. Restore sizeStates so freeOptimSgdM cascades
+    /* FREE in reverse-init order. Restore sizeStates so freeOptim cascades
      * to both weights and bias parameters + their state buffers. */
     sgd->sizeStates = 2;
-    freeOptimSgdM(sgd);
+    freeOptim(sgd);
     freeQuantization(momentumQ);
     freeTensor(label2);
     freeTensor(label1);
@@ -585,9 +585,9 @@ void testTrainingEpochDefault_DoesOptimizerStepPerBatch() {
     }
     float capturedEpochLoss = epochLoss;
 
-    /* FREE. freeOptimSgdM cascades to w and b parameters; do NOT also free
+    /* FREE. freeOptim cascades to w and b parameters; do NOT also free
      * those (would double-free). */
-    freeOptimSgdM(sgd);
+    freeOptim(sgd);
     freeQuantization(momentumQ);
     freeDataLoader(dl);
     freeLinearLayerShellOnly(linear);
@@ -651,7 +651,7 @@ void testTrainingEpochDefault_MinibatchStepsOncePerMinibatch() {
     float capturedEpochLoss = epochLoss;
 
     /* FREE. */
-    freeOptimSgdM(sgd);
+    freeOptim(sgd);
     freeQuantization(momentumQ);
     freeDataLoader(dl);
     freeLinearLayerShellOnly(linear);
@@ -697,7 +697,7 @@ void testTrainingRun_ReturnsResult() {
     float capturedAccuracy = result.finalEvalStats.accuracy;
 
     /* FREE. */
-    freeOptimSgdM(sgd);
+    freeOptim(sgd);
     freeQuantization(momentumQ);
     freeDataLoader(evalDl);
     freeDataLoader(trainDl);
@@ -770,7 +770,7 @@ void testTrainingRun_CallsCallbackEachEpochWithStats() {
     float capturedFinalEvalAccuracy = result.finalEvalStats.accuracy;
 
     /* FREE. */
-    freeOptimSgdM(sgd);
+    freeOptim(sgd);
     freeQuantization(momentumQ);
     freeDataLoader(evalDl);
     freeDataLoader(trainDl);
@@ -934,7 +934,7 @@ void testTrainingEpochDefault_MeanScalesGradByOneOverNF() {
     float capturedW00 = ((float *)wParam->data)[0];
     float capturedW01 = ((float *)wParam->data)[1];
 
-    freeOptimSgdM(sgd);
+    freeOptim(sgd);
     freeQuantization(momentumQ);
     freeDataLoader(dl);
     freeLinearLayerShellOnly(linear);
@@ -1309,7 +1309,7 @@ void testTrainingEpochDefault_SumBackwardSkipsOptimizerScaling() {
     bool capturedFinite = (epochLoss == epochLoss) && (epochLoss != 1.0f / 0.0f);
     float capturedEpochLoss = epochLoss;
 
-    freeOptimSgdM(sgd);
+    freeOptim(sgd);
     freeQuantization(momentumQ);
     freeDataLoader(dl);
     freeLinearLayerShellOnly(linear);
@@ -1368,7 +1368,7 @@ void testTrainingEpochDefault_MeanForwardSumBackward_MixedCombination() {
     bool capturedFinite = (epochLoss == epochLoss) && (epochLoss != 1.0f / 0.0f);
     float capturedEpochLoss = epochLoss;
 
-    freeOptimSgdM(sgd);
+    freeOptim(sgd);
     freeQuantization(momentumQ);
     freeDataLoader(dl);
     freeLinearLayerShellOnly(linear);
@@ -1493,7 +1493,7 @@ void testTrainingRun_HardcodesForwardReductionMean() {
     float capturedTrain = result.finalTrainLoss;
     float capturedEval = result.finalEvalStats.loss;
 
-    freeOptimSgdM(sgd);
+    freeOptim(sgd);
     freeQuantization(momentumQ);
     freeDataLoader(evalDl);
     freeDataLoader(trainDl);
@@ -1555,7 +1555,7 @@ void testTrainingRunStepsSchedulerOncePerEpoch(void) {
     /* base 0.4f halved twice: *0.25 is a power-of-two scale -> exact float */
     TEST_ASSERT_EQUAL_FLOAT(0.4f * 0.25f, optimizerFunctions[SGD_M].getLr(sgd));
 
-    freeOptimSgdM(sgd);
+    freeOptim(sgd);
     freeQuantization(momentumQ);
     freeDataLoader(evalDl);
     freeDataLoader(trainDl);
@@ -1595,7 +1595,7 @@ void testTrainingRunNullSchedulerKeepsLrConstant(void) {
     (void)result;
     TEST_ASSERT_EQUAL_FLOAT(lrBefore, optimizerFunctions[SGD_M].getLr(sgd));
 
-    freeOptimSgdM(sgd);
+    freeOptim(sgd);
     freeQuantization(momentumQ);
     freeDataLoader(evalDl);
     freeDataLoader(trainDl);
@@ -1641,7 +1641,7 @@ void testTrainingRunRejectsSchedulerWiredToDifferentOptimizer(void) {
         model, 1, (lossConfig_t){.funcType = MSE, .backwardReduction = REDUCTION_SUM}, trainDl,
         evalDl, sgd, &sched, 1, calculateGradsSequential, inferenceWithLoss, NULL));
 
-    freeOptimSgdM(sgd);
+    freeOptim(sgd);
     freeQuantization(momentumQ);
     freeDataLoader(evalDl);
     freeDataLoader(trainDl);
@@ -1693,7 +1693,7 @@ void testTrainingRunCallbackObservesTheEpochsOwnLr(void) {
     TEST_ASSERT_EQUAL_FLOAT(0.4f * 0.5f, g_lrCapture[1]);
     TEST_ASSERT_EQUAL_FLOAT(0.4f * 0.25f, g_lrCapture[2]);
 
-    freeOptimSgdM(sgd);
+    freeOptim(sgd);
     freeQuantization(momentumQ);
     freeDataLoader(evalDl);
     freeDataLoader(trainDl);

@@ -752,7 +752,7 @@ static void accumulateIntoSymFixedGridEngine(tensor_t *target, const incSrc_t *i
         }
     }
     if (allZero) {
-        /* Fresh accumulator (post-initTensor zero-fill or post-sgdZeroGrad
+        /* Fresh accumulator (post-initTensor zero-fill or post-optimizerZeroGrad
          * memset): derive the grid from the increment (absmax/qMax; absmax
          * 0 -> scale 1.f, packFloatBufferAsSym convention). */
         float absMax = 0.f;

@@ -13,6 +13,7 @@
 #include "LayerQuant.h"
 #include "LinearApi.h"
 #include "LossFunction.h"
+#include "OptimizerApi.h"
 #include "QuantizationApi.h"
 #include "ReluApi.h"
 #include "SgdApi.h"
@@ -26,7 +27,7 @@ void setUp() {}
 void tearDown() {}
 
 /*! Frees only the layer_t + layerConfig_t + linearConfig_t shells — NOT the
- *  weight/bias parameters. Needed after freeOptimSgdM, which already frees
+ *  weight/bias parameters. Needed after freeOptim, which already frees
  *  every parameter it registered (freeLinearLayer would double-free them). */
 static void freeLinearLayerShellOnly(layer_t *layer) {
     freeReservedMemory(layer->config->linear);
@@ -181,9 +182,9 @@ void testMnistSmoke_FullTrainingPipelineReducesLoss() {
     float capturedLastTrainLoss = lastTrainLoss;
 
     /* FREE in reverse-init order.
-     * NOTE: freeOptimSgdM cascades to all model parameters via freeParameter.
+     * NOTE: freeOptim cascades to all model parameters via freeParameter.
      * Do NOT also call freeParameter on w0/b0/w1/b1 — would be a double-free. */
-    freeOptimSgdM(sgd);
+    freeOptim(sgd);
     freeSoftmaxLayer(model[3]);
     freeLinearLayerShellOnly(model[2]);
     freeReluLayer(model[1]);
@@ -247,7 +248,7 @@ void testMnistSmoke_SnprintfGmtimeRBetweenSetupAndTrainingRun_NoSilentExit() {
     float capturedFinalTrainLoss = result.finalTrainLoss;
     char capturedFirstChar = buf[0];
 
-    freeOptimSgdM(sgd);
+    freeOptim(sgd);
     freeSoftmaxLayer(model[3]);
     freeLinearLayerShellOnly(model[2]);
     freeReluLayer(model[1]);

@@ -15,6 +15,7 @@
 #include "LinearApi.h"
 #include "LossFunction.h"
 #include "Optimizer.h"
+#include "OptimizerApi.h"
 #include "QuantizationApi.h"
 #include "SgdApi.h"
 #include "StateDictApi.h"
@@ -144,7 +145,7 @@ void testOptimizer_ZeroStatesForDropout(void) {
                         (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     size_t sizeStates = optim->sizeStates;
 
-    freeOptimSgdM(optim);
+    freeOptim(optim);
     freeDropoutLayer(drop);
     freeTensor(mask);
     freeQuantization(momentumQ);

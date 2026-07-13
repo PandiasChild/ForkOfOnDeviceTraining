@@ -3,7 +3,6 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include <string.h>
 
 #include "ArithmeticType.h"
 #include "Common.h"
@@ -168,43 +167,6 @@ void sgdStepM(optimizer_t *optim) {
                 .writesInPlaceSafe = true,
             },
             p->param);
-    }
-}
-
-void sgdZeroGrad(optimizer_t *optimizer) {
-    for (size_t i = 0; i < optimizer->sizeStates; i++) {
-        parameter_t *param = optimizer->parameter[i];
-        size_t paramSize = calcNumberOfElementsByParameter(param);
-        size_t totalNumberOfBytes = calcNumberOfBytesForData(param->grad->quantization, paramSize);
-
-        memset(param->grad->data, 0, totalNumberOfBytes);
-
-        /* Byte-zero the mantissa/code storage above is necessary but, for
-         * SYM/ASYM, not sufficient for VALUE-zero: config-reset the grid so
-         * code 0 decodes to exactly 0.0f (spec §5.3). SYM_INT32's scale reset
-         * is hygiene (the first-store trigger is the all-zero mantissa state,
-         * not the scale); ASYM's zeroPoint reset is load-bearing - without it,
-         * code 0 would decode to zeroPoint*scale, not 0 (PR2 watch-list item). */
-        switch (param->grad->quantization->type) {
-        case SYM_INT32: {
-            symInt32QConfig_t *symIntQ = param->grad->quantization->qConfig;
-            symIntQ->scale = 1.f;
-            break;
-        }
-        case SYM: {
-            symQConfig_t *symQ = param->grad->quantization->qConfig;
-            symQ->scale = 1.f;
-            break;
-        }
-        case ASYM: {
-            asymQConfig_t *asymQ = param->grad->quantization->qConfig;
-            asymQ->scale = 1.f;
-            asymQ->zeroPoint = 0;
-            break;
-        }
-        default:
-            break;
-        }
     }
 }
 

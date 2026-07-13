@@ -15,6 +15,7 @@
 #include "LinearApi.h"
 #include "LossFunction.h"
 #include "Optimizer.h"
+#include "OptimizerApi.h"
 #include "Quantization.h"
 #include "QuantizationApi.h"
 #include "SgdApi.h"
@@ -52,10 +53,10 @@ static tensor_t *build2DSym(size_t b, size_t f, const float *data, size_t n) {
     return t;
 }
 
-/* freeOptimSgdM cascades into freeParameter for every registered parameter_t
+/* freeOptim cascades into freeParameter for every registered parameter_t
  * (Linear weights/bias, LayerNorm gamma/beta) — the SAME objects the layers
  * own. The factory frees (freeLinearLayer / freeLayerNormLayer) would call
- * freeParameter again, so after freeOptimSgdM the layers must be torn down
+ * freeParameter again, so after freeOptim the layers must be torn down
  * shell-only. Pattern from UnitTestSgd.c
  * (testSgdZeroGradOnSymInt32GradZeroesMantissasAndResetsScale). Both layers
  * here come from the Borrowing factories (ownsQuantizations=false), so the
@@ -127,7 +128,7 @@ void testLinearLayerNormLinearOneTrainingStep(void) {
     freeTrainingStats(stats);
     freeTensor(label);
     freeTensor(input);
-    freeOptimSgdM(optim); /* frees w0/b0, gamma/beta, w1/b1 parameter_t */
+    freeOptim(optim); /* frees w0/b0, gamma/beta, w1/b1 parameter_t */
     freeLinearLayerShell(linear1);
     freeLayerNormLayerShell(norm);
     freeLinearLayerShell(linear0);
@@ -238,8 +239,8 @@ void testLayerNormSymInt32SingleLayerTrainingStep(void) {
     freeTensor(inF);
     freeTensor(labelSym);
     freeTensor(inSym);
-    freeOptimSgdM(optimF); /* frees gamma/beta parameter_t of the float twin */
-    freeOptimSgdM(optimSym);
+    freeOptim(optimF); /* frees gamma/beta parameter_t of the float twin */
+    freeOptim(optimSym);
     freeLayerNormLayerShell(lnF);
     freeLayerNormLayerShell(lnSym);
     freeQuantization(momentumQF);

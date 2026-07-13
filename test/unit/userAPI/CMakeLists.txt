@@ -105,6 +105,7 @@ add_elastic_ai_unit_test(
         DataLoaderApi
         StorageApi
         LrScheduler
+        OptimizerApi
         Sgd
         Optimizer
         odt_test_death
@@ -189,6 +190,7 @@ target_link_libraries(UnitTestDropoutIntegration PRIVATE
         Dropout
         Bernoulli
         RNG
+        OptimizerApi
         SgdApi
         Sgd
         Optimizer
@@ -213,6 +215,7 @@ target_link_libraries(UnitTestLayerNormIntegration PRIVATE
         CommonLayerLibs
         LayerNormApi
         LayerNorm
+        OptimizerApi
         SgdApi
         Sgd
         Optimizer
@@ -246,6 +249,7 @@ target_link_libraries(UnitTestGroupNormIntegration PRIVATE
         SoftmaxApi
         ReluApi
         LinearApi
+        OptimizerApi
         SgdApi
         Sgd
         Optimizer
@@ -269,6 +273,7 @@ target_link_libraries(UnitTestAdaptiveAvgPool1dIntegration PRIVATE
         CalculateGradsSequential
         CommonLayerLibs
         AdaptivePool1dApi
+        OptimizerApi
         SgdApi
         Sgd
         Optimizer
@@ -297,6 +302,7 @@ target_link_libraries(UnitTestMultiLayerTraining PRIVATE
         ArithmeticType
         ReluApi
         SoftmaxApi
+        OptimizerApi
         SgdApi
         QuantizationApi
         LossFunction
@@ -320,6 +326,7 @@ target_link_libraries(UnitTestMnistSmoke PRIVATE
         LayerQuant
         ReluApi
         SoftmaxApi
+        OptimizerApi
         SgdApi
         QuantizationApi
         LossFunction
@@ -362,6 +369,7 @@ target_link_libraries(UnitTestBiaslessConvOptim PRIVATE
         SlidingWindow1d
         LinearApi
         Linear
+        OptimizerApi
         SgdApi
         Sgd
         Optimizer
@@ -414,6 +422,7 @@ target_link_libraries(UnitTestQuantLayerIntegration PRIVATE
         LayerNormApi
         LayerNorm
         QuantizationLayer
+        OptimizerApi
         SgdApi
         Sgd
         Optimizer

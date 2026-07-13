@@ -233,7 +233,7 @@ def _run_bwd_fixture(name, x, gamma, dy, normalized_shape, *, eps=1e-5,
     assert (dg_inc - ref_dg.reshape(-1)).abs().max().item() <= 1e-9, name
     assert (db_inc - ref_db.reshape(-1)).abs().max().item() <= 1e-9, name
 
-    # Grad accumulation from FRESH zero grads (scale 1.0, sgdZeroGrad state).
+    # Grad accumulation from FRESH zero grads (scale 1.0, optimizerZeroGrad state).
     zeros = torch.zeros(n_inner, dtype=torch.int32)
     (dg_q, dg_s), dg_inc_s = emulate_accumulate(zeros, 1.0, dg_inc)
     (db_q, db_s), db_inc_s = emulate_accumulate(zeros, 1.0, db_inc)

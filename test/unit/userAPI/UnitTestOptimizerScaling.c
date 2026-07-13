@@ -49,7 +49,7 @@ static layer_t *buildBorrowedLinearLayer(parameter_t *weights, parameter_t *bias
 }
 
 /*! Frees only the layer_t + layerConfig_t + linearConfig_t shells — NOT the
- *  weight/bias parameters. Needed after freeOptimSgdM, which already frees
+ *  weight/bias parameters. Needed after freeOptim, which already frees
  *  every parameter it registered (freeLinearLayer would double-free them). */
 static void freeLinearLayerShellOnly(layer_t *layer) {
     freeReservedMemory(layer->config->linear);
@@ -139,8 +139,8 @@ void testScaleOptimizerGradients_DoublesGradients() {
         capturedBGrad[1] = g[1];
     }
 
-    /* FREE. freeOptimSgdM cascades to both parameters. */
-    freeOptimSgdM(sgd);
+    /* FREE. freeOptim cascades to both parameters. */
+    freeOptim(sgd);
     freeLinearLayerShellOnly(model[0]);
 
     /* ASSERT — every grad doubled. */
@@ -171,7 +171,7 @@ void testScaleOptimizerGradients_FactorZero_DoesNotAbort() {
     /* CAPTURE that grads are now zero (factor 0 multiplied through). */
     float capturedFirst = ((float *)w->grad->data)[0];
 
-    freeOptimSgdM(sgd);
+    freeOptim(sgd);
     freeLinearLayerShellOnly(model[0]);
 
     TEST_ASSERT_EQUAL_FLOAT(0.0f, capturedFirst);
@@ -192,7 +192,7 @@ void testScaleOptimizerGradients_FactorNaN_DoesNotAbort() {
 
     float captured = ((float *)w->grad->data)[0];
 
-    freeOptimSgdM(sgd);
+    freeOptim(sgd);
     freeLinearLayerShellOnly(model[0]);
 
     /* NaN != NaN by IEEE 754. */
@@ -291,7 +291,7 @@ void testScaleOptimizerGradients_SymInt32_ScalesScaleOnly() {
     float capturedWScale = ((symInt32QConfig_t *)w->grad->quantization->qConfig)->scale;
     float capturedBScale = ((symInt32QConfig_t *)b->grad->quantization->qConfig)->scale;
 
-    freeOptimSgdM(sgd);
+    freeOptim(sgd);
     freeLinearLayerShellOnly(model[0]);
 
     /* int32 storage is byte-for-byte unchanged. */
@@ -351,7 +351,7 @@ void testScaleOptimizerGradients_SymInt32_DequantEquivalence() {
         }
     }
 
-    freeOptimSgdM(sgd);
+    freeOptim(sgd);
     freeLinearLayerShellOnly(model[0]);
 
     for (size_t i = 0; i < 6; i++) {
@@ -414,7 +414,7 @@ void testScaleOptimizerGradients_SymInt32_MomentumSgdAppliesScaledGradient() {
         }
     }
 
-    freeOptimSgdM(sgd);
+    freeOptim(sgd);
     freeLinearLayerShellOnly(model[0]);
 
     /* Tolerance accounts for the int32 round-trip in the executeOp funnel — the
@@ -531,7 +531,7 @@ void testScaleOptimizerGradients_Sym_ScalesScaleOnly(void) {
     float wScaleAfter = ((symQConfig_t *)w->grad->quantization->qConfig)->scale;
     float bScaleAfter = ((symQConfig_t *)b->grad->quantization->qConfig)->scale;
 
-    freeOptimSgdM(sgd);
+    freeOptim(sgd);
     freeLinearLayerShellOnly(model[0]);
 
     /* packed codes byte-for-byte unchanged. */
@@ -566,7 +566,7 @@ void testScaleOptimizerGradients_Sym_DequantEquivalence(void) {
     dequantGradToFloat(w->grad, wDequantAfter, 6);
     dequantGradToFloat(b->grad, bDequantAfter, 2);
 
-    freeOptimSgdM(sgd);
+    freeOptim(sgd);
     freeLinearLayerShellOnly(model[0]);
 
     for (size_t i = 0; i < 6; i++) {
@@ -666,7 +666,7 @@ void testScaleOptimizerGradients_Asym_ScalesScaleOnly(void) {
     int16_t wZeroPointAfter = wQ->zeroPoint;
     int16_t bZeroPointAfter = bQ->zeroPoint;
 
-    freeOptimSgdM(sgd);
+    freeOptim(sgd);
     freeLinearLayerShellOnly(model[0]);
 
     /* packed codes byte-for-byte unchanged. */
@@ -704,7 +704,7 @@ void testScaleOptimizerGradients_Asym_DequantEquivalence(void) {
     dequantGradToFloat(w->grad, wDequantAfter, 6);
     dequantGradToFloat(b->grad, bDequantAfter, 2);
 
-    freeOptimSgdM(sgd);
+    freeOptim(sgd);
     freeLinearLayerShellOnly(model[0]);
 
     for (size_t i = 0; i < 6; i++) {

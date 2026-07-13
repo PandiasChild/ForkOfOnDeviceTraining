@@ -11,6 +11,7 @@
 #include "Linear.h"
 #include "LinearApi.h"
 #include "Optimizer.h"
+#include "OptimizerApi.h"
 #include "QuantizationApi.h"
 #include "RNG.h"
 #include "Rounding.h"
@@ -1612,10 +1613,10 @@ void testLinearSymInt32GradAccumulatesOverTwoMicrobatchesAndSteps(void) {
     freeQuantization(bwd2);
     freeQuantization(fwd2);
 
-    /* freeOptimSgdM frees the SYM layer's parameters; do NOT also freeLinearLayer(symLayer)
+    /* freeOptim frees the SYM layer's parameters; do NOT also freeLinearLayer(symLayer)
      * (double-free). Free the layer/config shell manually (borrowing factory: caller owns
      * the quantizations, freed separately below). */
-    freeOptimSgdM(symOptim);
+    freeOptim(symOptim);
     freeReservedMemory(symLayer->config->linear);
     freeReservedMemory(symLayer->config);
     freeReservedMemory(symLayer);

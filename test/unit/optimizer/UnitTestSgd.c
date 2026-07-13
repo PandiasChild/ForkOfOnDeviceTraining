@@ -35,6 +35,18 @@ _Static_assert(_Generic(&sgdMCreateOptim,
                "#310: sgdMCreateOptim must be (lr, momentumFactor, weightDecay, "
                "model, sizeModel, momentumQuant, updateMath)");
 
+/* #328 groundwork: the shared factory helpers PR C's adamWCreateOptim reuses. */
+_Static_assert(_Generic(&collectTrainableParameters,
+                   void (*)(layer_t **, size_t, parameter_t **): 1,
+                   default: 0),
+               "#328: collectTrainableParameters must be (model, sizeModel, slots)");
+_Static_assert(_Generic(&validateOptimizerGradStorage,
+                   void (*)(optimizer_t *, const char *): 1,
+                   default: 0),
+               "#328: validateOptimizerGradStorage must be (optim, factoryName)");
+_Static_assert(_Generic(&freeOptim, void (*)(optimizer_t *): 1, default: 0),
+               "#328: freeOptim must be (optim)");
+
 void setUp() {}
 void tearDown() {}
 
@@ -67,7 +79,7 @@ static layer_t *buildBorrowedLinearLayer(parameter_t *weights, parameter_t *bias
 }
 
 /*! Frees only the layer_t + layerConfig_t + linearConfig_t shells — NOT the
- *  weight/bias parameters. Needed after freeOptimSgdM, which already frees
+ *  weight/bias parameters. Needed after freeOptim, which already frees
  *  every parameter it registered (freeLinearLayer would double-free them). */
 static void freeLinearLayerShellOnly(layer_t *layer) {
     freeReservedMemory(layer->config->linear);
@@ -106,7 +118,7 @@ void testSgdMCreateOptim() {
     tensorFillFromFloatBuffer(b0Grad, (float[]){0.f}, 1);
     parameter_t *bias0 = parameterInit(b0Param, b0Grad);
 
-    /* linear1 needs its OWN weights/bias parameters (Bug 1 fix): freeOptimSgdM
+    /* linear1 needs its OWN weights/bias parameters (Bug 1 fix): freeOptim
      * will walk optim->parameter[] and freeParameter each entry once. Sharing
      * the same parameter_t pointers across linear0 and linear1 would cause a
      * double-free. The pointer-equality assertions below still hold because
@@ -207,10 +219,10 @@ void testSgdMCreateOptim() {
         capturedL1BState[i] = ((float *)optim->states[3]->stateBuffers[0]->data)[i];
     }
 
-    /* FREE in reverse-init order. freeOptimSgdM cascades to all parameters
+    /* FREE in reverse-init order. freeOptim cascades to all parameters
      * (and their grads) registered with the optimizer (per SgdApi.c:85-93,
      * mirroring the post-#110 ownership contract). */
-    freeOptimSgdM(optim);
+    freeOptim(optim);
     freeLinearLayerShellOnly(linear1);
     freeReluLayer(relu0);
     freeLinearLayerShellOnly(linear0);
@@ -304,9 +316,9 @@ void testSGDStep() {
         capturedBAfterStep2[i] = ((float *)linear->config->linear->bias->param->data)[i];
     }
 
-    /* FREE in reverse-init order. freeOptimSgdM already frees the registered
+    /* FREE in reverse-init order. freeOptim already frees the registered
      * weights/bias — freeLinearLayer would double-free them. */
-    freeOptimSgdM(sgd);
+    freeOptim(sgd);
     freeLinearLayerShellOnly(linear);
     freeQuantization(momentumQ);
     freeQuantization(layerQ);
@@ -370,7 +382,7 @@ void testSGDZeroGrad() {
         sgdMCreateOptim(lr, momentumFactor, weightDecay, model, modelSize, momentumQ,
                         (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
 
-    sgdZeroGrad(sgd);
+    optimizerZeroGrad(sgd);
 
     /* CAPTURE before frees. */
     float capturedWGrad[3];
@@ -382,9 +394,9 @@ void testSGDZeroGrad() {
         capturedBGrad[i] = ((float *)bias->grad->data)[i];
     }
 
-    /* FREE in reverse-init order. freeOptimSgdM already frees the registered
+    /* FREE in reverse-init order. freeOptim already frees the registered
      * weights/bias — freeLinearLayer would double-free them. */
-    freeOptimSgdM(sgd);
+    freeOptim(sgd);
     freeLinearLayerShellOnly(linear);
     freeQuantization(momentumQ);
     freeQuantization(layerQ);
@@ -431,7 +443,7 @@ void testSgdZeroGradOnSymInt32GradZeroesMantissasAndResetsScale(void) {
         sgdMCreateOptim(0.1f, 0.9f, 0.0f, model, 1, momentumQ,
                         (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
 
-    sgdZeroGrad(optim);
+    optimizerZeroGrad(optim);
 
     /* CAPTURE post-zero state. */
     int allZero = 1;
@@ -446,7 +458,7 @@ void testSgdZeroGradOnSymInt32GradZeroesMantissasAndResetsScale(void) {
     ((int32_t *)wGrad->data)[0] = 5;
     int accumWorks = (((int32_t *)wGrad->data)[0] == 5);
 
-    freeOptimSgdM(optim); /* frees the layer's parameters */
+    freeOptim(optim); /* frees the layer's parameters */
     freeReservedMemory(layer->config->linear);
     freeReservedMemory(layer->config);
     freeReservedMemory(layer);
@@ -454,7 +466,7 @@ void testSgdZeroGradOnSymInt32GradZeroesMantissasAndResetsScale(void) {
     freeQuantization(bwd);
     freeQuantization(fwd);
 
-    TEST_ASSERT_TRUE_MESSAGE(allZero, "sgdZeroGrad must zero SYM_INT32 grad mantissas");
+    TEST_ASSERT_TRUE_MESSAGE(allZero, "optimizerZeroGrad must zero SYM_INT32 grad mantissas");
     TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.0f, scaleAfterZero);
     TEST_ASSERT_TRUE(accumWorks);
 }
@@ -508,7 +520,7 @@ void testSgdMCreateOptimMomentumStateIsFloatIndependentOfSymInt32ParamDtype(void
     qtype_t capturedWeightStateType = optim->states[0]->stateBuffers[0]->quantization->type;
     qtype_t capturedBiasStateType = optim->states[1]->stateBuffers[0]->quantization->type;
 
-    freeOptimSgdM(optim);
+    freeOptim(optim);
     freeLinearLayerShellOnly(layer);
     freeQuantization(momentumQ);
     freeQuantization(symQ);
@@ -585,9 +597,9 @@ void testSgdMCreateOptimRegistersLayerNormGammaAndBeta(void) {
     size_t capturedGammaStateN = calcNumberOfElementsByTensor(optim->states[0]->stateBuffers[0]);
     size_t capturedBetaStateN = calcNumberOfElementsByTensor(optim->states[1]->stateBuffers[0]);
 
-    /* FREE: freeOptimSgdM frees the two registered parameter_t* (gamma, beta)
+    /* FREE: freeOptim frees the two registered parameter_t* (gamma, beta)
      * and their state buffers. Then free the layer wrapper structs. */
-    freeOptimSgdM(optim);
+    freeOptim(optim);
     freeReservedMemory(lnLayer);
     freeReservedMemory(lcfg);
     freeReservedMemory(normShape);
@@ -735,7 +747,7 @@ void testSgdZeroGradAsymSubByteZeroesAllPackedBytes(void) {
     gAsymQ->zeroPoint = 5;
 
     /* Hand-built optimizer: sgdMCreateOptim rejects sub-byte grad storage until
-     * PR3, but sgdZeroGrad reads only sizeStates/parameter — this characterizes
+     * PR3, but optimizerZeroGrad reads only sizeStates/parameter — this characterizes
      * the primitive PR3 will rely on. */
     sgd_t sgd;
     sgdInit(&sgd, 0.1f, 0.0f, 0.0f,
@@ -748,7 +760,7 @@ void testSgdZeroGradAsymSubByteZeroesAllPackedBytes(void) {
     optim.sizeStates = 1;
     optim.impl = &impl;
 
-    sgdZeroGrad(&optim);
+    optimizerZeroGrad(&optim);
 
     /* CAPTURE -> free -> assert (file convention). */
     uint8_t b0 = g->data[0];
@@ -802,7 +814,7 @@ void testSgdZeroGradSymSubByteZeroesAllPackedBytesAndResetsScale(void) {
     optim.sizeStates = 1;
     optim.impl = &impl;
 
-    sgdZeroGrad(&optim);
+    optimizerZeroGrad(&optim);
 
     /* CAPTURE -> free -> assert (file convention). */
     uint8_t b0 = g->data[0];
@@ -865,8 +877,8 @@ void testSgdMCreateOptimAdmitsPackedSymGradStorage(void) {
     qtype_t capturedWGradType = weights->grad->quantization->type;
     size_t capturedSizeStates = optim->sizeStates;
 
-    /* freeOptimSgdM cascades to the registered parameters (weights, bias). */
-    freeOptimSgdM(optim);
+    /* freeOptim cascades to the registered parameters (weights, bias). */
+    freeOptim(optim);
     freeLinearLayerShellOnly(layer);
     freeQuantization(momentumQ);
     freeQuantization(fQ);
@@ -1268,7 +1280,7 @@ void testSgdStepSrHalfAwayEscapesSymDeadZone(void) {
 void testSgdMCreateOptimMomentumZeroAllocatesNoStates(void) {
     /* #308: momentumFactor == 0 must not allocate momentum-state buffers
      * (real RAM on an MCU for a configuration that has no state). Contract:
-     * optim->states == NULL; freeOptimSgdM still frees all parameters.
+     * optim->states == NULL; freeOptim still frees all parameters.
      * RED today: the factory unconditionally allocates states. */
     quantization_t *layerQ = quantizationInitFloat();
 
@@ -1296,7 +1308,7 @@ void testSgdMCreateOptimMomentumZeroAllocatesNoStates(void) {
     states_t **capturedStates = optim->states;
     size_t capturedSizeStates = optim->sizeStates;
 
-    freeOptimSgdM(optim);
+    freeOptim(optim);
     freeLinearLayerShellOnly(linear);
     freeQuantization(momentumQ);
     freeQuantization(layerQ);

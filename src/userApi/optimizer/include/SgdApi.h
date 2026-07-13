@@ -33,6 +33,4 @@ optimizer_t *sgdMCreateOptim(float learningRate, float momentumFactor, float wei
                              layer_t **model, size_t sizeModel, quantization_t *momentumQuant,
                              arithmetic_t updateMath);
 
-void freeOptimSgdM(optimizer_t *sgdM);
-
 #endif // SGD_API_H

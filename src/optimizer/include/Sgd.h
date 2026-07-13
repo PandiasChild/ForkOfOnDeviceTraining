@@ -16,8 +16,6 @@ void sgdInit(sgd_t *sgd, float learningRate, float momentumFactor, float weightD
 
 void sgdStepM(optimizer_t *optimizer);
 
-void sgdZeroGrad(optimizer_t *optimizer);
-
 float sgdGetLr(optimizer_t *optimizer);
 
 void sgdSetLr(optimizer_t *optimizer, float learningRate);

@@ -3,6 +3,7 @@ add_elastic_ai_unit_test(
         Sgd
         MORE_LIBS
         CommonLayerLibs
+        OptimizerApi
         SgdApi
         TensorApi
         QuantizationApi

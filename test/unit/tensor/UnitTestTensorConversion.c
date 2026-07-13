@@ -1874,7 +1874,7 @@ void testAccumulateAsymRescaleMatchesFloatReference(void) {
 }
 
 void testAccumulateAsymValueZeroAfterConfigReset(void) {
-    /* With scale=1, zeroPoint=0 and zero codes (the sgdZeroGrad reset state,
+    /* With scale=1, zeroPoint=0 and zero codes (the optimizerZeroGrad reset state,
      * spec §5.3), decoded values are exactly 0 -> first accumulate equals the
      * increment quantized fresh (0.0f + inc[i] == inc[i] exactly, no
      * rounding at the add). Reference: convertFloatTensorToAsymTensor(inc)
@@ -1895,7 +1895,7 @@ void testAccumulateAsymValueZeroAfterConfigReset(void) {
     quantization_t q;
     initAsymQuantization(&qc, &q);
     uint8_t data[calcNumberOfBytesForData(&q, n)];
-    memset(data, 0, sizeof(data)); /* zero codes: the sgdZeroGrad reset state */
+    memset(data, 0, sizeof(data)); /* zero codes: the optimizerZeroGrad reset state */
     tensor_t target;
     setTensorValues(&target, data, &shape, &q, NULL);
 

@@ -12,6 +12,7 @@
 #include "Linear.h"
 #include "LinearApi.h"
 #include "Optimizer.h"
+#include "OptimizerApi.h"
 #include "QuantizationApi.h"
 #include "SgdApi.h"
 #include "StorageApi.h"
@@ -21,10 +22,10 @@
 void setUp(void) {}
 void tearDown(void) {}
 
-/* freeOptimSgdM cascades into freeParameter for every registered parameter_t
+/* freeOptim cascades into freeParameter for every registered parameter_t
  * (here: the conv's weights -- its bias slot is NULL and never registered).
  * freeConv1dLayer would free cfg->weights again (double-free), so after
- * freeOptimSgdM the layer must be torn down shell-only: kernel + config +
+ * freeOptim the layer must be torn down shell-only: kernel + config +
  * layer wrapper, matching the pattern in UnitTestLayerNormIntegration.c
  * (freeLinearLayerShell / freeLayerNormLayerShell). This layer comes from the
  * Borrowing factory (ownsQuantizations=false), so outputQ/propLossQ are not
@@ -37,7 +38,7 @@ static void freeConv1dLayerShell(layer_t *layer) {
 }
 
 /* Conv1dTransposed counterpart of freeConv1dLayerShell (same shell-only teardown
- * after freeOptimSgdM has already freed the registered weight parameter_t). */
+ * after freeOptim has already freed the registered weight parameter_t). */
 static void freeConv1dTransposedLayerShell(layer_t *layer) {
     freeReservedMemory(layer->config->conv1dTransposed->kernel);
     freeReservedMemory(layer->config->conv1dTransposed);
@@ -45,7 +46,7 @@ static void freeConv1dTransposedLayerShell(layer_t *layer) {
     freeReservedMemory(layer);
 }
 
-/* Linear counterpart of freeConv1dLayerShell: freeOptimSgdM already freed the
+/* Linear counterpart of freeConv1dLayerShell: freeOptim already freed the
  * linear's weights parameter_t (its bias slot is NULL and never registered),
  * so this only tears down the config/layer wrapper. Linear has no kernel
  * (unlike Conv1d/Conv1dTransposed), so there is one fewer level to free. */
@@ -60,7 +61,7 @@ static void freeLinearLayerShell(layer_t *layer) {
  * CONV1D, then sgdMCreateOptim NULL-derefed conv1dCfg->bias->param while
  * building the (nonexistent) bias momentum state. This test proves both the
  * COUNT (calcTotalNumberOfStates) and the COLLECTION (sgdMCreateOptim +
- * freeOptimSgdM) sites now handle bias == NULL correctly. */
+ * freeOptim) sites now handle bias == NULL correctly. */
 void testOptimizer_OneStateForBiaslessConv1d(void) {
     quantization_t *q = quantizationInitFloat();
     layerQuant_t lq;
@@ -84,7 +85,7 @@ void testOptimizer_OneStateForBiaslessConv1d(void) {
                         (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     bool optimNotNull = (optim != NULL);
 
-    freeOptimSgdM(optim); /* frees the conv's weights parameter_t */
+    freeOptim(optim); /* frees the conv's weights parameter_t */
     freeConv1dLayerShell(conv);
     freeQuantization(momentumQuant);
     freeQuantization(q);
@@ -96,7 +97,7 @@ void testOptimizer_OneStateForBiaslessConv1d(void) {
 /* Companion coverage for the WEIGHT+BIAS path (bias != NULL): a bias-present
  * Conv1d must count 2 states, and sgdMCreateOptim must build BOTH the weight and
  * bias momentum states (the collection site the bias-less test cannot exercise).
- * freeOptimSgdM then frees both registered parameter_t (weights + bias), so the
+ * freeOptim then frees both registered parameter_t (weights + bias), so the
  * layer is torn down shell-only afterwards. */
 void testOptimizer_TwoStatesForBiasedConv1d(void) {
     quantization_t *q = quantizationInitFloat();
@@ -121,7 +122,7 @@ void testOptimizer_TwoStatesForBiasedConv1d(void) {
                         (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     bool optimNotNull = (optim != NULL);
 
-    freeOptimSgdM(optim); /* frees the conv's weights AND bias parameter_t */
+    freeOptim(optim); /* frees the conv's weights AND bias parameter_t */
     freeConv1dLayerShell(conv);
     freeQuantization(momentumQuant);
     freeQuantization(q);
@@ -157,7 +158,7 @@ void testOptimizer_OneStateForBiaslessConv1dTransposed(void) {
                         (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     bool optimNotNull = (optim != NULL);
 
-    freeOptimSgdM(optim); /* frees the convT's weights parameter_t (bias slot NULL) */
+    freeOptim(optim); /* frees the convT's weights parameter_t (bias slot NULL) */
     freeConv1dTransposedLayerShell(convT);
     freeQuantization(momentumQuant);
     freeQuantization(q);
@@ -194,7 +195,7 @@ void testBiaslessLinearCountsOneStateAndOptimizerSurvives(void) {
                         (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     bool optimNotNull = (optim != NULL);
 
-    freeOptimSgdM(optim); /* frees the linear's weights parameter_t */
+    freeOptim(optim); /* frees the linear's weights parameter_t */
     freeLinearLayerShell(linear);
     freeQuantization(momentumQuant);
     freeQuantization(q);

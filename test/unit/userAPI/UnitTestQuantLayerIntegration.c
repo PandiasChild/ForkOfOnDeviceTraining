@@ -19,6 +19,7 @@
 #include "LossFunction.h"
 #include "ModelValidationApi.h"
 #include "Optimizer.h"
+#include "OptimizerApi.h"
 #include "QuantLayerApi.h"
 #include "Quantization.h"
 #include "QuantizationApi.h"
@@ -167,7 +168,7 @@ static void freeQuantLayerShell(layer_t *layer) {
     freeReservedMemory(layer);
 }
 
-/* freeOptimSgdM cascades into freeParameter for every registered parameter_t —
+/* freeOptim cascades into freeParameter for every registered parameter_t —
  * the SAME objects the layers reference; layers are torn down shell-only
  * afterwards (UnitTestLayerNormIntegration pattern). */
 static void freeLinearLayerShell(layer_t *layer) {
@@ -195,7 +196,7 @@ void testSgdMCreateOptimSkipsQuantizationLayer(void) {
                         (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
     size_t sizeStates = optim->sizeStates;
 
-    freeOptimSgdM(optim); /* frees the Linear weights/bias parameter_t */
+    freeOptim(optim); /* frees the Linear weights/bias parameter_t */
     freeQuantLayerShell(quant);
     freeLinearLayerShell(linear);
     freeQuantization(momentumQ);
@@ -405,8 +406,8 @@ void testFullSymChainTrainingStepMatchesFloatTwin(void) {
     freeTensor(inF);
     freeTensor(labelS);
     freeTensor(inS);
-    freeOptimSgdM(optimF); /* frees w0F/b0F, gammaF/betaF, w1F/b1F parameter_t */
-    freeOptimSgdM(optimS);
+    freeOptim(optimF); /* frees w0F/b0F, gammaF/betaF, w1F/b1F parameter_t */
+    freeOptim(optimS);
     freeLinearLayerShell(lin1F);
     freeLayerNormLayerShell(lnF);
     freeLinearLayerShell(lin0F);
@@ -503,7 +504,7 @@ void testConv1dTransposedSymChainTrains(void) {
         }
         lastLoss = st->loss;
         sgdStepM(opt);
-        sgdZeroGrad(opt);
+        optimizerZeroGrad(opt);
         freeTrainingStats(st);
         freeTensor(label);
         freeTensor(in);
@@ -512,7 +513,7 @@ void testConv1dTransposedSymChainTrains(void) {
     bool decreased = lastLoss < firstLoss;
     bool finite = isfinite(firstLoss) && isfinite(lastLoss);
 
-    freeOptimSgdM(opt); /* frees cw/cb parameter_t */
+    freeOptim(opt); /* frees cw/cb parameter_t */
     freeQuantLayerShell(quant);
     freeQuantization(momentumQ2);
     freeQuantization(symQ);

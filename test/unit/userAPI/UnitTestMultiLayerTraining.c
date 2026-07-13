@@ -11,6 +11,7 @@
 #include "Linear.h"
 #include "LinearApi.h"
 #include "LossFunction.h"
+#include "OptimizerApi.h"
 #include "QuantizationApi.h"
 #include "ReluApi.h"
 #include "SgdApi.h"
@@ -56,7 +57,7 @@ static layer_t *buildBorrowedLinearLayer(parameter_t *weights, parameter_t *bias
 }
 
 /*! Frees only the layer_t + layerConfig_t + linearConfig_t shells — NOT the
- *  weight/bias parameters. Needed after freeOptimSgdM, which already frees
+ *  weight/bias parameters. Needed after freeOptim, which already frees
  *  every parameter it registered (freeLinearLayer would double-free them). */
 static void freeLinearLayerShellOnly(layer_t *layer) {
     freeReservedMemory(layer->config->linear);
@@ -434,12 +435,12 @@ void testMultiLayerTraining_MultipleSteps_GradsAccumulate() {
     }
 
     /* FREE in reverse-init order.
-     * NOTE: freeOptimSgdM cascades to w0, b0, w1, b1 via freeParameter (per
+     * NOTE: freeOptim cascades to w0, b0, w1, b1 via freeParameter (per
      * SgdApi.c:85-93). Do NOT also call freeParameter(w0/b0/w1/b1) here — it
      * would be a double-free. */
     freeTensor(label);
     freeTensor(input);
-    freeOptimSgdM(sgd);
+    freeOptim(sgd);
     freeSoftmaxLayer(softmax);
     freeLinearLayerShellOnly(linear1);
     freeReluLayer(relu);

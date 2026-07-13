@@ -21,6 +21,7 @@
 #include "LinearApi.h"
 #include "LossFunction.h"
 #include "Optimizer.h"
+#include "OptimizerApi.h"
 #include "QuantizationApi.h"
 #include "ReluApi.h"
 #include "SgdApi.h"
@@ -145,7 +146,7 @@ static void captureEpoch(size_t epoch, float trainLoss, epochStats_t evalStats) 
     cbInvocations++;
 }
 
-/* After freeOptimSgdM frees every registered parameter_t (conv weight,
+/* After freeOptim frees every registered parameter_t (conv weight,
  * groupNorm gamma/beta, linear weight/bias), the owning layers must be torn
  * down SHELL-ONLY — a factory free would freeParameter the same objects again
  * (double-free). All three layers come from Borrowing factories
@@ -335,7 +336,7 @@ void testGroupNormClassifierTrainsAndRoundTrips(void) {
 
     freeTensor(probeB);
     freeTensor(probeA);
-    freeOptimSgdM(optim); /* frees conv weight, gamma/beta, linear weight/bias */
+    freeOptim(optim); /* frees conv weight, gamma/beta, linear weight/bias */
     freeSoftmaxLayer(model[6]);
     freeLinearLayerShell(model[5]);
     freeFlattenLayer(model[4]);

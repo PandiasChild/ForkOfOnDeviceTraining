@@ -42,6 +42,10 @@ typedef struct optimizerFunctions {
 
 extern optimizerFunctions_t optimizerFunctions[];
 
+/* optimizer-agnostic: reads only optim->parameter; every vtable row points
+ * here unless an impl needs custom zeroing. */
+void optimizerZeroGrad(optimizer_t *optimizer);
+
 size_t calcTotalNumberOfStates(layer_t **model, size_t sizeModel);
 
 #endif // OPTIMIZER_H

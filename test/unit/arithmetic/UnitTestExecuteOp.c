@@ -70,7 +70,7 @@ static tensor_t *buildSymInt32Tensor1dFromFloats(size_t n, const float *values) 
  * SYM_INT32 compute format above. Mantissas are packed verbatim via
  * byteConversion (the same seeding idiom UnitTestTensorConversion.c uses for
  * the primitives this task wires up); all-zero mantissas reproduce the
- * post-initTensor / post-sgdZeroGrad fresh-accumulator state. */
+ * post-initTensor / post-optimizerZeroGrad fresh-accumulator state. */
 static tensor_t *buildPackedSym(size_t n, const int32_t *mantissas, uint8_t qBits, float scale) {
     size_t *dims = reserveMemory(sizeof(size_t));
     dims[0] = n;
