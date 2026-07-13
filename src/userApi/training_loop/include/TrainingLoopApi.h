@@ -7,6 +7,10 @@
 #include "Optimizer.h"
 #include "Tensor.h"
 
+/* #327: forward typedef only — callers passing NULL need no LrScheduler dep.
+ * Identical typedef also lives in LrScheduler.h (C11 allows the redefinition). */
+typedef struct lrScheduler lrScheduler_t;
+
 typedef struct trainingStats {
     tensor_t *output;
     float loss;
@@ -95,10 +99,16 @@ classificationReport_t evaluationEpochWithReport(layer_t **model, size_t modelSi
                                                  size_t *cmBuffer, size_t numClasses,
                                                  reduction_t forwardReduction);
 
+/*! Runs numberOfEpochs of train+eval. `scheduler` (NULL-able) is stepped once
+ * per epoch AFTER the epoch callback, so a callback that logs the current LR
+ * reports the value this epoch actually trained with (PyTorch recipes step
+ * after validation as well; evaluation never reads the LR, so placement
+ * relative to eval is semantics-neutral). Fails fast if the scheduler is
+ * wired to a different optimizer than the one passed here. */
 trainingRunResult_t trainingRun(layer_t **model, size_t modelSize, lossConfig_t lossConfig,
                                 dataLoader_t *trainDataLoader, dataLoader_t *evalDataLoader,
-                                optimizer_t *optimizer, size_t numberOfEpochs,
-                                calculateGradsFn_t calculateGradsFn,
+                                optimizer_t *optimizer, lrScheduler_t *scheduler,
+                                size_t numberOfEpochs, calculateGradsFn_t calculateGradsFn,
                                 inferenceWithLossFn_t inferenceFn, epochCallbackFn_t callback);
 
 #endif // TRAINING_LOOP_API_H

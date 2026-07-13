@@ -28,10 +28,16 @@ typedef struct optimizer {
 
 typedef void (*stepFn_t)(optimizer_t *optim);
 typedef void (*zeroFn_t)(optimizer_t *optim);
+/* #327: optimizer-agnostic LR access for the scheduler. LR stays in the impl
+ * structs; these accessors are the only sanctioned cross-impl path. */
+typedef float (*getLrFn_t)(optimizer_t *optim);
+typedef void (*setLrFn_t)(optimizer_t *optim, float learningRate);
 
 typedef struct optimizerFunctions {
     stepFn_t step;
     zeroFn_t zero;
+    getLrFn_t getLr;
+    setLrFn_t setLr;
 } optimizerFunctions_t;
 
 extern optimizerFunctions_t optimizerFunctions[];

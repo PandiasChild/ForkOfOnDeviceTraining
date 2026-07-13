@@ -12,6 +12,7 @@ target_link_libraries(TrainingLoopApi PRIVATE
         Layer
         LossFunction
         Optimizer
+        LrScheduler
         Common
         DataLoader
         DataLoaderApi

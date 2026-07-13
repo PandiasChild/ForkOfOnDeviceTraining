@@ -9,7 +9,8 @@
 #include "Optimizer.h"
 #include "Sgd.h"
 
-optimizerFunctions_t optimizerFunctions[] = {[SGD_M] = {sgdStepM, sgdZeroGrad}};
+optimizerFunctions_t optimizerFunctions[] = {
+    [SGD_M] = {.step = sgdStepM, .zero = sgdZeroGrad, .getLr = sgdGetLr, .setLr = sgdSetLr}};
 
 /* Linear/Conv1d/Conv1dTransposed are bias-optional (BIAS_FALSE,
  * header-sanctioned): a bias-less layer contributes only its weight state,

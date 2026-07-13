@@ -1,0 +1,90 @@
+#define SOURCE_FILE "LR_SCHEDULER"
+
+#include <math.h>
+#include <stdlib.h>
+
+#include "Common.h"
+#include "LrScheduler.h"
+#include "Optimizer.h"
+
+/* Formulas mirror torch's closed-form expression order verbatim so the
+ * double intermediates round identically before the float cast at setLr. */
+
+static float stepLrComputeLr(const lrScheduler_t *sched) {
+    double exponent = (double)(sched->lastEpoch / sched->params.stepLr.stepSize);
+    return (float)((double)sched->baseLr * pow((double)sched->params.stepLr.gamma, exponent));
+}
+
+static float exponentialLrComputeLr(const lrScheduler_t *sched) {
+    return (float)((double)sched->baseLr *
+                   pow((double)sched->params.exponentialLr.gamma, (double)sched->lastEpoch));
+}
+
+static float cosineAnnealingLrComputeLr(const lrScheduler_t *sched) {
+    double etaMin = (double)sched->params.cosineAnnealingLr.etaMin;
+    return (float)(etaMin + ((double)sched->baseLr - etaMin) *
+                                (1.0 + cos(M_PI * (double)sched->lastEpoch /
+                                           (double)sched->params.cosineAnnealingLr.tMax)) /
+                                2.0);
+}
+
+lrSchedulerFunctions_t lrSchedulerFunctions[] = {
+    [STEP_LR] = {.computeLr = stepLrComputeLr},
+    [EXPONENTIAL_LR] = {.computeLr = exponentialLrComputeLr},
+    [COSINE_ANNEALING_LR] = {.computeLr = cosineAnnealingLrComputeLr},
+};
+
+static void initCommon(lrScheduler_t *sched, optimizer_t *optimizer, lrSchedulerType_t type) {
+    if (optimizer == NULL) {
+        PRINT_ERROR("lrScheduler init: optimizer must not be NULL");
+        exit(1);
+    }
+    sched->type = type;
+    sched->optimizer = optimizer;
+    sched->baseLr = optimizerFunctions[optimizer->type].getLr(optimizer);
+    sched->lastEpoch = 0;
+}
+
+void stepLrInit(lrScheduler_t *sched, optimizer_t *optimizer, size_t stepSize, float gamma) {
+    if (stepSize < 1) {
+        PRINT_ERROR("stepLrInit: stepSize must be >= 1");
+        exit(1);
+    }
+    if (!isfinite(gamma)) {
+        PRINT_ERROR("stepLrInit: gamma must be finite");
+        exit(1);
+    }
+    initCommon(sched, optimizer, STEP_LR);
+    sched->params.stepLr.stepSize = stepSize;
+    sched->params.stepLr.gamma = gamma;
+}
+
+void exponentialLrInit(lrScheduler_t *sched, optimizer_t *optimizer, float gamma) {
+    if (!isfinite(gamma)) {
+        PRINT_ERROR("exponentialLrInit: gamma must be finite");
+        exit(1);
+    }
+    initCommon(sched, optimizer, EXPONENTIAL_LR);
+    sched->params.exponentialLr.gamma = gamma;
+}
+
+void cosineAnnealingLrInit(lrScheduler_t *sched, optimizer_t *optimizer, size_t tMax,
+                           float etaMin) {
+    if (tMax < 1) {
+        PRINT_ERROR("cosineAnnealingLrInit: tMax must be >= 1");
+        exit(1);
+    }
+    if (!isfinite(etaMin)) {
+        PRINT_ERROR("cosineAnnealingLrInit: etaMin must be finite");
+        exit(1);
+    }
+    initCommon(sched, optimizer, COSINE_ANNEALING_LR);
+    sched->params.cosineAnnealingLr.tMax = tMax;
+    sched->params.cosineAnnealingLr.etaMin = etaMin;
+}
+
+void lrSchedulerStep(lrScheduler_t *sched) {
+    sched->lastEpoch++;
+    float lr = lrSchedulerFunctions[sched->type].computeLr(sched);
+    optimizerFunctions[sched->optimizer->type].setLr(sched->optimizer, lr);
+}

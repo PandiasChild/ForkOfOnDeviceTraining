@@ -1,10 +1,12 @@
 #define SOURCE_FILE "TRAINING_LOOP_API"
 
 #include <stddef.h>
+#include <stdlib.h>
 
 #include "Common.h"
 #include "DataLoaderApi.h"
 #include "InferenceApi.h"
+#include "LrScheduler.h"
 #include "Optimizer.h"
 #include "StorageApi.h"
 #include "TensorApi.h"
@@ -225,10 +227,16 @@ classificationReport_t evaluationEpochWithReport(layer_t **model, size_t modelSi
 
 trainingRunResult_t trainingRun(layer_t **model, size_t modelSize, lossConfig_t lossConfig,
                                 dataLoader_t *trainDataLoader, dataLoader_t *evalDataLoader,
-                                optimizer_t *optimizer, size_t numberOfEpochs,
-                                calculateGradsFn_t calculateGradsFn,
+                                optimizer_t *optimizer, lrScheduler_t *scheduler,
+                                size_t numberOfEpochs, calculateGradsFn_t calculateGradsFn,
                                 inferenceWithLossFn_t inferenceFn, epochCallbackFn_t callback) {
     trainingRunResult_t result = {0};
+
+    if (scheduler != NULL && scheduler->optimizer != optimizer) {
+        PRINT_ERROR("trainingRun: scheduler is wired to a different optimizer than the one "
+                    "passed to trainingRun (#327)");
+        exit(1);
+    }
 
     batch_t *firstBatch = evalDataLoader->getBatch(evalDataLoader, 0);
     size_t numClasses = calcNumberOfElementsByTensor(firstBatch->samples[0]->label);
@@ -252,6 +260,10 @@ trainingRunResult_t trainingRun(layer_t **model, size_t modelSize, lossConfig_t 
 
         if (callback != NULL) {
             callback(epoch, trainLoss, evalStats);
+        }
+
+        if (scheduler != NULL) {
+            lrSchedulerStep(scheduler);
         }
 
         result.finalTrainLoss = trainLoss;

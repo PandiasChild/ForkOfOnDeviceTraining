@@ -341,7 +341,7 @@ int main(void) {
             model, MODEL_SIZE,
             (lossConfig_t){
                 .funcType = MSE, .backwardReduction = REDUCTION_MEAN, .classWeights = NULL},
-            trainLoader, valLoader, sgd, EPOCHS, calculateGradsSequential, inferenceWithLoss,
+            trainLoader, valLoader, sgd, NULL, EPOCHS, calculateGradsSequential, inferenceWithLoss,
             epochCallback);
         (void)result;
 

@@ -104,6 +104,10 @@ add_elastic_ai_unit_test(
         DataLoader
         DataLoaderApi
         StorageApi
+        LrScheduler
+        Sgd
+        Optimizer
+        odt_test_death
 )
 
 add_elastic_ai_unit_test(

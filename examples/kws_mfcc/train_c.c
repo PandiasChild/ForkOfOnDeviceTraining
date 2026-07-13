@@ -350,7 +350,7 @@ int main(void) {
                         (lossConfig_t){.funcType = CROSS_ENTROPY,
                                        .backwardReduction = REDUCTION_MEAN,
                                        .classWeights = NULL},
-                        trainLoader, valLoader, sgd, EPOCHS, calculateGradsSequential,
+                        trainLoader, valLoader, sgd, NULL, EPOCHS, calculateGradsSequential,
                         inferenceWithLoss, epochCallback);
         (void)result;
 

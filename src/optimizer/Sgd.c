@@ -207,3 +207,11 @@ void sgdZeroGrad(optimizer_t *optimizer) {
         }
     }
 }
+
+float sgdGetLr(optimizer_t *optimizer) {
+    return optimizer->impl->sgd->learningRate;
+}
+
+void sgdSetLr(optimizer_t *optimizer, float learningRate) {
+    optimizer->impl->sgd->learningRate = learningRate;
+}

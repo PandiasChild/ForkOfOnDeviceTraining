@@ -245,8 +245,8 @@ void testGroupNormClassifierTrainsAndRoundTrips(void) {
     size_t numberOfEpochs = 30;
     trainingRun(model, MODEL_SIZE,
                 (lossConfig_t){.funcType = CROSS_ENTROPY, .backwardReduction = REDUCTION_MEAN},
-                trainDl, evalDl, optim, numberOfEpochs, calculateGradsSequential, inferenceWithLoss,
-                captureEpoch);
+                trainDl, evalDl, optim, NULL, numberOfEpochs, calculateGradsSequential,
+                inferenceWithLoss, captureEpoch);
 
     /* (c) State-dict round trip. Probe two batch-1 inputs (one per class),
      * capture predictions, copy the trained params out, perturb the live params,

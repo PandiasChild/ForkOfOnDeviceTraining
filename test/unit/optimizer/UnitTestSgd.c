@@ -1305,6 +1305,25 @@ void testSgdMCreateOptimMomentumZeroAllocatesNoStates(void) {
     TEST_ASSERT_NULL(capturedStates);
 }
 
+void testOptimizerVtableGetSetLrRoundTripsSgdLearningRate(void) {
+    /* #327: the scheduler reaches the LR only through the vtable. Pin that
+     * the SGD row exposes working accessors and that setLr writes through to
+     * the struct field the step kernels actually read. */
+    sgd_t sgd;
+    sgdInit(&sgd, 0.5f, 0.9f, 0.0f,
+            (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
+    optimImpl_t impl = {.sgd = &sgd};
+    optimizer_t optim = {
+        .type = SGD_M, .impl = &impl, .parameter = NULL, .states = NULL, .sizeStates = 0};
+
+    TEST_ASSERT_EQUAL_FLOAT(0.5f, optimizerFunctions[SGD_M].getLr(&optim));
+
+    optimizerFunctions[SGD_M].setLr(&optim, 0.125f);
+
+    TEST_ASSERT_EQUAL_FLOAT(0.125f, optimizerFunctions[SGD_M].getLr(&optim));
+    TEST_ASSERT_EQUAL_FLOAT(0.125f, sgd.learningRate);
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(testSgdMCreateOptim);
@@ -1327,5 +1346,6 @@ int main() {
     RUN_TEST(testSgdStepHalfAwayNeverEscapesSymDeadZone);
     RUN_TEST(testSgdStepSrHalfAwayEscapesSymDeadZone);
     RUN_TEST(testSgdMCreateOptimMomentumZeroAllocatesNoStates);
+    RUN_TEST(testOptimizerVtableGetSetLrRoundTripsSgdLearningRate);
     return UNITY_END();
 }
