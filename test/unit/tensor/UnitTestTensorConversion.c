@@ -31,6 +31,23 @@ static void symTestUnpackSignExtend(const uint8_t *packed, size_t qBits, int32_t
     }
 }
 
+/* PR-C pack tests verify the packed SYM output by unpacking it here in-test:
+ * byteConversion zero-fills on widen, so sign-extend each value from qBits.
+ * (The SYM->* unpack cells live on the parallel PR-B branch, not here.) */
+static void symTestUnpackSignExtendForDeltas(size_t qBits, size_t deltabits, int32_t *out, size_t n) {
+    int32_t signBit = (int32_t)1 << (qBits - 1);
+    int32_t mask = (int32_t)(((uint32_t)1 << qBits) - 1u);
+        int32_t v = out[0] & mask;
+        out[0] = (v ^ signBit) - signBit;
+
+    signBit = (int32_t)1 << (deltabits - 1);
+    mask = (int32_t)(((uint32_t)1 << deltabits) - 1u);
+    for (size_t i = 1; i < n; i++) {
+        int32_t v = out[i] & mask;
+        out[i] = (v ^ signBit) - signBit;
+    }
+}
+
 void testZeroTensorDataSymSubByteZeroesOnlyPackedBytes() {
     /* SYM qBits=3, N=10 -> packed 4 bytes; the guard byte behind them must survive.
      * Mutation guard: the pre-fix N * calcBytesPerElement memset (10 bytes) clobbers
@@ -1310,6 +1327,7 @@ void testConversionFloatToSymRoundTripsSymmetric() {
     symTestUnpackSignExtend(symTensor.data, 6, codes, 6);
     for (size_t i = 0; i < n; i++) {
         float rec = (float)codes[i] * outQC.scale;
+        printf("rec[%d] = %f\n", i, rec);
         TEST_ASSERT_FLOAT_WITHIN(0.12f, floatData[i], rec);
     }
 
@@ -1319,17 +1337,19 @@ void testConversionFloatToSymRoundTripsSymmetric() {
     TEST_ASSERT_TRUE(codes[5] < 0); /* floatData[5] = -3.5 */
 }
 
-void testConversionFloatToDeltaRoundTripsSymmetric() {
-    /* n=6, absMax=3.5 => scale = 3.5 / (2^(6-1) - 1) = 3.5/31 ≈ 0.112903226.
-     * One quant step = scale ≈ 0.113; worst-case round-trip error = scale/2 ≈ 0.056;
-     * tolerance 0.12 is > one full step to cover HALF_AWAY rounding at the boundary. */
+void testConversionFloatToDeltaRoundTripsSymmetricQBitsEqalDeltabits() {
+    /* n=6, absMax=5.5 => scale = 5.5 / (2^(6-1) - 1) = 5.5/31 ≈ 0.17741935.
+     * One quant step = scale ≈ 0.178; worst-case for single round-trip error = scale/2 ≈ 0.089;
+     * single error tolerance 0.2 is > one full step to cover HALF_AWAY rounding at the boundary.
+     * the error can propagate */
     size_t n = 6;
+    size_t qBits = 6;
     size_t dims[] = {6};
     size_t orderOfDims[] = {0};
     shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = orderOfDims};
 
-    float floatData[] = {1.5f, -2.5f, 3.0f, -1.0f, 0.5f, -3.5f};
-    // delta Array [1.5f, -4.0f, 5.5f, -4.0f, 1.5f, -4.0f]
+    float floatData[] = {1.5f, -2.5f, 3.0f, -1.0f, 0.5f, -4.0f};
+    float expectedDeltaData[] = {1.5f, -4.0f, 5.5f, -4.0f, 1.5f, -4.5f};
     float absoluteMax = 5.5f;
     quantization_t floatQ;
     initFloat32Quantization(&floatQ);
@@ -1337,29 +1357,102 @@ void testConversionFloatToDeltaRoundTripsSymmetric() {
     setTensorValues(&floatTensor, (uint8_t *)floatData, &shape, &floatQ, NULL);
 
     symQDeltaConfig_t outQC;
-    initSymQDeltaConfig(6, HALF_AWAY, 6, &outQC);
+    size_t deltabits = 6;
+    initSymQDeltaConfig(qBits, HALF_AWAY, deltabits, &outQC);
     quantization_t outQ;
     initSymQDeltaQuantization(&outQC, &outQ);
     uint8_t deltaData[calcNumberOfBytesForData(&outQ, n)];
-    tensor_t symTensor;
-    setTensorValues(&symTensor, deltaData, &shape, &outQ, NULL);
+    tensor_t deltaTensor;
+    setTensorValues(&deltaTensor, deltaData, &shape, &outQ, NULL);
 
-    convertTensor(&floatTensor, &symTensor);
-    printf("absoluteMax/31.0f = %f\n", (absoluteMax / 31.0f));
+    convertTensor(&floatTensor, &deltaTensor);
+    //test: scale correct?
     TEST_ASSERT_FLOAT_WITHIN(1e-6f, absoluteMax / 31.0f, outQC.scale);
 
-    /*TEST_MESSAGE("hasnotfailedyet");
-    int32_t codes[6];
-    symTestUnpackSignExtend(symTensor.data, 6, codes, 6);
+    uint8_t expectedCompressedValues[] = {0b01001000, 0b11111010, 0b10100101, 0b11001000, 0b00001001};
+    TEST_ASSERT_EQUAL_INT8_ARRAY(expectedCompressedValues, deltaTensor.data, 5);
+    /* int32_t expectedClampedValues[] = {8, -23, 31,-23, 8, -25};
+    * {0b00001000, 0, 0, 0, //8 CLAMPED to 6 qBits -> int 8
+    * 0b00101001, 0, 0, 0, //-23 CLAMPED to 6 deltabits -> int 41
+    * 0b00011111, 0, 0, 0, // 31 CLAMPED to 6 deltabits -> int 31
+    * 0b00101001, 0, 0, 0, //-23 CLAMPED to 6 deltabits -> int 41
+    * 0b00001000, 0, 0, 0, //8 CLAMPED to 6 deltabits -> int 8
+    * 0b00100111, 0, 0, 0 } //-25 CLAMPED to 6 deltabits -> int 39
+    */
+    int32_t expectedSignedValues[] = {8, 41, 31, 41, 8, 39};
+    int32_t codes[n];
+    byteConversionWithOffsets((uint8_t *)deltaTensor.data, deltabits, qBits, (uint8_t *)codes, 32, 32, n, 1);
+
+    TEST_ASSERT_EQUAL_INT32_ARRAY(expectedSignedValues, ((int32_t*)codes), n);
+    symTestUnpackSignExtendForDeltas(qBits, deltabits, codes, n);
     for (size_t i = 0; i < n; i++) {
         float rec = (float)codes[i] * outQC.scale;
-        TEST_ASSERT_FLOAT_WITHIN(0.12f, floatData[i], rec);
+        printf("rec[%d] = %f\n", i, rec);
+        TEST_ASSERT_FLOAT_WITHIN(0.12f, expectedDeltaData[i], rec);
     }
 
     /* Prove symmetric range: the OLD buggy code clamped to [0, qMax-1] so
      * negative inputs became 0; a non-zero negative code proves correct range. */
-    //TEST_ASSERT_TRUE(codes[1] < 0); /* floatData[1] = -2.5 */
-    //TEST_ASSERT_TRUE(codes[5] < 0); /* floatData[5] = -3.5 */
+    TEST_ASSERT_TRUE(codes[1] < 0); /* expectedDeltaData[1] = -4.0f */
+    TEST_ASSERT_TRUE(codes[5] < 0); /* expectedDeltaData[5] = -4.0f */
+}
+
+void testConversionFloatToDeltaRoundTripsSymmetricQBits6Deltabits5() {
+    /* n=6, absMax=5.5 => scale = 5.5 / (2^(6-1) - 1) = 5.5/31 ≈ 0.17741935.
+     * One quant step = scale ≈ 0.178; worst-case for single round-trip error = scale/2 ≈ 0.089;
+     * single error tolerance 0.2 is > one full step to cover HALF_AWAY rounding at the boundary.
+     * the error can propagate */
+    size_t n = 6;
+    size_t qBits = 6;
+    size_t dims[] = {6};
+    size_t orderOfDims[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = orderOfDims};
+
+    float floatData[] = {1.5f, -2.5f, 3.0f, -1.0f, 0.5f, -4.0f};
+    float expectedDeltaData[] = {1.5f, -4.0f, 5.5f, -4.0f, 1.5f, -4.5f};
+    float absoluteMax = 5.5f;
+
+    quantization_t floatQ;
+    initFloat32Quantization(&floatQ);
+    tensor_t floatTensor;
+    setTensorValues(&floatTensor, (uint8_t *)floatData, &shape, &floatQ, NULL);
+
+    symQDeltaConfig_t outQC;
+    size_t deltabits = 5;
+    initSymQDeltaConfig(qBits, HALF_AWAY, deltabits, &outQC);
+    quantization_t outQ;
+    initSymQDeltaQuantization(&outQC, &outQ);
+    uint8_t deltaData[calcNumberOfBytesForData(&outQ, n)];
+    tensor_t deltaTensor;
+    setTensorValues(&deltaTensor, deltaData, &shape, &outQ, NULL);
+
+    convertTensor(&floatTensor, &deltaTensor);
+    //test: scale correct?
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, absoluteMax / 31.0f, outQC.scale);
+
+    uint8_t expectedCompressedValues[] = {0b00001000, 0b01111100, 0b00010000, 0b01000001};
+    TEST_ASSERT_EQUAL_INT8_ARRAY(expectedCompressedValues, deltaTensor.data, 4);
+
+    /* int32_t expectedClampedValues[] = {8, -16, 15,-16, 8, -16};
+    * {0b00001000, 0, 0, 0, //8 CLAMPED to 6 qBits -> int 8
+    * 0b00010000, 0, 0, 0, //-16 CLAMPED to 5 deltabits -> int 16
+    * 0b00001111, 0, 0, 0, // 15 CLAMPED to 5 deltabits -> int 15
+    * 0b00010000, 0, 0, 0, //-16 CLAMPED to 5 deltabits -> int 16
+    * 0b00001000, 0, 0, 0, //8 CLAMPED to 5 deltabits -> int 8
+    * 0b00010000, 0, 0, 0 } //-16 CLAMPED to 5 deltabits -> int 16
+    */
+    int32_t expectedSignedValues[] = {8, 16, 15, 16, 8, 16};
+    int32_t codes[n];
+    byteConversionWithOffsets((uint8_t *)deltaTensor.data, deltabits, qBits, (uint8_t *)codes, 32, 32, n, 1);
+
+    TEST_ASSERT_EQUAL_INT32_ARRAY(expectedSignedValues, ((int32_t*)codes), n);
+
+    symTestUnpackSignExtendForDeltas(qBits, deltabits, codes, n);
+
+    /* Prove symmetric range: the OLD buggy code clamped to [0, deltaMax-1] so
+     * negative inputs became 0; a non-zero negative code proves correct range. */
+    TEST_ASSERT_TRUE(codes[1] < 0); /* expectedDeltaData[1] = -4.0f */
+    TEST_ASSERT_TRUE(codes[5] < 0); /* expectedDeltaData[5] = -4.0f */
 }
 
 void testConversionInt32ToSymNoRescaleScale1() {
@@ -1917,12 +2010,24 @@ void testAccumulateAsymValueZeroAfterConfigReset(void) {
     TEST_ASSERT_EQUAL_UINT8_ARRAY(refData, data, calcNumberOfBytesForData(&refQ, n));
 }
 
+void shouldShowSameBehavior(){
+    size_t n = 6;
+    size_t qBits = 6;
+    size_t deltabits = qBits;
+    int32_t codesDelta[n];
+    int32_t codesSym[n];
+    uint8_t deltaValues[] = {0b01001000, 0b11111010, 0b10100101, 0b11001000, 0b00001001};
+    byteConversionWithOffsets(deltaValues, deltabits, qBits, (uint8_t *)codesDelta, 32, 32, n, 1);
+    symTestUnpackSignExtendForDeltas(qBits, deltabits, codesDelta, n);
+    symTestUnpackSignExtend(deltaValues, 6, codesSym, 6);
+    TEST_ASSERT_EQUAL_INT32_ARRAY(codesDelta, codesSym, n);
+}
 void setUp() {}
 void tearDown() {}
 
 int main(void) {
     UNITY_BEGIN();
-/*
+
     RUN_TEST(testZeroTensorDataSymSubByteZeroesOnlyPackedBytes);
     RUN_TEST(testConversionIntFloat);
     RUN_TEST(testConversionIntSymInt32);
@@ -1962,9 +2067,10 @@ int main(void) {
     RUN_TEST(testConversionSymAsymRescaleRoundTrips);
     RUN_TEST(testConversionSymInt32ToSymRescaleRoundTrips);
     RUN_TEST(testRepackSymInt32ToSymNoRescaleFittingCarriesScale);
-    RUN_TEST(testRepackSymInt32ToSymNoRescaleRejectsOverflow); */
+    RUN_TEST(testRepackSymInt32ToSymNoRescaleRejectsOverflow);
     RUN_TEST(testConversionFloatToSymRoundTripsSymmetric);
-    RUN_TEST(testConversionFloatToDeltaRoundTripsSymmetric);
+    RUN_TEST(testConversionFloatToDeltaRoundTripsSymmetricQBitsEqalDeltabits);
+    RUN_TEST(testConversionFloatToDeltaRoundTripsSymmetricQBits6Deltabits5);
     RUN_TEST(testConversionInt32ToSymNoRescaleScale1);
     RUN_TEST(testConversionInt32ToSymRejectsOutOfRange);
     RUN_TEST(testConversionAsymToSymRescaleOffCenterRoundTrips);
@@ -1978,6 +2084,9 @@ int main(void) {
     RUN_TEST(testAccumulateSymRescaleRederivesGridEachCall);
     RUN_TEST(testAccumulateAsymRescaleMatchesFloatReference);
     RUN_TEST(testAccumulateAsymValueZeroAfterConfigReset);
+
+    /*for debugging purposes*/
+    //RUN_TEST(shouldShowSameBehavior);
 
     return UNITY_END();
 }
