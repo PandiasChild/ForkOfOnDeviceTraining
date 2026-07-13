@@ -1,15 +1,16 @@
 """Offline sweep driver for the HAR FLOAT32-vs-packed-SYM memory/accuracy study.
 
-Runs the config matrix {float, sym@16, sym@12, sym@8, sym@4} x seed 1..10 = 50
-runs. Each run invokes the memory-profiling build of the appropriate trainer
-binary with per-run env and collects one extended RunLog JSON under ``logs/``.
+Runs the config matrix {float, sym12, sym10, sym8, sym6, sym4, sym8cos, sym4cos}
+x seed 1..10 = 80 runs. Each run invokes the memory-profiling build of the
+appropriate trainer binary with per-run env and collects one extended RunLog
+JSON under ``logs/``.
 
 Two BINARIES, not one MODE-switched binary: ``train_c_har_classifier`` (FLOAT32)
 and ``train_c_har_classifier_sym`` (packed SYM@x weights, x = SYM_BITS). The SYM
 configs are the SAME binary at different packed widths. LR is left to each
-binary's per-config default (FLOAT32 0.01, SYM 0.03); momentum 0.9.
+binary's per-config default (both binaries default LR=0.01); momentum 0.9.
 
-This is a LONG offline job (~40-63 s/epoch x 50 epochs x 50 runs ~= 40+ h) and is
+This is a LONG offline job (~40-63 s/epoch x 50 epochs x 80 runs ~= 60+ h) and is
 deliberately NOT wired into CI — CI keeps only the fast FLOAT32 BIT_PARITY gate.
 Use --configs / --seeds / --epochs to smoke a subset before committing to the
 full run, e.g.::
@@ -44,6 +45,8 @@ CONFIGS: dict[str, tuple[str, dict[str, str]]] = {
     "sym8": ("train_c_har_classifier_sym", {"SYM_BITS": "8"}),
     "sym6": ("train_c_har_classifier_sym", {"SYM_BITS": "6"}),
     "sym4": ("train_c_har_classifier_sym", {"SYM_BITS": "4"}),
+    "sym8cos": ("train_c_har_classifier_sym", {"SYM_BITS": "8", "LR_SCHEDULE": "cosine"}),
+    "sym4cos": ("train_c_har_classifier_sym", {"SYM_BITS": "4", "LR_SCHEDULE": "cosine"}),
 }
 
 
@@ -104,7 +107,7 @@ def main() -> None:
     )
     ap.add_argument(
         "--configs", nargs="+", default=list(CONFIGS), choices=list(CONFIGS),
-        help="subset of the config matrix (default: all five)",
+        help="subset of the config matrix (default: all eight)",
     )
     ap.add_argument(
         "--seeds", nargs="+", type=int, default=list(range(1, 11)),

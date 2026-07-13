@@ -85,6 +85,33 @@ Key design points (see `docs/CONVENTIONS.md` and the source comments):
   (the #279 dead-zone escape). `SYM_ROUNDING=det` forces deterministic rounding to
   A/B that claim — which is still a **hypothesis** until the ≥10-seed sweep confirms it.
 
+### Cosine LR schedule vs. the SYM dead zone (#327)
+
+`LR_SCHEDULE=cosine` (with optional `LR_MIN`, default 0) runs the SYM binary
+under `CosineAnnealingLR(T_max = EPOCHS)`: fast start near the int32-overflow
+ceiling (#189), fine finish near the sub-grid stall. The cosine tail
+deliberately pushes per-step updates BELOW one SYM quantization level — with
+the default stochastic rounding (`SR_HALF_AWAY`) those updates survive in
+expectation (#279); with `SYM_ROUNDING=det` they die in the dead zone. That
+contrast is the point of the demo, not a defect. The PyTorch twin mirrors the
+schedule via its `SCHEDULER`/`LR_MIN` module constants. Per-epoch LR lands in
+the run log (`epochs[].lr`).
+
+Sweep results (10 seeds, `run_matrix.py --configs sym8 sym8cos sym4 sym4cos`):
+
+| config  | test_acc (mean±sd) | min    | max    | test_loss (mean±sd) | n  |
+|---------|---------------------|--------|--------|----------------------|----|
+| sym8    | 0.9026 ± 0.0074     | 0.8856 | 0.9104 | 0.3726 ± 0.0954      | 10 |
+| sym8cos | 0.8996 ± 0.0076     | 0.8907 | 0.9148 | 0.3258 ± 0.0869      | 10 |
+| sym4    | 0.8761 ± 0.0210     | 0.8388 | 0.9046 | 0.6111 ± 0.1671      | 10 |
+| sym4cos | 0.8928 ± 0.0114     | 0.8758 | 0.9080 | 0.4212 ± 0.1001      | 10 |
+
+At 8-bit, cosine vs. constant LR is a wash (Δmean=0.0030, well within 1 sd of
+either); at 4-bit cosine's mean is higher (0.8928 vs 0.8761, Δ=0.0167) and
+comparable in magnitude to sym4's own sd (0.0210) — not clearly outside noise
+on 10 seeds — but cosine also cuts the run-to-run spread roughly in half (sd
+0.0114 vs 0.0210), a variance-reduction pattern absent at 8-bit.
+
 ### Build with memory profiling
 
 Memory instrumentation is compiled in only under the `examples_memprofile` preset
@@ -98,16 +125,18 @@ cmake --build --preset examples_memprofile --target \
 ```
 
 Both binaries are env-configured: `SEED`, `EPOCHS`, `LR`, `MOMENTUM`, `LOG_PATH`
-(+ `SYM_BITS`, `SYM_ROUNDING` for the SYM binary). Each writes an extended RunLog
-JSON whose `memory` block carries per-category analytic bytes, instrumented
-heap/stack/RSS peaks, and the **reconciliation gap** (`heap_peak − mcu_total`,
-≈ the host-resident dataset the MCU would stream — recorded, never massaged).
+(+ `SYM_BITS`, `SYM_ROUNDING`, `LR_SCHEDULE`, `LR_MIN` for the SYM binary). Each
+writes an extended RunLog JSON whose `memory` block carries per-category
+analytic bytes, instrumented heap/stack/RSS peaks, and the **reconciliation
+gap** (`heap_peak − mcu_total`, ≈ the host-resident dataset the MCU would
+stream — recorded, never massaged).
 
 ### Offline sweep + honest aggregation
 
 ```bash
-# Full study: {float, sym@12, sym@10, sym@8, sym@6, sym@4} × seed 1..10 = 60 runs.
-# LONG (~40 h offline; NOT wired into CI). Use --configs/--seeds/--epochs to smoke.
+# Full study: {float, sym@12, sym@10, sym@8, sym@6, sym@4, sym@8cos, sym@4cos}
+# × seed 1..10 = 80 runs.
+# LONG (~60+ h offline; NOT wired into CI). Use --configs/--seeds/--epochs to smoke.
 uv run examples/har_classifier/run_matrix.py                 # full
 uv run examples/har_classifier/run_matrix.py --configs float sym8 --seeds 1 2 --epochs 2  # smoke
 

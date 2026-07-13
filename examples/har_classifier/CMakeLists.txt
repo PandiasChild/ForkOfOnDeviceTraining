@@ -124,6 +124,7 @@ target_link_libraries(train_c_har_classifier_sym PRIVATE
         TrainingBatchDefault
         TrainingEpochDefault
         Optimizer
+        LrScheduler
 
         LossFunction
         CrossEntropy

@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 
 class TrainConfig(TypedDict):
@@ -19,6 +19,8 @@ class TrainConfig(TypedDict):
     momentum: float
     seed: int
     shuffle_seed: int
+    lr_schedule: NotRequired[str]  # "none" | "cosine" (#327); absent = constant LR
+    lr_min: NotRequired[float]
 
 
 class EpochLog(TypedDict):
@@ -28,6 +30,7 @@ class EpochLog(TypedDict):
     val_loss: float
     val_acc: float | None
     wall_s: float
+    lr: NotRequired[float]  # LR this epoch trained with (#327)
 
 
 class FinalLog(TypedDict):

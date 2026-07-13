@@ -93,7 +93,13 @@ Notes on the qualified cells:
   (no Nesterov/dampening), per-parameter momentum state (2 states for Linear/Conv/
   ConvT/LayerNorm, 0 for the rest, and 0 for every parameter when
   `momentumFactor == 0`), dtype-aware `scaleOptimizerGradients` (O(1) scale fold for
-  quantized grads), and `sgdZeroGrad`. No LR schedule / bias-correction.
+  quantized grads), and `sgdZeroGrad`. No bias-correction.
+- **LR schedulers** (#327): `lrScheduler_t` (caller-owned, zero-alloc) with
+  `STEP_LR`, `EXPONENTIAL_LR`, `COSINE_ANNEALING_LR` — PyTorch closed-form
+  parity (double math, float cast at `setLr`), stepped by `trainingRun`
+  (NULL-able param, once per epoch after the callback) or manually via
+  `lrSchedulerStep` at any boundary. Optimizer-agnostic through the
+  `getLr`/`setLr` vtable entries.
 
 ## Serialization (`src/serial/`)
 

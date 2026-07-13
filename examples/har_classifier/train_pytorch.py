@@ -31,6 +31,11 @@ LR = 0.01
 MOMENTUM = 0.9
 NUM_CLASSES = 6
 
+# LR schedule mirror of the C SYM binary's LR_SCHEDULE/LR_MIN env knobs
+# (#327). None = constant LR (the FLOAT32 parity baseline stays constant-LR).
+SCHEDULER: str | None = None
+LR_MIN = 0.0
+
 
 class HarDataset(torch.utils.data.Dataset):
     def __init__(self, x: np.ndarray, y: np.ndarray) -> None:
@@ -108,6 +113,13 @@ def main() -> None:
 
     model = HarModel()
     optimizer = torch.optim.SGD(model.parameters(), lr=LR, momentum=MOMENTUM)
+    if SCHEDULER not in (None, "cosine"):
+        raise ValueError(f"SCHEDULER={SCHEDULER!r} not supported (None or 'cosine')")
+    scheduler = (
+        torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=LR_MIN)
+        if SCHEDULER == "cosine"
+        else None
+    )
 
     epoch_records = []
     for epoch in range(EPOCHS):
@@ -121,6 +133,7 @@ def main() -> None:
             optimizer.step()
             step_losses.append(loss.item())
         train_loss = float(np.mean(step_losses)) if step_losses else 0.0
+        epoch_lr = float(optimizer.param_groups[0]["lr"])
         val_loss, val_acc = evaluate(model, val_x, val_y, BATCH)
         epoch_records.append({
             "epoch": epoch,
@@ -129,8 +142,11 @@ def main() -> None:
             "val_loss": val_loss,
             "val_acc": val_acc,
             "wall_s": time.time() - t0,
+            "lr": epoch_lr,
         })
         print(f"epoch {epoch:2d}: train_loss={train_loss:.4f} val_loss={val_loss:.4f} val_acc={val_acc:.4f}", flush=True)
+        if scheduler is not None:
+            scheduler.step()
 
     test_loss, test_acc = evaluate(model, test_x, test_y, BATCH)
     log: RunLog = {
@@ -139,6 +155,7 @@ def main() -> None:
         "config": {
             "epochs": EPOCHS, "batch": BATCH, "lr": LR, "momentum": MOMENTUM,
             "seed": SEED, "shuffle_seed": SHUFFLE_SEED,
+            "lr_schedule": SCHEDULER or "none", "lr_min": LR_MIN,
         },
         "epochs": epoch_records,  # type: ignore[typeddict-item]
         "final": {"test_loss": test_loss, "test_acc": test_acc, "test_auc": None},

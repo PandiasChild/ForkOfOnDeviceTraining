@@ -55,6 +55,7 @@
 #include "Linear.h"
 #include "LinearApi.h"
 #include "LossFunction.h"
+#include "LrScheduler.h"
 #include "NPYLoaderApi.h"
 #include "Optimizer.h"
 #include "Pool1dApi.h"
@@ -106,6 +107,9 @@ static int g_epochs = 50;
 static unsigned g_seed = 1;
 static unsigned g_shuffleSeed = 1;
 static int g_symBits = 12;
+static int g_useCosine = 0;         /* LR_SCHEDULE=cosine */
+static float g_lrMin = 0.0f;        /* LR_MIN (cosine floor) */
+static optimizer_t *g_optim = NULL; /* for per-epoch LR logging in epochCallback */
 
 static float envFloat(const char *name, float dflt) {
     const char *v = getenv(name);
@@ -385,9 +389,9 @@ static void epochCallback(size_t epoch, float trainLoss, epochStats_t evalStats)
         }
         fprintf(g_log_file,
                 "    {\"epoch\": %zu, \"train_loss\": %.6f, \"val_loss\": %.6f, "
-                "\"val_acc\": %.6f, \"wall_s\": %.4f}",
+                "\"val_acc\": %.6f, \"wall_s\": %.4f, \"lr\": %.8f}",
                 epoch, (double)trainLoss, (double)evalStats.loss, (double)evalStats.accuracy,
-                wall_s);
+                wall_s, (double)optimizerFunctions[g_optim->type].getLr(g_optim));
         fflush(g_log_file);
     }
     g_first_epoch = 0;
@@ -406,6 +410,15 @@ int main(void) {
     g_epochs = envInt("EPOCHS", g_epochs);
     g_seed = (unsigned)envInt("SEED", (int)g_seed);
     g_shuffleSeed = (unsigned)envInt("SHUFFLE_SEED", (int)g_shuffleSeed);
+    const char *schedEnv = getenv("LR_SCHEDULE");
+    if (schedEnv != NULL && schedEnv[0] != '\0') {
+        if (strcmp(schedEnv, "cosine") != 0) {
+            fprintf(stderr, "LR_SCHEDULE=%s not supported (only: cosine)\n", schedEnv);
+            exit(1);
+        }
+        g_useCosine = 1;
+    }
+    g_lrMin = envFloat("LR_MIN", g_lrMin);
     const char *logPath = getenv("LOG_PATH");
 
     /* Packed-SYM STORAGE supports up to 31 bits, but this example's forward is
@@ -523,6 +536,20 @@ int main(void) {
 #ifdef ODT_MEM_PROFILE
     size_t markAfterOpt = memProfileMark(); /* optstate_b = delta */
 #endif
+    g_optim = sgd;
+    lrScheduler_t cosineSched;
+    lrScheduler_t *sched = NULL;
+    if (g_useCosine && g_epochs < 1) {
+        fprintf(stderr, "LR_SCHEDULE=cosine requires EPOCHS >= 1\n");
+        exit(1);
+    }
+    if (g_useCosine) {
+        /* tMax = full run length: one half-cosine from g_lr down to g_lrMin.
+         * The tail deliberately drives per-step updates below one SYM level —
+         * SR_HALF_AWAY keeps them alive in expectation (#279); see README. */
+        cosineAnnealingLrInit(&cosineSched, sgd, (size_t)g_epochs, g_lrMin);
+        sched = &cosineSched;
+    }
 
     if (logPath != NULL && logPath[0] != '\0') {
         g_log_file = fopen(logPath, "w");
@@ -530,9 +557,10 @@ int main(void) {
             fprintf(g_log_file,
                     "{\n  \"impl\": \"c-sym-weights\", \"example\": \"har_classifier\",\n"
                     "  \"config\": {\"sym_bits\": %d, \"epochs\": %d, \"batch\": %d, \"lr\": %.6f, "
-                    "\"momentum\": %.6f, \"seed\": %u, \"shuffle_seed\": %u},\n  \"epochs\": [\n",
+                    "\"momentum\": %.6f, \"seed\": %u, \"shuffle_seed\": %u, "
+                    "\"lr_schedule\": \"%s\", \"lr_min\": %.6f},\n  \"epochs\": [\n",
                     g_symBits, g_epochs, BATCH, (double)g_lr, (double)g_momentum, g_seed,
-                    g_shuffleSeed);
+                    g_shuffleSeed, g_useCosine ? "cosine" : "none", (double)g_lrMin);
         }
     }
 
@@ -542,7 +570,7 @@ int main(void) {
         model, MODEL_SIZE,
         (lossConfig_t){
             .funcType = CROSS_ENTROPY, .backwardReduction = REDUCTION_MEAN, .classWeights = NULL},
-        trainLoader, valLoader, sgd, NULL, g_epochs, calculateGradsSequential, inferenceWithLoss,
+        trainLoader, valLoader, sgd, sched, g_epochs, calculateGradsSequential, inferenceWithLoss,
         epochCallback);
     (void)result;
 
@@ -621,8 +649,10 @@ int main(void) {
     } else {
         fprintf(stderr,
                 "CONVERGENCE WARN: train loss did not decrease (first=%.6f last=%.6f) — SYM@%d "
-                "may be too coarse to descend at lr=%.4f (recorded, not fatal)\n",
-                (double)g_firstTrainLoss, (double)g_lastTrainLoss, g_symBits, (double)g_lr);
+                "may be too coarse to descend at base_lr=%.4f lr_schedule=%s (recorded, not "
+                "fatal)\n",
+                (double)g_firstTrainLoss, (double)g_lastTrainLoss, g_symBits, (double)g_lr,
+                g_useCosine ? "cosine" : "none");
     }
 
     return 0;
