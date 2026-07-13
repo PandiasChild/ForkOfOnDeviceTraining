@@ -2,6 +2,7 @@
 
 #include "Add.h"
 #include "DTypes.h"
+#include "DeathTest.h"
 #include "QuantizationApi.h"
 #include "StorageApi.h"
 #include "Tensor.h"
@@ -203,6 +204,39 @@ void testAddSymInt32TensorsInplace() {
     }
 }
 
+/* #340: a count mismatch must fail fast (exit(1)) at the guard, BEFORE the
+ * float-conversion scratch (both buffers sized by the FIRST operand's element
+ * count) overflows on the larger second operand. Pre-fix the bare printf fell
+ * through into that overflow (silent corruption / stack smash); the guard now
+ * matches the exit(1) siblings in this file. */
+void testAddSymInt32TensorsInplaceExitsOnCountMismatch() {
+    symInt32QConfig_t aQC;
+    initSymInt32QConfig(HALF_AWAY, &aQC);
+    aQC.scale = 1.f;
+    quantization_t aQ;
+    initSymInt32Quantization(&aQC, &aQ);
+    int32_t aData[] = {1, 2};
+    size_t aDims[] = {2};
+    size_t aOrder[] = {0};
+    shape_t aShape = {.dimensions = aDims, .numberOfDimensions = 1, .orderOfDimensions = aOrder};
+    tensor_t aTensor;
+    setTensorValues(&aTensor, (uint8_t *)aData, &aShape, &aQ, NULL);
+
+    symInt32QConfig_t bQC;
+    initSymInt32QConfig(HALF_AWAY, &bQC);
+    bQC.scale = 1.f;
+    quantization_t bQ;
+    initSymInt32Quantization(&bQC, &bQ);
+    int32_t bData[1024] = {0};
+    size_t bDims[] = {1024};
+    size_t bOrder[] = {0};
+    shape_t bShape = {.dimensions = bDims, .numberOfDimensions = 1, .orderOfDimensions = bOrder};
+    tensor_t bTensor;
+    setTensorValues(&bTensor, (uint8_t *)bData, &bShape, &bQ, NULL);
+
+    ASSERT_EXITS_WITH_FAILURE(addSymInt32TensorsInplace(&aTensor, &bTensor));
+}
+
 void testAddInt32TensorWithSymInt32TensorInplace() {
     size_t numberOfValues = 6;
 
@@ -276,6 +310,7 @@ int main(void) {
     RUN_TEST(testAddFloat32TensorsInplace);
 
     RUN_TEST(testAddSymInt32TensorsInplace);
+    RUN_TEST(testAddSymInt32TensorsInplaceExitsOnCountMismatch);
     RUN_TEST(testAddInt32TensorWithSymInt32TensorInplace);
     RUN_TEST(testAddFloat32TensorToSymInt32TensorInplace);
 

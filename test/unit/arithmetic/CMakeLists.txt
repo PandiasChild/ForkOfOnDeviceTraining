@@ -33,6 +33,7 @@ add_elastic_ai_unit_test(
         QuantizationApi
         Arithmetic
         StorageApi
+        odt_test_death
 )
 
 add_elastic_ai_unit_test(

@@ -183,7 +183,8 @@ void addSymInt32TensorsInplace(tensor_t *aTensor, tensor_t *bTensor) {
     size_t bNumberOfValues = calcNumberOfElementsByTensor(bTensor);
 
     if (aNumberOfValues != bNumberOfValues) {
-        printf("Mismatched number of values!");
+        PRINT_ERROR("Mismatched number of values!");
+        exit(1);
     }
 
     quantization_t floatQ;
