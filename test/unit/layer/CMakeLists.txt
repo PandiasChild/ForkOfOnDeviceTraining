@@ -103,6 +103,7 @@ add_elastic_ai_unit_test(
         Quantization
         Rounding
         StorageApi
+        odt_test_death
 )
 
 add_elastic_ai_unit_test(
@@ -209,6 +210,7 @@ add_elastic_ai_unit_test(
         Rounding
         StorageApi
         DropoutApi
+        odt_test_death
 )
 
 set(GEN_LAYERNORM_HEADER ${CMAKE_CURRENT_BINARY_DIR}/expected_layernorm.h)

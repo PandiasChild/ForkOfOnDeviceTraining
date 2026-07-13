@@ -141,9 +141,28 @@ void dropoutBackward(layer_t *dropoutLayer, tensor_t *forwardInput, tensor_t *lo
     }
     switch (cfg->propLossMath.type) {
     case ARITH_FLOAT32:
+        /* Dropout backward bypasses the executeOp funnel and raw-casts loss/propLoss
+         * to float* (forwardInput is unused — the mask + p fully determine dx). Fed a
+         * SYM_INT32 wire, the FLOAT32 arm reads int mantissa codes as floats — silent
+         * garbage grads. Guard the dereferenced wire dtypes and fail fast, mirroring
+         * the LayerNorm/GroupNorm backward guards (#315, #261). */
+        if (loss->quantization->type != FLOAT32 || propLoss->quantization->type != FLOAT32) {
+            PRINT_ERROR("Dropout backward: FLOAT32 arm requires FLOAT32 wires — got loss %d, "
+                        "propLoss %d",
+                        (int)loss->quantization->type, (int)propLoss->quantization->type);
+            exit(1);
+        }
         dropoutBackwardFloat(cfg, loss, propLoss);
         break;
     case ARITH_SYM_INT32:
+        /* The SYM_INT32 arm raw-casts to int32* and derefs loss/propLoss->qConfig;
+         * a FLOAT32 wire carries qConfig == NULL, so the mismatch is a NULL deref. */
+        if (loss->quantization->type != SYM_INT32 || propLoss->quantization->type != SYM_INT32) {
+            PRINT_ERROR("Dropout backward: SYM_INT32 arm requires SYM_INT32 wires — got loss %d, "
+                        "propLoss %d",
+                        (int)loss->quantization->type, (int)propLoss->quantization->type);
+            exit(1);
+        }
         dropoutBackwardSymInt32(cfg, loss, propLoss);
         break;
     default:

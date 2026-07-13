@@ -1,5 +1,6 @@
 #include "ArithmeticType.h"
 #include "DTypes.h"
+#include "DeathTest.h"
 #include "LayerQuant.h"
 #include "Quantization.h"
 #include "QuantizationApi.h"
@@ -327,6 +328,48 @@ void testReluLayerInitOwningDeepCopiesLqPointers(void) {
 void setUp() {}
 void tearDown() {}
 
+/* #315: reluBackward dispatches on the layer's DECLARED propLossMath and
+ * raw-casts the wire data pointers without checking the wires' ACTUAL dtype. A
+ * FLOAT32 arm fed SYM_INT32 wires reads int mantissa codes as floats — silent
+ * garbage grads that propagate with no diagnostic (the SYM arm on FLOAT32 wires
+ * NULL-derefs qConfig instead). Guard the wire dtypes and fail fast, mirroring
+ * the LayerNorm/GroupNorm backward guards. */
+void testReluBackwardExitsOnDtypeMismatch() {
+    symInt32QConfig_t qc;
+    initSymInt32QConfig(HALF_AWAY, &qc);
+    qc.scale = 1.f;
+    quantization_t symQ;
+    initSymInt32Quantization(&qc, &symQ);
+
+    size_t dims[] = {6};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    int32_t fwdData[] = {-1, 0, 1, 2, 5, -6};
+    tensor_t forwardInput;
+    setTensorValues(&forwardInput, (uint8_t *)fwdData, &shape, &symQ, NULL);
+
+    int32_t lossData[] = {0, 2, -4, 6, 3, 2};
+    tensor_t loss;
+    setTensorValues(&loss, (uint8_t *)lossData, &shape, &symQ, NULL);
+
+    int32_t propLossData[6] = {0};
+    tensor_t propLoss;
+    setTensorValues(&propLoss, (uint8_t *)propLossData, &shape, &symQ, NULL);
+
+    /* FLOAT32-declared layer (propLossMath = ARITH_FLOAT32) fed SYM_INT32 wires. */
+    quantization_t *floatQ = quantizationInitFloat();
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, floatQ);
+    layer_t *reluLayer = reluLayerInit(&lq);
+    layerFunctions_t reluFns = layerFunctions[RELU];
+
+    ASSERT_EXITS_WITH_FAILURE(reluFns.backward(reluLayer, &forwardInput, &loss, &propLoss));
+
+    freeReluLayer(reluLayer);
+    freeQuantization(floatQ);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testReluForwardFloat);
@@ -334,6 +377,7 @@ int main(void) {
 
     RUN_TEST(testReluBackwardFloat);
     RUN_TEST(testReluBackwardSymInt32);
+    RUN_TEST(testReluBackwardExitsOnDtypeMismatch);
 
     RUN_TEST(testReluLayerInitAndFreeRoundTrip);
 

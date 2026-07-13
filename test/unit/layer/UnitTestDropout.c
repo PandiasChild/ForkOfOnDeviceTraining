@@ -4,6 +4,7 @@
 #include <stdlib.h>
 
 #include "Bernoulli.h"
+#include "DeathTest.h"
 #include "Dropout.h"
 #include "DropoutApi.h"
 #include "Layer.h"
@@ -507,6 +508,51 @@ void testForwardTrainingFloatP025Scale(void) {
     }
 }
 
+/* #315: dropoutBackward dispatches on the layer's DECLARED propLossMath and
+ * raw-casts loss/propLoss data pointers (forwardInput is unused). A FLOAT32 arm
+ * fed SYM_INT32 wires reads int mantissa codes as floats — silent garbage grads
+ * (the SYM arm on FLOAT32 wires NULL-derefs qConfig). Guard the dereferenced
+ * wire dtypes and fail fast, mirroring the LayerNorm/GroupNorm backward guards. */
+void testDropoutBackwardExitsOnDtypeMismatch(void) {
+    size_t n = 4;
+
+    size_t *ldims = reserveMemory(sizeof(size_t));
+    ldims[0] = n;
+    size_t *lorder = reserveMemory(sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, lorder);
+    shape_t *lshape = reserveMemory(sizeof(shape_t));
+    setShape(lshape, ldims, 1, lorder);
+    tensor_t *loss = initTensor(lshape, quantizationInitSymInt32(HALF_AWAY), NULL);
+
+    size_t *pdims = reserveMemory(sizeof(size_t));
+    pdims[0] = n;
+    size_t *porder = reserveMemory(sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, porder);
+    shape_t *pshape = reserveMemory(sizeof(shape_t));
+    setShape(pshape, pdims, 1, porder);
+    tensor_t *propLoss = initTensor(pshape, quantizationInitSymInt32(HALF_AWAY), NULL);
+
+    tensor_t *mask = buildBoolMask(n);
+    fillMaskKeepEven(mask);
+
+    /* FLOAT32-declared dropout (propLossMath = ARITH_FLOAT32) fed SYM_INT32 wires. */
+    quantization_t *fq = quantizationInitFloat();
+    quantization_t *bq = quantizationInitFloat();
+    dropoutConfig_t dcfg;
+    initDropoutConfig(&dcfg, 0.5f, mask, fq, bq);
+    dcfg.training = true;
+    layerConfig_t lcfg;
+    layer_t layer = makeDropoutLayer(&dcfg, &lcfg);
+
+    ASSERT_EXITS_WITH_FAILURE(dropoutBackward(&layer, NULL, loss, propLoss));
+
+    freeQuantization(bq);
+    freeQuantization(fq);
+    freeTensor(mask);
+    freeTensor(propLoss);
+    freeTensor(loss);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testForwardEvalIdentityFloat);
@@ -515,6 +561,7 @@ int main(void) {
     RUN_TEST(testForwardTrainingSymInt32ScaleFold);
     RUN_TEST(testBackwardFloatUsesMaskAndScale);
     RUN_TEST(testBackwardSymInt32UsesMaskAndScaleFold);
+    RUN_TEST(testDropoutBackwardExitsOnDtypeMismatch);
     RUN_TEST(testVtableForwardIdentityFloat);
     RUN_TEST(testCalcOutputShapeIsIdentity);
     RUN_TEST(testFactoryBuildsAndForwards);
