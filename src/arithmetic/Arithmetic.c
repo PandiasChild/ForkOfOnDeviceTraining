@@ -83,9 +83,14 @@ size_t calcElementIndexByIndices(size_t numberOfDims, size_t *dims, size_t *indi
         offset *= dims[i];
     }
 
+    /* #344: invert orderOfDimensions. Physical dim p carries logical dim order[p]
+     * (getDimensionsByIndex), so the physical multi-index is P[p] = indices[order[p]].
+     * The old forward form orderedIndices[order[d]] = indices[d] coincides with this
+     * only for involutions (identity / single-axis swaps) — every permutation the live
+     * Matmul/Reduce/LayerNorm callers pass today, which is why it went unnoticed. */
     size_t orderedIndices[numberOfDims];
     for (size_t d = 0; d < numberOfDims; d++) {
-        orderedIndices[orderOfDimensions[d]] = indices[d];
+        orderedIndices[d] = indices[orderOfDimensions[d]];
     }
 
     size_t outputIndex = 0;
@@ -118,13 +123,13 @@ void int32PointWiseArithmetic(tensor_t *aTensor, tensor_t *bTensor,
     for (size_t i = 0; i < numberOfElements; i++) {
         size_t aIndices[numberOfDims];
 
-        calcIndicesByRawIndex(numberOfDims, aDims, i, aIndices);
+        calcIndicesByRawIndex(numberOfDims, aOrderedDims, i, aIndices);
 
         size_t aElementIndex = calcElementIndexByIndices(numberOfDims, aDims, aIndices,
                                                          aTensor->shape->orderOfDimensions);
 
         size_t bIndices[numberOfDims];
-        calcIndicesByRawIndex(numberOfDims, bDims, i, bIndices);
+        calcIndicesByRawIndex(numberOfDims, bOrderedDims, i, bIndices);
         size_t bElementIndex = calcElementIndexByIndices(numberOfDims, bDims, bIndices,
                                                          bTensor->shape->orderOfDimensions);
 
@@ -164,12 +169,12 @@ void int32PointWiseArithmeticInplace(tensor_t *aTensor, tensor_t *bTensor,
 
     for (size_t i = 0; i < numberOfElements; i++) {
         size_t aIndices[numberOfDims];
-        calcIndicesByRawIndex(numberOfDims, aDims, i, aIndices);
+        calcIndicesByRawIndex(numberOfDims, aOrderedDims, i, aIndices);
         size_t aElementIndex = calcElementIndexByIndices(numberOfDims, aDims, aIndices,
                                                          aTensor->shape->orderOfDimensions);
 
         size_t bIndices[numberOfDims];
-        calcIndicesByRawIndex(numberOfDims, bDims, i, bIndices);
+        calcIndicesByRawIndex(numberOfDims, bOrderedDims, i, bIndices);
         size_t bElementIndex = calcElementIndexByIndices(numberOfDims, bDims, bIndices,
                                                          bTensor->shape->orderOfDimensions);
 
@@ -181,7 +186,11 @@ void int32PointWiseArithmeticInplace(tensor_t *aTensor, tensor_t *bTensor,
 
         int32_t result = arithmeticFunc(aValue, bValue);
 
-        size_t outputByteIndex = i * bytesPerElement;
+        /* #339: write the result to the physical slot it was read from
+         * (aElementIndex), so a transposed (non-identity order) in-place op scatters
+         * correctly instead of flat. The pointwise map is bijective, so read-slot ==
+         * write-slot is safe. */
+        size_t outputByteIndex = aElementIndex * bytesPerElement;
 
         writeInt32ToByteArray(result, &aTensor->data[outputByteIndex]);
     }
@@ -239,12 +248,12 @@ void floatPointWiseArithmetic(tensor_t *aTensor, tensor_t *bTensor,
 
     for (size_t i = 0; i < numberOfElements; i++) {
         size_t aIndices[numberOfDims];
-        calcIndicesByRawIndex(numberOfDims, aDims, i, aIndices);
+        calcIndicesByRawIndex(numberOfDims, aOrderedDims, i, aIndices);
         size_t aElementIndex = calcElementIndexByIndices(numberOfDims, aDims, aIndices,
                                                          aTensor->shape->orderOfDimensions);
 
         size_t bIndices[numberOfDims];
-        calcIndicesByRawIndex(numberOfDims, bDims, i, bIndices);
+        calcIndicesByRawIndex(numberOfDims, bOrderedDims, i, bIndices);
         size_t bElementIndex = calcElementIndexByIndices(numberOfDims, bDims, bIndices,
                                                          bTensor->shape->orderOfDimensions);
 
@@ -284,12 +293,12 @@ void floatPointWiseArithmeticInplace(tensor_t *aTensor, tensor_t *bTensor,
     for (size_t i = 0; i < numberOfElements; i++) {
 
         size_t aIndices[numberOfDims];
-        calcIndicesByRawIndex(numberOfDims, aDims, i, aIndices);
+        calcIndicesByRawIndex(numberOfDims, aOrderedDims, i, aIndices);
         size_t aElementIndex = calcElementIndexByIndices(numberOfDims, aDims, aIndices,
                                                          aTensor->shape->orderOfDimensions);
 
         size_t bIndices[numberOfDims];
-        calcIndicesByRawIndex(numberOfDims, bDims, i, bIndices);
+        calcIndicesByRawIndex(numberOfDims, bOrderedDims, i, bIndices);
 
         size_t bElementIndex = calcElementIndexByIndices(numberOfDims, bDims, bIndices,
                                                          bTensor->shape->orderOfDimensions);
@@ -302,7 +311,11 @@ void floatPointWiseArithmeticInplace(tensor_t *aTensor, tensor_t *bTensor,
 
         float result = arithmeticFunc(aValue, bValue);
 
-        size_t outputByteIndex = i * bytesPerElement;
+        /* #339: write the result to the physical slot it was read from
+         * (aElementIndex), so a transposed (non-identity order) in-place op scatters
+         * correctly instead of flat. The pointwise map is bijective, so read-slot ==
+         * write-slot is safe. */
+        size_t outputByteIndex = aElementIndex * bytesPerElement;
 
         writeFloatToByteArray(result, &aTensor->data[outputByteIndex]);
     }

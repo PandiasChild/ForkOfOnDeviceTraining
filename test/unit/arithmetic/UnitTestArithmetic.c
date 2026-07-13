@@ -184,12 +184,62 @@ void testDoDimensionsMatch_DifferentDims_ReturnsFalse() {
 void setUp() {}
 void tearDown() {}
 
+/* #344 defect 2: calcElementIndexByIndices must INVERT orderOfDimensions, not
+ * apply it forward — the two agree only for involutions (identity / single
+ * swaps), which is every permutation the live Matmul/Reduce/LayerNorm callers
+ * see today. For the 3-cycle order [1,2,0] over physical dims [2,3,4], logical
+ * index [1,1,2] maps to storage offset 21 (physical multi-index P[p]=L[order[p]]
+ * = [1,2,1] -> 1*12 + 2*4 + 1). Pre-fix it computed 29 — out of bounds in the
+ * 24-element buffer. */
+void testCalcElementIndexByIndicesThreeCycle() {
+    size_t dims[] = {2, 3, 4};
+    size_t order[] = {1, 2, 0};
+    size_t indices[] = {1, 1, 2};
+    TEST_ASSERT_EQUAL_size_t(21, calcElementIndexByIndices(3, dims, indices, order));
+}
+
+/* #344 defect 1 + #339: an in-place pointwise op on a transposed (non-identity
+ * order) FIRST operand must decode the raw index against the ORDERED (logical)
+ * dims and write the result to the physical slot it read (aElementIndex) — not
+ * decode against physical dims and write flat. Here a is a genuine [3,2]->[2,3]
+ * transpose (both swapped axes > 1, so the size-1 masking in the existing test
+ * cannot hide the defect); b is identity-order with the same logical shape. */
+void testFloat32PointWiseArithmeticInplaceTransposed() {
+    float aData[] = {1.f, 2.f, 3.f, 4.f, 5.f, 6.f};
+    size_t aDims[] = {3, 2};
+    size_t aOrder[] = {0, 1};
+    shape_t aShape = {.dimensions = aDims, .orderOfDimensions = aOrder, .numberOfDimensions = 2};
+    quantization_t aQ;
+    initFloat32Quantization(&aQ);
+    tensor_t aTensor;
+    setTensorValues(&aTensor, (uint8_t *)aData, &aShape, &aQ, NULL);
+    transposeTensor(&aTensor, 0, 1); /* physical [3,2] -> logical [2,3], order [1,0] */
+
+    float bData[] = {10.f, 20.f, 30.f, 40.f, 50.f, 60.f};
+    size_t bDims[] = {2, 3};
+    size_t bOrder[] = {0, 1};
+    shape_t bShape = {.dimensions = bDims, .orderOfDimensions = bOrder, .numberOfDimensions = 2};
+    quantization_t bQ;
+    initFloat32Quantization(&bQ);
+    tensor_t bTensor;
+    setTensorValues(&bTensor, (uint8_t *)bData, &bShape, &bQ, NULL);
+
+    addFloat32TensorsInplace(&aTensor, &bTensor);
+
+    /* a logical [[1,3,5],[2,4,6]] + b logical [[10,20,30],[40,50,60]] =
+     * [[11,23,35],[42,54,66]] written back to a's physical slots (offset l1*2+l0). */
+    float expected[] = {11.f, 42.f, 23.f, 54.f, 35.f, 66.f};
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(expected, aData, 6);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testOrderDims);
     RUN_TEST(testCalcTensorIndex);
     RUN_TEST(testCalcIndexByRawIndex);
     RUN_TEST(testInt32PointWiseArithmetic);
+    RUN_TEST(testCalcElementIndexByIndicesThreeCycle);
+    RUN_TEST(testFloat32PointWiseArithmeticInplaceTransposed);
     RUN_TEST(testFloat32ElementWithTensorArithmetic);
     RUN_TEST(testDoDimensionsMatch_SameShape_ReturnsTrue);
     RUN_TEST(testDoDimensionsMatch_DifferentDims_ReturnsFalse);
