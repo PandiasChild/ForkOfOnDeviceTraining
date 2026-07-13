@@ -28,12 +28,27 @@
 #define SERIALIZE_FORMAT_VERSION 1u
 
 void deserializeTensor(tensor_t *tensor, FILE *f) {
+    /* #316: capture the skeleton's expected payload size BEFORE the shape /
+     * quantization overwrites. tensor->data was sized by initTensor from this
+     * build-time shape + quantization; a file record with a larger element count
+     * or packed width (which the dtype check alone cannot see) would otherwise
+     * fread past that allocation. */
+    size_t expectedBytes =
+        calcNumberOfBytesForData(tensor->quantization, calcNumberOfElementsByShape(tensor->shape));
+
     deserializeShape(tensor->shape, f);
     deserializeQuantization(tensor->quantization, f);
 
     size_t numberOfValues = calcNumberOfElementsByShape(tensor->shape);
     /* Mirrors Serialize.c: payload length is the packed size. */
     size_t dataBytes = calcNumberOfBytesForData(tensor->quantization, numberOfValues);
+
+    if (dataBytes != expectedBytes) {
+        PRINT_ERROR("deserializeTensor: file payload %zu bytes does not match the skeleton's "
+                    "allocated %zu bytes (shape/qBits mismatch)",
+                    dataBytes, expectedBytes);
+        exit(1);
+    }
 
     deserializeData(tensor->data, dataBytes, 1, f);
     deserializeSparsity();
@@ -98,6 +113,17 @@ static void deserializeShape(shape_t *shape, FILE *f) {
 static void deserializeQuantization(quantization_t *q, FILE *f) {
     uint8_t type;
     deserialize(&type, 1, sizeof(uint8_t), f);
+    /* #316: the skeleton was built with a fixed dtype whose qConfig struct (or
+     * NULL, for FLOAT32/INT32/BOOL) is fixed. A file record claiming a different
+     * dtype would make deserializeQConfig write scale/qBits/... through a
+     * mismatched or NULL qConfig — segfault on host, silent low-address writes on
+     * an MMU-less MCU. Reject the mismatch before the overwrite; running here (not
+     * in deserializeQConfig) forecloses the NULL-qConfig deref. */
+    if ((qtype_t)type != q->type) {
+        PRINT_ERROR("deserializeQuantization: file dtype %u does not match the skeleton dtype %u",
+                    (unsigned)type, (unsigned)q->type);
+        exit(1);
+    }
     q->type = (qtype_t)type;
     deserializeQConfig(q, f);
 }

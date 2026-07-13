@@ -176,6 +176,60 @@ static void testDeserializeRejectsTagMismatch(void) {
     freeFlattenLayer(layer);
 }
 
+static tensor_t *makeSymInt32Tensor2D(size_t d0, size_t d1) {
+    size_t *dims = reserveMemory(2 * sizeof(size_t));
+    dims[0] = d0;
+    dims[1] = d1;
+    size_t *order = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, 2, order);
+    return initTensor(shape, quantizationInitSymInt32(HALF_AWAY), NULL);
+}
+
+/* #316: a checkpoint whose per-tensor dtype differs from the pre-built skeleton
+ * must be rejected before deserializeQConfig writes qConfig fields through a
+ * mismatched (or NULL, for FLOAT32/INT32/BOOL) pointer, and before the payload
+ * fread can overflow the skeleton's allocation. Here a FLOAT32 record is loaded
+ * into a SYM_INT32-built skeleton — pre-fix it silently overwrites the dtype;
+ * the reverse (SYM into a FLOAT32 skeleton) NULL-derefs. */
+void testDeserializeTensorRejectsDtypeMismatch(void) {
+    float data[] = {1.f, 2.f, 3.f, 4.f, 5.f, 6.f};
+    tensor_t *floatTensor = makeFloatTensor2D(2, 3, data, 6);
+    FILE *f = fopen(FILE_PATH, "wb");
+    serializeTensor(floatTensor, f);
+    fclose(f);
+
+    tensor_t *symSkeleton = makeSymInt32Tensor2D(2, 3);
+    f = fopen(FILE_PATH, "rb");
+    ASSERT_EXITS_WITH_FAILURE(deserializeTensor(symSkeleton, f));
+    fclose(f);
+
+    freeTensor(symSkeleton);
+    freeTensor(floatTensor);
+}
+
+/* #316: a same-dtype record whose element count differs from the skeleton would
+ * fread past tensor->data, which initTensor sized from the build-time shape. The
+ * payload-size check catches size changes (shape- or packed-qBits-driven) that
+ * the dtype check alone misses. */
+void testDeserializeTensorRejectsPayloadSizeMismatch(void) {
+    float data[] = {1.f, 2.f, 3.f, 4.f, 5.f, 6.f};
+    tensor_t *bigTensor = makeFloatTensor2D(2, 3, data, 6);
+    FILE *f = fopen(FILE_PATH, "wb");
+    serializeTensor(bigTensor, f);
+    fclose(f);
+
+    /* Same dtype (FLOAT32) and rank, but a smaller allocation (2x2 = 4 elems). */
+    tensor_t *smallSkeleton = makeFloatTensor2D(2, 2, NULL, 0);
+    f = fopen(FILE_PATH, "rb");
+    ASSERT_EXITS_WITH_FAILURE(deserializeTensor(smallSkeleton, f));
+    fclose(f);
+
+    freeTensor(smallSkeleton);
+    freeTensor(bigTensor);
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -186,5 +240,7 @@ int main(void) {
     RUN_TEST(testDeserializeRejectsWrongVersion);
     RUN_TEST(testDeserializeRejectsLayerCountMismatch);
     RUN_TEST(testDeserializeRejectsTagMismatch);
+    RUN_TEST(testDeserializeTensorRejectsDtypeMismatch);
+    RUN_TEST(testDeserializeTensorRejectsPayloadSizeMismatch);
     return UNITY_END();
 }
