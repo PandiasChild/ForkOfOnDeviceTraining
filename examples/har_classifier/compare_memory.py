@@ -45,7 +45,8 @@ from examples._shared.log_schema import RunLog, load_log  # noqa: E402
 CONFIG_ORDER = ["float", "sym12", "sym10", "sym8", "sym6", "sym4", "sym8cos", "sym4cos"]
 
 # Analytic MCU categories, in report order. mcu_total_b is their sum.
-CATEGORIES = ["params_b", "grads_b", "optstate_analytic_b", "activations_b", "io_b"]
+CATEGORIES = ["params_b", "grads_b", "optstate_analytic_b", "activations_b", "io_b",
+              "pool_backward_b", "dx_peak_b"]
 
 # Scalars aggregated per config (mean +/- std over seeds).
 SCALARS = [
@@ -55,6 +56,8 @@ SCALARS = [
     "optstate_analytic_b",
     "activations_b",
     "io_b",
+    "pool_backward_b",
+    "dx_peak_b",
     "mcu_total_b",
     "heap_peak_b",
     "stack_peak_b",
@@ -212,6 +215,7 @@ def print_table(agg: dict, min_seeds: int) -> None:
     cat_labels = {
         "params_b": "params", "grads_b": "grads", "optstate_analytic_b": "optstate",
         "activations_b": "activations", "io_b": "io",
+        "pool_backward_b": "pool_bwd", "dx_peak_b": "dx_peak",
     }
     chdr = f"{'config':>8}" + "".join(f"{cat_labels[k]:>14}" for k in CATEGORIES) + f"{'mcu_total':>14}"
     print(chdr)

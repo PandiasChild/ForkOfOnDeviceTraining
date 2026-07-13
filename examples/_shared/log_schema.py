@@ -52,9 +52,11 @@ class MemoryLog(TypedDict):
     params_b: int  # analytic: weight+bias tensor bytes (dtype-aware)
     grads_b: int  # analytic: grad tensor bytes
     optstate_analytic_b: int  # analytic: optimizer momentum-buffer bytes
-    activations_b: int  # analytic: peak concurrent activation bytes, one batch
+    activations_b: int  # analytic: forward-wire bytes only (NOT the true peak — see dx_peak_b)
     io_b: int  # analytic: batched input + one-hot label bytes
-    mcu_total_b: int  # params+grads+optstate+activations+io
+    pool_backward_b: int  # analytic: persistent MaxPool argmax-index buffers (#321)
+    dx_peak_b: int  # analytic: worst concurrent dx ping-pong pair during backprop (#321)
+    mcu_total_b: int  # params+grads+optstate+activations+io+pool_backward+dx_peak
     heap_peak_b: int  # instrumented: memProfilePeakBytes()
     stack_peak_b: int  # instrumented: measurePeakStackBytes() on one step
     rss_peak_kb: int  # instrumented: memProfileRssPeakKb() (KiB)

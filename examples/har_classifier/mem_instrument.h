@@ -39,7 +39,9 @@ typedef struct memReport {
     size_t optstate_analytic_b; /* sum of optimizer momentum-buffer bytes */
     size_t activations_b;       /* peak concurrent activation bytes, one batch */
     size_t io_b;                /* batched input + one-hot label bytes */
-    size_t mcu_total_b;         /* params+grads+optstate+activations+io */
+    size_t pool_backward_b;     /* persistent MaxPool argmax-index buffers (backward state, #321) */
+    size_t dx_peak_b;           /* worst concurrent dx ping-pong pair during backprop (#321) */
+    size_t mcu_total_b;         /* params+grads+optstate+activations+io+pool_backward+dx_peak */
 
     /* Instrumented process-level anchors. */
     size_t heap_peak_b;  /* memProfilePeakBytes() */
@@ -71,6 +73,16 @@ size_t memInstrumentOptStateBytes(optimizer_t *optim);
  * over-count activations + IO by that factor. */
 size_t memInstrumentHarActivationBytes(size_t microBatch);
 size_t memInstrumentHarIoBytes(size_t microBatch);
+
+/* #321: backward-only on-device state that activations_b/params_b do NOT count.
+ *  - PoolBackward: the persistent INT32 MaxPool argmax-index buffers (required for
+ *    the backward pass, allocated per-layer at build time). Walks the model for
+ *    MAXPOOL1D layers; dtype-aware via calcBytesPerTensor.
+ *  - HarDxPeak: the transient dx ping-pong — during backprop gradNext + gradCurr
+ *    coexist with every forward wire; the worst concurrent pair is 2x the largest
+ *    wire (2x[16,128] FLOAT32 = 16,384 B for HAR). Pass the MICRO-batch. */
+size_t memInstrumentPoolBackwardBytes(layer_t **model, size_t modelSize);
+size_t memInstrumentHarDxPeakBytes(size_t microBatch);
 
 /* Everything the stack thunk needs to run one representative training step
  * (zeroGrad -> calculateGradsSequential -> step -> zeroGrad) on one sample. */

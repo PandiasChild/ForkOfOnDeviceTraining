@@ -156,6 +156,11 @@ separately, ≈27 KB float / ≈52 KB sym after the #296 packed-repack scratch).
 the stack, the SYM totals still come out ahead (SYM@8 ≈202 KiB vs FLOAT32 ≈208 KiB of
 provisioned RAM), so the stack **confirms** the SYM win rather than erasing it — this
 reverses the pre-#296 picture; see `check_stack_watermark.py` for the current numbers.
+As of #321 `mcu_total_b` also counts the backward-only on-device state the earlier
+figures omitted — the persistent MaxPool argmax buffers (~8 KB, `pool_backward_b`) and
+the transient dx ping-pong peak (~16 KB, `dx_peak_b`) — so the absolute totals above are
+~25 KB higher than quoted; that delta is uniform across configs, so the relative SYM win
+is unchanged. Regenerate the exact figures from a fresh sweep.
 `compare_memory.py` reports the weight-category drop and the total-footprint drop
 **separately** — they answer different questions. The
 next wins are grads and momentum (each another ~22%), reachable via the optimizer's

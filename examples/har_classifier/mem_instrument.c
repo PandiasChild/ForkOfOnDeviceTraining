@@ -2,6 +2,8 @@
 
 #include "mem_instrument.h"
 
+#include "Layer.h"
+#include "MaxPool1d.h"
 #include "MemProfile.h"
 #include "Optimizer.h"
 #include "Tensor.h"
@@ -57,13 +59,19 @@ static const size_t HAR_LAYER_OUT_ELEMS_PER_SAMPLE[] = {
 };
 
 size_t memInstrumentHarActivationBytes(size_t microBatch) {
-    /* Sum of EVERY layer's output-tensor bytes for ONE micro-batch.
+    /* Sum of EVERY layer's forward output-tensor bytes for ONE micro-batch.
      * calculateGradsSequential allocates all forward activations up front
      * (initLayerOutputs) and frees them only AFTER the full backward pass
      * (deInitLayerOutputs), so every forward activation is concurrently live
-     * during backprop — this sum is a faithful peak, not a loose upper bound.
-     * (It still ignores the transient per-op conversion scratch executeOp
-     * allocates, so it slightly UNDER-counts the instantaneous peak.)
+     * during backprop.
+     *
+     * #321: this is the forward-wire sum ONLY — NOT the true activation peak.
+     * During backprop the dx ping-pong (gradNext + gradCurr) coexists with these
+     * wires; that transient is reported separately as dx_peak_b (see
+     * memInstrumentHarDxPeakBytes), so the true concurrent wire peak is
+     * activations_b + dx_peak_b. The per-op conversion scratch executeOp
+     * allocates is on the STACK (VLAs), already captured by stack_peak_b — it does
+     * NOT under-count this heap sum.
      *
      * microBatch is the CONCURRENT sample count, NOT the macro-batch:
      * trainingBatchDefault loops the macro-batch one sample at a time (loss.md:
@@ -83,6 +91,36 @@ size_t memInstrumentHarIoBytes(size_t microBatch) {
      * [microBatch, 6] float. The macro-batch is streamed one sample at a time
      * (see the activation note), so this is the micro-batch, not the loader batch. */
     return (size_t)(9 * 128 + 6) * microBatch * sizeof(float);
+}
+
+size_t memInstrumentPoolBackwardBytes(layer_t **model, size_t modelSize) {
+    /* #321: each MaxPool layer pre-allocates an INT32 argmax-index tensor (shape ==
+     * output shape) at build time; it lives the whole run and is required for the
+     * backward pass, but lands in no params/grads/optstate/activations category —
+     * it was hidden inside the measured params_grads_b delta. Walk the model and
+     * sum it, dtype-aware via calcBytesPerTensor. */
+    size_t total = 0;
+    for (size_t i = 0; i < modelSize; i++) {
+        if (model[i]->type == MAXPOOL1D) {
+            total += calcBytesPerTensor(model[i]->config->maxPool1d->argmaxIndices);
+        }
+    }
+    return total;
+}
+
+size_t memInstrumentHarDxPeakBytes(size_t microBatch) {
+    /* #321: the transient dx ping-pong during backprop. CalculateGradsSequential
+     * allocates gradCurr before freeing gradNext, so the two dx wires coexist with
+     * all forward wires; the worst concurrent pair is 2x the largest forward wire
+     * (2x[16,128] FLOAT32 = 16,384 B for HAR). Pass the MICRO-batch. */
+    size_t maxElems = 0;
+    size_t n = sizeof(HAR_LAYER_OUT_ELEMS_PER_SAMPLE) / sizeof(HAR_LAYER_OUT_ELEMS_PER_SAMPLE[0]);
+    for (size_t i = 0; i < n; i++) {
+        if (HAR_LAYER_OUT_ELEMS_PER_SAMPLE[i] > maxElems) {
+            maxElems = HAR_LAYER_OUT_ELEMS_PER_SAMPLE[i];
+        }
+    }
+    return 2 * maxElems * microBatch * sizeof(float);
 }
 
 /* ---- Stack high-water of one training step -------------------------------- */
@@ -108,7 +146,8 @@ size_t memInstrumentStackPeakBytes(memStepCtx_t *ctx, size_t stackBytes) {
 /* ---- Reconciliation + emit ------------------------------------------------ */
 
 void memInstrumentFinalize(memReport_t *r) {
-    r->mcu_total_b = r->params_b + r->grads_b + r->optstate_analytic_b + r->activations_b + r->io_b;
+    r->mcu_total_b = r->params_b + r->grads_b + r->optstate_analytic_b + r->activations_b +
+                     r->io_b + r->pool_backward_b + r->dx_peak_b;
     /* Signed on purpose: a positive gap = unaccounted heap (dataset, dataloaders,
      * per-op scratch, bookkeeping); a negative gap would mean the analytic model
      * over-counts. RECORD it — never tune the categories to shrink it. */
@@ -120,12 +159,14 @@ void memInstrumentEmitJson(FILE *f, const memReport_t *r) {
             "{\"sym_bits\": %d, "
             "\"dataset_b\": %zu, \"params_grads_b\": %zu, \"optstate_b\": %zu, "
             "\"params_b\": %zu, \"grads_b\": %zu, \"optstate_analytic_b\": %zu, "
-            "\"activations_b\": %zu, \"io_b\": %zu, \"mcu_total_b\": %zu, "
+            "\"activations_b\": %zu, \"io_b\": %zu, "
+            "\"pool_backward_b\": %zu, \"dx_peak_b\": %zu, \"mcu_total_b\": %zu, "
             "\"heap_peak_b\": %zu, \"stack_peak_b\": %zu, \"rss_peak_kb\": %zu, "
             "\"reconciliation_gap_b\": %ld}",
             r->sym_bits, r->dataset_b, r->params_grads_b, r->optstate_b, r->params_b, r->grads_b,
-            r->optstate_analytic_b, r->activations_b, r->io_b, r->mcu_total_b, r->heap_peak_b,
-            r->stack_peak_b, r->rss_peak_kb, r->reconciliation_gap_b);
+            r->optstate_analytic_b, r->activations_b, r->io_b, r->pool_backward_b, r->dx_peak_b,
+            r->mcu_total_b, r->heap_peak_b, r->stack_peak_b, r->rss_peak_kb,
+            r->reconciliation_gap_b);
 }
 
 void memInstrumentPrintReconciliation(const memReport_t *r) {

@@ -12,6 +12,7 @@ target_link_libraries(har_mem_instrument PUBLIC
         CalculateGradsSequential
         TrainingLoopApi
         Layer
+        MaxPool1d
         LossFunction
         DataLoader
         InferenceApi

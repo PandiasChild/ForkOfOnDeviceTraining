@@ -196,7 +196,8 @@ def plot_anomaly_score_hist(
 
 # Real run_matrix.py sweep set (#322 — was drifted: sym16 never ran, sym10/sym6 missing).
 _MEM_CONFIG_ORDER = ["float", "sym12", "sym10", "sym8", "sym6", "sym4", "sym8cos", "sym4cos"]
-_MEM_CATEGORIES = ["params_b", "grads_b", "optstate_analytic_b", "activations_b", "io_b"]
+_MEM_CATEGORIES = ["params_b", "grads_b", "optstate_analytic_b", "activations_b", "io_b",
+                   "pool_backward_b", "dx_peak_b"]
 # Okabe-Ito palette, one per analytic category (colorblind-safe, distinguishable).
 _MEM_CAT_COLORS = {
     "params_b": "#0072B2",             # blue   — the category that shrinks
@@ -204,6 +205,8 @@ _MEM_CAT_COLORS = {
     "optstate_analytic_b": "#009E73",  # green
     "activations_b": "#CC79A7",        # pink   — dominates at batch 64
     "io_b": "#999999",                 # grey
+    "pool_backward_b": "#D55E00",      # vermillion — MaxPool argmax backward state (#321)
+    "dx_peak_b": "#56B4E9",            # sky blue   — dx ping-pong transient (#321)
 }
 
 
