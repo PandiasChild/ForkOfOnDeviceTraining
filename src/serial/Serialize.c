@@ -109,25 +109,28 @@ static void serializeQConfig(quantization_t *q, FILE *f) {
     case FLOAT32:
     case BOOL:
         break;
-    case SYM_INT32:
+    case SYM_INT32: {
         symInt32QConfig_t *symIntQC = q->qConfig;
         serialize(&symIntQC->scale, 1, sizeof(float), f);
         serialize(&symIntQC->roundingMode, 1, sizeof(roundingMode_t), f);
         serialize(&symIntQC->qMaxBits, 1, sizeof(uint8_t), f);
         break;
-    case SYM:
+    }
+    case SYM: {
         symQConfig_t *symQC = q->qConfig;
         serialize(&symQC->scale, 1, sizeof(float), f);
         serialize(&symQC->qBits, 1, sizeof(uint8_t), f);
         serialize(&symQC->roundingMode, 1, sizeof(roundingMode_t), f);
         break;
-    case ASYM:
+    }
+    case ASYM: {
         asymQConfig_t *asymQC = q->qConfig;
         serialize(&asymQC->scale, 1, sizeof(float), f);
         serialize(&asymQC->qBits, 1, sizeof(uint8_t), f);
         serialize(&asymQC->roundingMode, 1, sizeof(roundingMode_t), f);
         serialize(&asymQC->zeroPoint, 1, sizeof(int16_t), f);
         break;
+    }
     default:
         PRINT_ERROR("Unknown qType!");
         exit(1);
@@ -139,7 +142,7 @@ static void serializeSparsity() {}
 
 static void serializeLayer(layer_t *layer, FILE *f) {
     switch (layer->type) {
-    case LINEAR:
+    case LINEAR: {
         linearConfig_t *linearConfig = layer->config->linear;
         serializeParameter(linearConfig->weights, f);
         serializeParameter(linearConfig->bias, f);
@@ -150,14 +153,16 @@ static void serializeLayer(layer_t *layer, FILE *f) {
         serializeQuantization(linearConfig->outputQ, f);
         serializeQuantization(linearConfig->propLossQ, f);
         break;
-    case RELU:
+    }
+    case RELU: {
         reluConfig_t *reluConfig = layer->config->relu;
         serializeArithmetic(&reluConfig->forwardMath, f);
         serializeArithmetic(&reluConfig->propLossMath, f);
         serializeQuantization(reluConfig->outputQ, f);
         serializeQuantization(reluConfig->propLossQ, f);
         break;
-    case CONV1D:
+    }
+    case CONV1D: {
         conv1dConfig_t *conv1dConfig = layer->config->conv1d;
         serializeKernel(conv1dConfig->kernel, f);
         uint32_t conv1dGroups = (uint32_t)conv1dConfig->groups;
@@ -175,7 +180,8 @@ static void serializeLayer(layer_t *layer, FILE *f) {
         serializeQuantization(conv1dConfig->outputQ, f);
         serializeQuantization(conv1dConfig->propLossQ, f);
         break;
-    case CONV1D_TRANSPOSED:
+    }
+    case CONV1D_TRANSPOSED: {
         conv1dTransposedConfig_t *conv1dTransposedConfig = layer->config->conv1dTransposed;
         serializeKernel(conv1dTransposedConfig->kernel, f);
         uint32_t conv1dTransposedGroups = (uint32_t)conv1dTransposedConfig->groups;
@@ -195,7 +201,8 @@ static void serializeLayer(layer_t *layer, FILE *f) {
         serializeQuantization(conv1dTransposedConfig->outputQ, f);
         serializeQuantization(conv1dTransposedConfig->propLossQ, f);
         break;
-    case MAXPOOL1D:
+    }
+    case MAXPOOL1D: {
         maxPool1dConfig_t *maxPool1dConfig = layer->config->maxPool1d;
         serializeKernel(maxPool1dConfig->kernel, f);
         serializeArithmetic(&maxPool1dConfig->forwardMath, f);
@@ -203,7 +210,8 @@ static void serializeLayer(layer_t *layer, FILE *f) {
         serializeQuantization(maxPool1dConfig->outputQ, f);
         serializeQuantization(maxPool1dConfig->propLossQ, f);
         break;
-    case AVGPOOL1D:
+    }
+    case AVGPOOL1D: {
         avgPool1dConfig_t *avgPool1dConfig = layer->config->avgPool1d;
         serializeKernel(avgPool1dConfig->kernel, f);
         serializeArithmetic(&avgPool1dConfig->forwardMath, f);
@@ -211,22 +219,25 @@ static void serializeLayer(layer_t *layer, FILE *f) {
         serializeQuantization(avgPool1dConfig->outputQ, f);
         serializeQuantization(avgPool1dConfig->propLossQ, f);
         break;
-    case SOFTMAX:
+    }
+    case SOFTMAX: {
         softmaxConfig_t *softmaxConfig = layer->config->softmax;
         serializeArithmetic(&softmaxConfig->forwardMath, f);
         serializeArithmetic(&softmaxConfig->propLossMath, f);
         serializeQuantization(softmaxConfig->outputQ, f);
         serializeQuantization(softmaxConfig->propLossQ, f);
         break;
+    }
     case FLATTEN:
         // Flatten carries no state (no parameters, no quantization).
         break;
-    case QUANTIZATION:
+    case QUANTIZATION: {
         quantizationConfig_t *quantizationConfig = layer->config->quantization;
         serializeQuantization(quantizationConfig->outputQ, f);
         serializeQuantization(quantizationConfig->propLossQ, f);
         break;
-    case ADAPTIVE_AVGPOOL1D:
+    }
+    case ADAPTIVE_AVGPOOL1D: {
         adaptiveAvgPool1dConfig_t *adaptiveAvgPool1dConfig = layer->config->adaptiveAvgPool1d;
         uint32_t adaptiveAvgPool1dOutputSize = (uint32_t)adaptiveAvgPool1dConfig->outputSize;
         serialize(&adaptiveAvgPool1dOutputSize, 1, sizeof(uint32_t), f);
@@ -235,7 +246,8 @@ static void serializeLayer(layer_t *layer, FILE *f) {
         serializeQuantization(adaptiveAvgPool1dConfig->outputQ, f);
         serializeQuantization(adaptiveAvgPool1dConfig->propLossQ, f);
         break;
-    case DROPOUT:
+    }
+    case DROPOUT: {
         dropoutConfig_t *dropoutConfig = layer->config->dropout;
         serialize(&dropoutConfig->p, 1, sizeof(float), f);
         serializeArithmetic(&dropoutConfig->forwardMath, f);
@@ -243,7 +255,8 @@ static void serializeLayer(layer_t *layer, FILE *f) {
         serializeQuantization(dropoutConfig->outputQ, f);
         serializeQuantization(dropoutConfig->propLossQ, f);
         break;
-    case LAYERNORM:
+    }
+    case LAYERNORM: {
         layerNormConfig_t *layerNormConfig = layer->config->layerNorm;
         uint32_t layerNormNumNormDims = (uint32_t)layerNormConfig->numNormDims;
         serialize(&layerNormNumNormDims, 1, sizeof(uint32_t), f);
@@ -258,7 +271,8 @@ static void serializeLayer(layer_t *layer, FILE *f) {
         serializeQuantization(layerNormConfig->outputQ, f);
         serializeQuantization(layerNormConfig->propLossQ, f);
         break;
-    case GROUPNORM:
+    }
+    case GROUPNORM: {
         groupNormConfig_t *groupNormConfig = layer->config->groupNorm;
         uint32_t groupNormNumGroups = (uint32_t)groupNormConfig->numGroups;
         serialize(&groupNormNumGroups, 1, sizeof(uint32_t), f);
@@ -272,6 +286,7 @@ static void serializeLayer(layer_t *layer, FILE *f) {
         serializeQuantization(groupNormConfig->outputQ, f);
         serializeQuantization(groupNormConfig->propLossQ, f);
         break;
+    }
     default:
         PRINT_ERROR("Unsupported layer type!\n");
         exit(1);

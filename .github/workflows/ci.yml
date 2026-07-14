@@ -453,6 +453,45 @@ jobs:
           export PATH="$HOME/arm-gnu-toolchain/bin:$PATH"
           cmake --build --preset arm_cross
 
+  # Portability-FLOOR cross-build (#352): the oldest arm-gcc we support.
+  # The 13.3 parity job above ACCEPTS pre-C23 constructs (e.g. a declaration
+  # placed directly after a `case`/`default` label) silently, as a C23
+  # extension -- so it is structurally blind to code that will not compile on
+  # the gcc 10.x lines still shipped by many vendor MCU SDKs. arm-gcc 10.x
+  # HARD-ERRORS that whole class by default ("a label can only be part of a
+  # statement"), with no flag needed and no false positives -- it is literally
+  # the toolchain that surfaced #352. Ubuntu 22.04's apt gcc-arm-none-eabi is
+  # the 10.3 line; the compiler and the newlib headers ship as separate
+  # packages, and a compile-only build still needs the headers. Deliberately
+  # NON-required, like the parity job.
+  c-arm-cross-compile-min:
+    needs: gate
+    if: needs.gate.outputs.proceed == 'true'
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cmake + ninja + oldest-supported arm-gcc (10.x)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build gcc-arm-none-eabi libnewlib-arm-none-eabi
+
+      - name: Assert portability floor (arm-gcc major 10)
+        run: |
+          arm-none-eabi-gcc --version | head -1
+          major=$(arm-none-eabi-gcc -dumpversion | cut -d. -f1)
+          if [ "$major" != "10" ]; then
+            echo "::error::apt arm-none-eabi-gcc major is ${major}, expected 10 (the pre-C23 portability floor this job exists to guard). If the runner image bumped the package, re-pin the floor deliberately -- do not just widen this check."
+            exit 1
+          fi
+
+      - name: Configure (arm_cross preset)
+        run: cmake --preset arm_cross
+
+      - name: Cross-compile core libraries (compile-only, -Werror)
+        run: cmake --build --preset arm_cross
+
   # Stage-1 stack-watermark REPORT (hardening item 6): builds the two
   # instrumented har_classifier trainers with ODT_MEM_PROFILE, runs one
   # epoch each, and reports memory.stack_peak_b against the budgets in

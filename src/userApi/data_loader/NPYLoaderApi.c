@@ -159,12 +159,14 @@ static void getRowShape(shape_t *totalShape, shape_t *rowShape) {
 
 static quantization_t *initQByDType(dtype_t dtype) {
     switch (dtype) {
-    case FLOAT_32:
+    case FLOAT_32: {
         quantization_t *floatQ = quantizationInitFloat();
         return floatQ;
-    case INT_32:
+    }
+    case INT_32: {
         quantization_t *intQ = quantizationInitInt32();
         return intQ;
+    }
     default:
         PRINT_ERROR("Unsupported DType!");
         exit(1);

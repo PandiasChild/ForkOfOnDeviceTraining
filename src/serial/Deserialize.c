@@ -157,25 +157,28 @@ static void deserializeQConfig(quantization_t *q, FILE *f) {
     case FLOAT32:
     case BOOL:
         break;
-    case SYM_INT32:
+    case SYM_INT32: {
         symInt32QConfig_t *symIntQC = q->qConfig;
         deserialize(&symIntQC->scale, 1, sizeof(float), f);
         deserialize(&symIntQC->roundingMode, 1, sizeof(roundingMode_t), f);
         deserialize(&symIntQC->qMaxBits, 1, sizeof(uint8_t), f);
         break;
-    case SYM:
+    }
+    case SYM: {
         symQConfig_t *symQC = q->qConfig;
         deserialize(&symQC->scale, 1, sizeof(float), f);
         deserialize(&symQC->qBits, 1, sizeof(uint8_t), f);
         deserialize(&symQC->roundingMode, 1, sizeof(roundingMode_t), f);
         break;
-    case ASYM:
+    }
+    case ASYM: {
         asymQConfig_t *asymQC = q->qConfig;
         deserialize(&asymQC->scale, 1, sizeof(float), f);
         deserialize(&asymQC->qBits, 1, sizeof(uint8_t), f);
         deserialize(&asymQC->roundingMode, 1, sizeof(roundingMode_t), f);
         deserialize(&asymQC->zeroPoint, 1, sizeof(int16_t), f);
         break;
+    }
     default:
         PRINT_ERROR("Unknown qType!");
         exit(1);
@@ -187,7 +190,7 @@ static void deserializeSparsity() {}
 
 static void deserializeLayer(layer_t *layer, FILE *f) {
     switch (layer->type) {
-    case LINEAR:
+    case LINEAR: {
         linearConfig_t *linearConfig = layer->config->linear;
         deserializeParameter(linearConfig->weights, f);
         deserializeParameter(linearConfig->bias, f);
@@ -198,14 +201,16 @@ static void deserializeLayer(layer_t *layer, FILE *f) {
         deserializeQuantization(linearConfig->outputQ, f);
         deserializeQuantization(linearConfig->propLossQ, f);
         break;
-    case RELU:
+    }
+    case RELU: {
         reluConfig_t *reluConfig = layer->config->relu;
         deserializeArithmetic(&reluConfig->forwardMath, f);
         deserializeArithmetic(&reluConfig->propLossMath, f);
         deserializeQuantization(reluConfig->outputQ, f);
         deserializeQuantization(reluConfig->propLossQ, f);
         break;
-    case CONV1D:
+    }
+    case CONV1D: {
         conv1dConfig_t *conv1dConfig = layer->config->conv1d;
         deserializeKernel(conv1dConfig->kernel, f);
         uint32_t conv1dGroups;
@@ -224,7 +229,8 @@ static void deserializeLayer(layer_t *layer, FILE *f) {
         deserializeQuantization(conv1dConfig->outputQ, f);
         deserializeQuantization(conv1dConfig->propLossQ, f);
         break;
-    case CONV1D_TRANSPOSED:
+    }
+    case CONV1D_TRANSPOSED: {
         conv1dTransposedConfig_t *conv1dTransposedConfig = layer->config->conv1dTransposed;
         deserializeKernel(conv1dTransposedConfig->kernel, f);
         uint32_t conv1dTransposedGroups;
@@ -246,7 +252,8 @@ static void deserializeLayer(layer_t *layer, FILE *f) {
         deserializeQuantization(conv1dTransposedConfig->outputQ, f);
         deserializeQuantization(conv1dTransposedConfig->propLossQ, f);
         break;
-    case MAXPOOL1D:
+    }
+    case MAXPOOL1D: {
         maxPool1dConfig_t *maxPool1dConfig = layer->config->maxPool1d;
         deserializeKernel(maxPool1dConfig->kernel, f);
         deserializeArithmetic(&maxPool1dConfig->forwardMath, f);
@@ -254,7 +261,8 @@ static void deserializeLayer(layer_t *layer, FILE *f) {
         deserializeQuantization(maxPool1dConfig->outputQ, f);
         deserializeQuantization(maxPool1dConfig->propLossQ, f);
         break;
-    case AVGPOOL1D:
+    }
+    case AVGPOOL1D: {
         avgPool1dConfig_t *avgPool1dConfig = layer->config->avgPool1d;
         deserializeKernel(avgPool1dConfig->kernel, f);
         deserializeArithmetic(&avgPool1dConfig->forwardMath, f);
@@ -262,22 +270,25 @@ static void deserializeLayer(layer_t *layer, FILE *f) {
         deserializeQuantization(avgPool1dConfig->outputQ, f);
         deserializeQuantization(avgPool1dConfig->propLossQ, f);
         break;
-    case SOFTMAX:
+    }
+    case SOFTMAX: {
         softmaxConfig_t *softmaxConfig = layer->config->softmax;
         deserializeArithmetic(&softmaxConfig->forwardMath, f);
         deserializeArithmetic(&softmaxConfig->propLossMath, f);
         deserializeQuantization(softmaxConfig->outputQ, f);
         deserializeQuantization(softmaxConfig->propLossQ, f);
         break;
+    }
     case FLATTEN:
         // Flatten carries no state (no parameters, no quantization).
         break;
-    case QUANTIZATION:
+    case QUANTIZATION: {
         quantizationConfig_t *quantizationConfig = layer->config->quantization;
         deserializeQuantization(quantizationConfig->outputQ, f);
         deserializeQuantization(quantizationConfig->propLossQ, f);
         break;
-    case ADAPTIVE_AVGPOOL1D:
+    }
+    case ADAPTIVE_AVGPOOL1D: {
         adaptiveAvgPool1dConfig_t *adaptiveAvgPool1dConfig = layer->config->adaptiveAvgPool1d;
         uint32_t adaptiveAvgPool1dOutputSize;
         deserialize(&adaptiveAvgPool1dOutputSize, 1, sizeof(uint32_t), f);
@@ -287,7 +298,8 @@ static void deserializeLayer(layer_t *layer, FILE *f) {
         deserializeQuantization(adaptiveAvgPool1dConfig->outputQ, f);
         deserializeQuantization(adaptiveAvgPool1dConfig->propLossQ, f);
         break;
-    case DROPOUT:
+    }
+    case DROPOUT: {
         dropoutConfig_t *dropoutConfig = layer->config->dropout;
         deserialize(&dropoutConfig->p, 1, sizeof(float), f);
         deserializeArithmetic(&dropoutConfig->forwardMath, f);
@@ -295,7 +307,8 @@ static void deserializeLayer(layer_t *layer, FILE *f) {
         deserializeQuantization(dropoutConfig->outputQ, f);
         deserializeQuantization(dropoutConfig->propLossQ, f);
         break;
-    case LAYERNORM:
+    }
+    case LAYERNORM: {
         layerNormConfig_t *layerNormConfig = layer->config->layerNorm;
         uint32_t layerNormNumNormDims;
         deserialize(&layerNormNumNormDims, 1, sizeof(uint32_t), f);
@@ -311,7 +324,8 @@ static void deserializeLayer(layer_t *layer, FILE *f) {
         deserializeQuantization(layerNormConfig->outputQ, f);
         deserializeQuantization(layerNormConfig->propLossQ, f);
         break;
-    case GROUPNORM:
+    }
+    case GROUPNORM: {
         groupNormConfig_t *groupNormConfig = layer->config->groupNorm;
         uint32_t groupNormNumGroups;
         deserialize(&groupNormNumGroups, 1, sizeof(uint32_t), f);
@@ -327,6 +341,7 @@ static void deserializeLayer(layer_t *layer, FILE *f) {
         deserializeQuantization(groupNormConfig->outputQ, f);
         deserializeQuantization(groupNormConfig->propLossQ, f);
         break;
+    }
     default:
         PRINT_ERROR("Unsupported layer type!\n");
         exit(1);

@@ -267,12 +267,13 @@ static void initGradTensor(tensor_t *grad, tensor_t *layerOutput, quantization_t
     case FLOAT32:
         initFloat32Quantization(q);
         break;
-    case SYM_INT32:
+    case SYM_INT32: {
         symInt32QConfig_t *currentQC = currentQ->qConfig;
         symInt32QConfig_t *qC = reserveMemory(sizeof(symInt32QConfig_t));
         initSymInt32QConfigWithQMaxBits(currentQC->roundingMode, qC, currentQC->qMaxBits);
         initSymInt32Quantization(qC, q);
         break;
+    }
     default:
         PRINT_ERROR("Unknown QType!");
         exit(1);

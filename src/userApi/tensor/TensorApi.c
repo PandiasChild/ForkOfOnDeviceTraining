@@ -202,7 +202,7 @@ quantization_t *getQLike(quantization_t *quantization) {
     case INT32:
         initInt32Quantization(likeQ);
         break;
-    case SYM_INT32:
+    case SYM_INT32: {
         symInt32QConfig_t *likeSymInt32QC = reserveMemory(sizeof(symInt32QConfig_t));
         symInt32QConfig_t *symInt32QC = quantization->qConfig;
         /* preserve the source width — do NOT reset to the operand default (#227) */
@@ -210,13 +210,15 @@ quantization_t *getQLike(quantization_t *quantization) {
                                         symInt32QC->qMaxBits);
         initSymInt32Quantization(likeSymInt32QC, likeQ);
         break;
-    case ASYM:
+    }
+    case ASYM: {
         asymQConfig_t *likeAsymQC = reserveMemory(sizeof(asymQConfig_t));
         asymQConfig_t *asymQC = quantization->qConfig;
 
         initAsymQConfig(asymQC->qBits, asymQC->roundingMode, likeAsymQC);
         initAsymQuantization(likeAsymQC, likeQ);
         break;
+    }
     case SYM: {
         symQConfig_t *likeSymQC = reserveMemory(sizeof(symQConfig_t));
         symQConfig_t *symQC = quantization->qConfig;

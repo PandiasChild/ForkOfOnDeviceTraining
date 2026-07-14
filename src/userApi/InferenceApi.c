@@ -56,13 +56,14 @@ static void initBufferOutput(tensor_t *buffer, layer_t *currentLayer, shape_t *i
     case FLOAT32:
         initFloat32Quantization(q);
         break;
-    case SYM_INT32:
+    case SYM_INT32: {
         symInt32QConfig_t *currentQC = currentQ->qConfig;
         symInt32QConfig_t *symInt32QC = reserveMemory(sizeof(symInt32QConfig_t));
 
         initSymInt32QConfigWithQMaxBits(currentQC->roundingMode, symInt32QC, currentQC->qMaxBits);
         initSymInt32Quantization(symInt32QC, q);
         break;
+    }
     default:
         PRINT_ERROR("Unknown QType!");
         exit(1);
