@@ -135,6 +135,28 @@ void ppcaReplaySample(const ppcaReplay_t *g, rng32_t *rng, tensor_t *out) {
         out);
 }
 
+/* Mean-replay baseline (#326 fair comparison): out <- mu. A pure storage
+ * conversion through the conversionMatrix — no RNG, no arithmetic, so
+ * sampleMath is deliberately NOT consulted (centroid replay stays available
+ * where an arithmetic arm would be rejected). Same out contract as
+ * ppcaReplaySample: any element-count-dim FLOAT32/SYM/ASYM tensor. */
+void ppcaReplayMean(const ppcaReplay_t *g, tensor_t *out) {
+    if (g->count == 0) {
+        PRINT_ERROR("ppcaReplayMean: generator has absorbed no data (count == 0)");
+        exit(1);
+    }
+    if (calcNumberOfElementsByTensor(out) != g->dim) {
+        PRINT_ERROR("ppcaReplayMean: out must have exactly dim=%zu elements", g->dim);
+        exit(1);
+    }
+    if (out->quantization->type != FLOAT32 && out->quantization->type != SYM &&
+        out->quantization->type != ASYM) {
+        PRINT_ERROR("ppcaReplayMean: out storage must be FLOAT32/SYM/ASYM");
+        exit(1);
+    }
+    executeConvert(g->mean, out);
+}
+
 /* Stack-bound FLOAT32 view over a workspace buffer (no allocation; the
  * view lives exactly as long as the enclosing call). */
 typedef struct {

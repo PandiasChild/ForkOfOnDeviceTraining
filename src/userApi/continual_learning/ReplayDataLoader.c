@@ -84,7 +84,11 @@ static batch_t *replayGetBatch(dataLoader_t *dl, size_t index) {
         }
         for (size_t i = 0; i < r; i++) {
             tensor_t *item = rl->itemPool[c * r + i];
-            ppcaReplaySample(g, rl->cfg.stream, item);
+            if (rl->cfg.mode == REPLAY_MODE_CLASS_MEAN) {
+                ppcaReplayMean(g, item);
+            } else {
+                ppcaReplaySample(g, rl->cfg.stream, item);
+            }
             sample_t *s = reserveMemory(sizeof(sample_t));
             s->item = item;              /* pool-owned, reused every batch */
             s->label = rl->labelPool[c]; /* shared one-hot, never freed by loop */
@@ -102,9 +106,10 @@ static batch_t *replayGetBatch(dataLoader_t *dl, size_t index) {
 }
 
 dataLoader_t *replayDataLoaderWrap(dataLoader_t *base, const replayLoaderConfig_t *cfg) {
-    if (base == NULL || cfg == NULL || cfg->set == NULL || cfg->stream == NULL ||
-        cfg->samplesPerClass == 0) {
-        PRINT_ERROR("replayDataLoaderWrap: base/set/stream required, samplesPerClass >= 1");
+    if (base == NULL || cfg == NULL || cfg->set == NULL || cfg->samplesPerClass == 0 ||
+        (cfg->stream == NULL && cfg->mode != REPLAY_MODE_CLASS_MEAN)) {
+        PRINT_ERROR("replayDataLoaderWrap: base/set required, samplesPerClass >= 1, "
+                    "stream required unless REPLAY_MODE_CLASS_MEAN");
         exit(1);
     }
     replayLoader_t *rl = reserveMemory(sizeof(replayLoader_t));

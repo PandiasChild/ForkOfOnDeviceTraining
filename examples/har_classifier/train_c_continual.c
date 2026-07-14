@@ -69,6 +69,7 @@ static float g_lr = 0.01f;
 static float g_momentum = 0.9f;
 static unsigned g_seed = 42;
 static int g_replay = 1;
+static replayMode_t g_replayMode = REPLAY_MODE_PPCA_SAMPLE;
 static int g_rPerClass = 2;
 static int g_rank = 8;
 static int g_minCount = 16;
@@ -329,6 +330,15 @@ int main(void) {
     g_lr = envFloat("LR", g_lr);
     g_momentum = envFloat("MOMENTUM", g_momentum);
     g_replay = envInt("REPLAY", g_replay);
+    const char *modeStr = getenv("REPLAY_MODE");
+    if (modeStr != NULL && modeStr[0] != '\0') {
+        if (strcmp(modeStr, "mean") == 0) {
+            g_replayMode = REPLAY_MODE_CLASS_MEAN;
+        } else if (strcmp(modeStr, "ppca") != 0) {
+            fprintf(stderr, "ERROR: REPLAY_MODE must be 'ppca' or 'mean' (got '%s')\n", modeStr);
+            return 1;
+        }
+    }
     g_rPerClass = envInt("R_PER_CLASS", g_rPerClass);
     g_rank = envInt("RANK", g_rank);
     g_minCount = envInt("MIN_COUNT", g_minCount);
@@ -430,7 +440,8 @@ int main(void) {
                 base, &(replayLoaderConfig_t){.set = set,
                                               .samplesPerClass = (size_t)g_rPerClass,
                                               .minCount = (uint32_t)g_minCount,
-                                              .stream = &replayStream});
+                                              .stream = &replayStream,
+                                              .mode = g_replayMode});
         }
         trainEpochs(model, sgd, loader, g_epochsPerDomain, (int)t, "finetune");
         /* Free the WRAPPER with freeReplayDataLoader and the base with
@@ -494,9 +505,17 @@ int main(void) {
         size_t isoExemplars =
             ppcaReplayIsoExemplarCount(set->generators[0], (size_t)D_FEATURES * sizeof(float));
         fprintf(log,
-                "\"enabled\": 1, \"bytes_per_class\": %zu, \"workspace_bytes\": %zu, "
-                "\"iso_exemplar_count\": %zu, \"footprint_constant\": true",
-                bytesFinal, wsBytes, isoExemplars);
+                "\"enabled\": 1, \"mode\": \"%s\", \"bytes_per_class\": %zu, "
+                "\"workspace_bytes\": %zu, \"iso_exemplar_count\": %zu, "
+                "\"footprint_constant\": true",
+                g_replayMode == REPLAY_MODE_CLASS_MEAN ? "mean" : "ppca", bytesFinal, wsBytes,
+                isoExemplars);
+        if (g_replayMode == REPLAY_MODE_CLASS_MEAN) {
+            /* What a purpose-built centroid buffer would store (the demo
+             * reuses the PPCA set, so bytes_per_class above overstates it). */
+            fprintf(log, ", \"mean_state_bytes_per_class\": %zu",
+                    (size_t)D_FEATURES * sizeof(float) + sizeof(uint32_t));
+        }
     } else {
         fprintf(log, "\"enabled\": 0");
     }

@@ -13,11 +13,21 @@ void freePpcaWorkspace(ppcaWorkspace_t *ws);
 ppcaReplaySet_t *ppcaReplaySetCreate(size_t numClasses, const ppcaReplayConfig_t *cfg);
 void freePpcaReplaySet(ppcaReplaySet_t *set);
 
+typedef enum {
+    REPLAY_MODE_PPCA_SAMPLE = 0, /* draw from the generative model (default) */
+    REPLAY_MODE_CLASS_MEAN,      /* replay the running class centroid — the
+                                    one-vector-per-class baseline (#326) */
+} replayMode_t;
+
 typedef struct {
     ppcaReplaySet_t *set;
-    size_t samplesPerClass; /* r */
+    size_t samplesPerClass; /* r; CLASS_MEAN appends r IDENTICAL centroid
+                               copies so batch composition and the MEAN-loss
+                               weighting stay comparable across modes */
     uint32_t minCount;      /* class eligible once generator count >= minCount */
-    rng32_t *stream;        /* caller-owned sampling stream */
+    rng32_t *stream;        /* caller-owned sampling stream; unused (NULL ok)
+                               in REPLAY_MODE_CLASS_MEAN */
+    replayMode_t mode;      /* zero-init = PPCA sampling */
 } replayLoaderConfig_t;
 
 /* Wraps base: getBatch appends r synthetic samples per eligible class

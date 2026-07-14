@@ -350,6 +350,34 @@ void testSampleAcceptsReshapedOut(void) {
     freePpcaReplay(g);
 }
 
+void testMeanReplayIsExactCentroid(void) {
+    /* Mean-replay baseline (#326 fair comparison): out == mu bit-for-bit;
+     * deterministic by construction — no RNG parameter exists to consume. */
+    ppcaReplay_t *g = buildKnownGenerator();
+    tensor_t *out = buildFloat32TensorND(1, (size_t[]){6}, NULL);
+    ppcaReplayMean(g, out);
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY((float *)g->mean->data, (float *)out->data, 6);
+    freeTensor(out);
+    freePpcaReplay(g);
+}
+
+void testMeanReplayRejectsCountZero(void) {
+    ppcaReplayConfig_t cfg = floatConfig(6, 2, 8);
+    ppcaReplay_t *g = ppcaReplayCreate(&cfg);
+    tensor_t *out = buildFloat32TensorND(1, (size_t[]){6}, NULL);
+    ASSERT_EXITS_WITH_FAILURE(ppcaReplayMean(g, out));
+    freeTensor(out);
+    freePpcaReplay(g);
+}
+
+void testMeanReplayRejectsElementCountMismatch(void) {
+    ppcaReplay_t *g = buildKnownGenerator();
+    tensor_t *out = buildFloat32TensorND(1, (size_t[]){5}, NULL);
+    ASSERT_EXITS_WITH_FAILURE(ppcaReplayMean(g, out));
+    freeTensor(out);
+    freePpcaReplay(g);
+}
+
 /* Draw m samples x = mu + sum_i sqrt(lamTotal_i - sig2)*z_i*u_i + sig*eps
  * into a [m,d] FLOAT32 tensor. basisRows: kTrue x d orthonormal. */
 static tensor_t *drawSyntheticSamples(size_t m, size_t d, const float *mu, const float *basisRows,
@@ -930,6 +958,9 @@ int main(void) {
     RUN_TEST(testSampleRejectsCountZero);
     RUN_TEST(testSampleRejectsElementCountMismatch);
     RUN_TEST(testSampleAcceptsReshapedOut);
+    RUN_TEST(testMeanReplayIsExactCentroid);
+    RUN_TEST(testMeanReplayRejectsCountZero);
+    RUN_TEST(testMeanReplayRejectsElementCountMismatch);
     RUN_TEST(testUpdateBatchFitRecoversModel);
     RUN_TEST(testUpdateIncrementalEqualsPooled);
     RUN_TEST(testUpdateMeanShiftedIncrementalEqualsPooled);

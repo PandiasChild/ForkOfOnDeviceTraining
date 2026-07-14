@@ -63,6 +63,7 @@ typedef struct {
 void ppcaReplayUpdate(ppcaReplay_t *g, const tensor_t *samples, ppcaWorkspace_t *ws);
 void ppcaReplayUpdateStreaming(ppcaReplay_t *g, const tensor_t *x, ppcaWorkspace_t *ws);
 void ppcaReplaySample(const ppcaReplay_t *g, rng32_t *rng, tensor_t *out);
+void ppcaReplayMean(const ppcaReplay_t *g, tensor_t *out);
 
 size_t ppcaReplayBytes(const ppcaReplay_t *g);
 size_t ppcaWorkspaceBytes(size_t dim, size_t rank, size_t maxSessionSamples);

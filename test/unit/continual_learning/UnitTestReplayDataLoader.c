@@ -229,11 +229,68 @@ void testSyntheticSamplingDeterministic(void) {
     freeFakeDataset();
 }
 
+void testMeanModeReplaysClassCentroidsWithoutStream(void) {
+    /* REPLAY_MODE_CLASS_MEAN (#326 fair-comparison baseline): pool items are
+     * the running class centroids, exactly; mean replay is deterministic, so
+     * no RNG stream is required (NULL is legal in this mode only). */
+    buildFakeDataset();
+    dataLoader_t *base = dataLoaderInit(fakeGetSample, fakeGetSize, 2, NULL, NULL, false, 0, true);
+    ppcaReplayConfig_t cfg = floatConfig(6, 2, 8);
+    ppcaReplaySet_t *set = ppcaReplaySetCreate(2, &cfg);
+    makeSetSampleable(set);
+    for (size_t c = 0; c < 2; c++) {
+        float *mu = (float *)set->generators[c]->mean->data;
+        for (size_t j = 0; j < 6; j++) {
+            mu[j] = (float)(100 * (c + 1) + j);
+        }
+    }
+    replayLoaderConfig_t rcfg = {.set = set,
+                                 .samplesPerClass = 2,
+                                 .minCount = 1,
+                                 .stream = NULL,
+                                 .mode = REPLAY_MODE_CLASS_MEAN};
+    dataLoader_t *wrapped = replayDataLoaderWrap(base, &rcfg);
+
+    batch_t *batch = wrapped->getBatch(wrapped, 0);
+    TEST_ASSERT_EQUAL_size_t(2 + 2 * 2, batch->size);
+    for (size_t s = 2; s < 6; s++) {
+        size_t c = (s - 2) / 2; /* synthetic samples appended class-major */
+        TEST_ASSERT_EQUAL_FLOAT_ARRAY((float *)set->generators[c]->mean->data,
+                                      (float *)batch->samples[s]->item->data, 6);
+        float *lab = (float *)batch->samples[s]->label->data;
+        TEST_ASSERT_EQUAL_FLOAT(1.0f, lab[c]);
+    }
+    for (size_t s = 0; s < batch->size; s++) {
+        freeSample(batch->samples[s]);
+    }
+    freeBatch(batch);
+    freeReplayDataLoader(wrapped);
+    freeDataLoader(base);
+    freePpcaReplaySet(set);
+    freeFakeDataset();
+}
+
+void testPpcaModeStillRequiresStream(void) {
+    /* The relaxed NULL-stream rule is mode-scoped: default (zero-init) PPCA
+     * mode must keep failing fast without a stream. */
+    buildFakeDataset();
+    dataLoader_t *base = dataLoaderInit(fakeGetSample, fakeGetSize, 2, NULL, NULL, false, 0, true);
+    ppcaReplayConfig_t cfg = floatConfig(6, 2, 8);
+    ppcaReplaySet_t *set = ppcaReplaySetCreate(2, &cfg);
+    replayLoaderConfig_t rcfg = {.set = set, .samplesPerClass = 1, .minCount = 1, .stream = NULL};
+    ASSERT_EXITS_WITH_FAILURE(replayDataLoaderWrap(base, &rcfg));
+    freeDataLoader(base);
+    freePpcaReplaySet(set);
+    freeFakeDataset();
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testWrappedBatchAppendsSyntheticSamples);
     RUN_TEST(testMinCountGatesClasses);
     RUN_TEST(testNoEligibleClassPassesBaseBatchThrough);
     RUN_TEST(testSyntheticSamplingDeterministic);
+    RUN_TEST(testMeanModeReplaysClassCentroidsWithoutStream);
+    RUN_TEST(testPpcaModeStillRequiresStream);
     return UNITY_END();
 }
