@@ -138,5 +138,6 @@ docs/superpowers/
 examples/*/data/raw/
 examples/*/data/*.npy
 examples/*/logs/
+examples/*/logs_*/
 examples/*/outputs/
 examples/*/plots/

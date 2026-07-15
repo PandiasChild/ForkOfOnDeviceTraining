@@ -372,6 +372,50 @@ static struct timespec g_epoch_t0;
 static float g_firstTrainLoss = -1.0f;
 static float g_lastTrainLoss = -1.0f;
 
+/* #279 code-movement instrumentation (opt-in via LOG_CODE_MOVEMENT, off by
+ * default so the mem study / bit-parity runs are untouched). */
+static int g_trackMovement = 0;
+static uint8_t *g_wsnap = NULL; /* previous-epoch snapshot of all packed-SYM param bytes */
+static size_t g_wsnapLen = 0;
+
+/* Fraction of trainable packed-SYM param STORAGE bytes that changed since the
+ * previous epoch. This is the direct #279 dead-zone signal: HALF_AWAY freezes
+ * the codes once the FLOAT32 grad step goes sub-ULP (-> collapses to 0), while
+ * seeded SR_HALF_AWAY keeps dithering them (-> stays > 0). Byte-granular (a
+ * packed byte holds several sub-byte codes) so it answers "did any code in this
+ * byte move" -- exact for the frozen-vs-moving question, which is all the
+ * mechanism claim needs. Returns -1 on the first call (baseline epoch, no prior
+ * snapshot to diff against). */
+static double codeMovementFraction(void) {
+    size_t total = 0;
+    for (size_t i = 0; i < g_optim->sizeStates; i++) {
+        tensor_t *w = g_optim->parameter[i]->param;
+        total += calcNumberOfBytesForData(w->quantization, calcNumberOfElementsByTensor(w));
+    }
+    if (total == 0) {
+        return -1.0;
+    }
+    int firstCall = (g_wsnap == NULL);
+    if (firstCall) {
+        g_wsnap = reserveMemory(total);
+        g_wsnapLen = total;
+    }
+    size_t changed = 0, off = 0;
+    for (size_t i = 0; i < g_optim->sizeStates; i++) {
+        tensor_t *w = g_optim->parameter[i]->param;
+        size_t nb = calcNumberOfBytesForData(w->quantization, calcNumberOfElementsByTensor(w));
+        const uint8_t *cur = (const uint8_t *)w->data;
+        for (size_t b = 0; b < nb && off + b < g_wsnapLen; b++) {
+            if (!firstCall && cur[b] != g_wsnap[off + b]) {
+                changed++;
+            }
+            g_wsnap[off + b] = cur[b];
+        }
+        off += nb;
+    }
+    return firstCall ? -1.0 : (double)changed / (double)total;
+}
+
 static void epochCallback(size_t epoch, float trainLoss, epochStats_t evalStats) {
     struct timespec t1;
     clock_gettime(CLOCK_MONOTONIC, &t1);
@@ -389,9 +433,13 @@ static void epochCallback(size_t epoch, float trainLoss, epochStats_t evalStats)
         }
         fprintf(g_log_file,
                 "    {\"epoch\": %zu, \"train_loss\": %.6f, \"val_loss\": %.6f, "
-                "\"val_acc\": %.6f, \"wall_s\": %.4f, \"lr\": %.8f}",
+                "\"val_acc\": %.6f, \"wall_s\": %.4f, \"lr\": %.8f",
                 epoch, (double)trainLoss, (double)evalStats.loss, (double)evalStats.accuracy,
                 wall_s, (double)optimizerFunctions[g_optim->type].getLr(g_optim));
+        if (g_trackMovement) {
+            fprintf(g_log_file, ", \"codes_changed_frac\": %.6f", codeMovementFraction());
+        }
+        fprintf(g_log_file, "}");
         fflush(g_log_file);
     }
     g_first_epoch = 0;
@@ -410,6 +458,7 @@ int main(void) {
     g_epochs = envInt("EPOCHS", g_epochs);
     g_seed = (unsigned)envInt("SEED", (int)g_seed);
     g_shuffleSeed = (unsigned)envInt("SHUFFLE_SEED", (int)g_shuffleSeed);
+    g_trackMovement = envInt("LOG_CODE_MOVEMENT", 0);
     const char *schedEnv = getenv("LR_SCHEDULE");
     if (schedEnv != NULL && schedEnv[0] != '\0') {
         if (strcmp(schedEnv, "cosine") != 0) {
