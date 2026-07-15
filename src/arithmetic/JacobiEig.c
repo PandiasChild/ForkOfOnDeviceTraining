@@ -32,8 +32,9 @@ void jacobiEigSymFloat32(tensor_t *a, tensor_t *eigvalsOut, tensor_t *eigvecsOut
         exit(1);
     }
     size_t p = a->shape->dimensions[0];
-    if (eigvalsOut->shape->dimensions[0] != p || eigvecsOut->shape->numberOfDimensions != 2 ||
-        eigvecsOut->shape->dimensions[0] != p || eigvecsOut->shape->dimensions[1] != p) {
+    if (eigvalsOut->shape->numberOfDimensions != 1 || eigvalsOut->shape->dimensions[0] != p ||
+        eigvecsOut->shape->numberOfDimensions != 2 || eigvecsOut->shape->dimensions[0] != p ||
+        eigvecsOut->shape->dimensions[1] != p) {
         PRINT_ERROR("jacobiEigSymFloat32: output dims must match p=%zu", p);
         exit(1);
     }

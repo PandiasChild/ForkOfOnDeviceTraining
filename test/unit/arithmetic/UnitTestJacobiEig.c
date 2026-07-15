@@ -143,11 +143,25 @@ void testJacobiRejectsNonSquare(void) {
     freeTensor(a);
 }
 
+void testJacobiRejectsNonVectorEigvals(void) {
+    /* eigvals [p,1] satisfies dimensions[0] == p but violates the rank-1 [p]
+     * contract (JacobiEig.h): the rank must be checked BEFORE dimensions[0]
+     * is read -- for a rank-0 shape that read itself would be out of bounds. */
+    tensor_t *a = buildFloat32TensorND(2, (size_t[]){2, 2}, NULL);
+    tensor_t *vals = buildFloat32TensorND(2, (size_t[]){2, 1}, NULL);
+    tensor_t *vecs = buildFloat32TensorND(2, (size_t[]){2, 2}, NULL);
+    ASSERT_EXITS_WITH_FAILURE(jacobiEigSymFloat32(a, vals, vecs, 30, 1e-6f));
+    freeTensor(vecs);
+    freeTensor(vals);
+    freeTensor(a);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testJacobi2x2Analytic);
     RUN_TEST(testJacobiDiagonalPassthrough);
     RUN_TEST(testJacobiReconstructionAndOrthonormality);
     RUN_TEST(testJacobiRejectsNonSquare);
+    RUN_TEST(testJacobiRejectsNonVectorEigvals);
     return UNITY_END();
 }
