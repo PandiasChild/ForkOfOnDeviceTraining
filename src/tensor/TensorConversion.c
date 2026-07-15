@@ -367,11 +367,7 @@ static void packFitGuardedForDelta(const int32_t *src, size_t n, uint8_t *dst, s
     for (size_t i = 0; i < n; i++) {
         tmp[i] = src[i];
     }
-    size_t totalBitAmount = ((n-1) * deltabits) + qBits;
-    size_t totalByteAmount = (totalBitAmount + 7) / 8;
-    memset(dst, 0, totalByteAmount);
-    byteConversion((uint8_t *)tmp, 32, dst, qBits, 1);
-    byteConversionWithOffsets((uint8_t *)tmp, 32, dst, 32, deltabits, (n-1), qBits);
+    byteConversionWithOffsets((uint8_t *)tmp, 32, 32, dst, deltabits, qBits, n, 1);
 }
 
 void unpackSignExtendForDelta(const uint8_t *src, size_t qBits, size_t deltabits, int32_t *dst, size_t numberOfValues){
@@ -386,9 +382,7 @@ void unpackSignExtendForDelta(const uint8_t *src, size_t qBits, size_t deltabits
         exit(1);
     }
     uint8_t helperDst[numberOfValues * sizeof(int32_t)];
-    memset(helperDst, 0, numberOfValues * 4); /* high bits will be filled with 0 */
-    byteConversion((uint8_t *)src, qBits, helperDst, 32, 1);
-    byteConversionWithOffsets((uint8_t *)src, deltabits, helperDst, qBits, 32, numberOfValues-1, 32);
+    byteConversionWithOffsets((uint8_t *)src, deltabits, qBits, helperDst, 32, 32, numberOfValues, 1);
     memcpy(dst, helperDst, numberOfValues * sizeof(int32_t));
     if (qBits >= 32) {
         return;
@@ -544,14 +538,20 @@ static void packFloatBufferAsSymForDelta(const float *values, size_t n, symQDelt
     const float qMin = -powf(2, (float)outQC->qBits - 1);
     const float deltaMax = powf(2, (float)outQC->deltabits - 1) - 1;
     const float deltaMin = -powf(2, (float)outQC->deltabits - 1);
+    printf("qMax = %f, deltaMax = %f\n", qMax, deltaMax);
     float scale = (absMax == 0.f) ? 1.f : absMax / qMax;
+
     outQC->scale = scale;
     int32_t codes[n];
+    printf("roundedVal[%ld]= rounded(values[%ld]/scale) = %.6f/%.6f = %d\n", 0, 0, values[0], scale, roundByMode(values[0] / scale, outQC->roundingMode));
     codes[0] = clampInt32(roundByMode(values[0] / scale, outQC->roundingMode), (int32_t)qMin,
                               (int32_t)qMax);
-    for (size_t i = 1; i < n; i++) {
+    printf("clampedVal[%ld] = codes[%ld] = %d\n", 0, 0, codes[0]);
+    for (int i = 1; i < n; i++) {
+        printf("roundedVal[%ld]= rounded(values[%ld]/scale)\n = %.6f/%.6f = %d\n", i, i, values[i], scale, roundByMode(values[i] / scale, outQC->roundingMode));
         codes[i] = clampInt32(roundByMode(values[i] / scale, outQC->roundingMode), (int32_t)deltaMin,
                               (int32_t)deltaMax);
+        printf("clampedVal[%ld] = codes[%ld] = %d\n", i, i, codes[i]);
     }
 
     packFitGuardedForDelta(codes, n, dst, outQC->qBits, outQC->deltabits,what);
@@ -567,6 +567,7 @@ static void packFloatBufferAsSym(const float *values, size_t n, symQConfig_t *ou
     outQC->scale = scale;
     int32_t codes[n];
     for (size_t i = 0; i < n; i++) {
+        printf("roundedVal[%ld]= rounded(values[%ld]/scale)\n = %.6f/%.6f = %d\n", i, i, values[i], scale, roundByMode(values[i] / scale, outQC->roundingMode));
         codes[i] = clampInt32(roundByMode(values[i] / scale, outQC->roundingMode), (int32_t)qMin,
                               (int32_t)qMax);
     }
@@ -632,10 +633,12 @@ void convertFloatTensorToDeltaTensor(tensor_t *inputTensor, tensor_t *outputTens
     float deltaData[numberOfElements];
     memset(deltaData, 0, numberOfElements * sizeof(float));
     deltaData[0] = inputData[0];
+    printf("deltaData[%d] = %f\n", 0, deltaData[0]);
     size_t firstIndex = 1;
     size_t lastIndex = numberOfElements-1;
     for (int i= firstIndex; i <= lastIndex; i++){
         deltaData[i] = inputData[i] - inputData[i-1];
+        printf("deltaData[%d] = %f\n", i, deltaData[i]);
     }
 
     packFloatBufferAsSymForDelta(deltaData, numberOfElements, outQC, outputTensor->data,
