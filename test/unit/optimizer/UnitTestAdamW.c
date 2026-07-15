@@ -573,8 +573,10 @@ void testAdamWCreateOptimSymMomentSmoke(void) {
     memcpy(mSFinal, mSDecoded->data, sizeof mSFinal);
     memcpy(vSFinal, vSDecoded->data, sizeof vSFinal);
     memcpy(pSFinal, weightsS->param->data, sizeof pSFinal);
-    float finalScale =
+    float finalMScale =
         ((symQConfig_t *)optimS->states[0]->stateBuffers[0]->quantization->qConfig)->scale;
+    float finalVScale =
+        ((symQConfig_t *)optimS->states[0]->stateBuffers[1]->quantization->qConfig)->scale;
 
     int allFinite = 1;
     for (size_t i = 0; i < 32; i++) {
@@ -584,10 +586,15 @@ void testAdamWCreateOptimSymMomentSmoke(void) {
     }
 
     float maxAbsDiffM = 0.f;
+    float maxAbsDiffV = 0.f;
     for (size_t i = 0; i < 32; i++) {
         float d = fabsf(mSFinal[i] - mFFinal[i]);
         if (d > maxAbsDiffM) {
             maxAbsDiffM = d;
+        }
+        d = fabsf(vSFinal[i] - vFFinal[i]);
+        if (d > maxAbsDiffV) {
+            maxAbsDiffV = d;
         }
     }
 
@@ -615,8 +622,10 @@ void testAdamWCreateOptimSymMomentSmoke(void) {
     TEST_ASSERT_TRUE_MESSAGE(mS1Sum > 0.f, "SYM-decoded m must be non-zero after step 1");
     TEST_ASSERT_TRUE_MESSAGE(vS1Sum > 0.f, "SYM-decoded v must be non-zero after step 1");
     TEST_ASSERT_TRUE_MESSAGE(allFinite, "SYM-decoded m/v must be finite");
-    TEST_ASSERT_TRUE_MESSAGE(maxAbsDiffM <= 2.f * finalScale,
-                             "SYM-decoded m must be within 2*finalScale of the FLOAT32 run's m");
+    TEST_ASSERT_TRUE_MESSAGE(maxAbsDiffM <= 2.f * finalMScale,
+                             "SYM-decoded m must be within 2*finalMScale of the FLOAT32 run's m");
+    TEST_ASSERT_TRUE_MESSAGE(maxAbsDiffV <= 2.f * finalVScale,
+                             "SYM-decoded v must be within 2*finalVScale of the FLOAT32 run's v");
     TEST_ASSERT_TRUE_MESSAGE(paramMovedS, "SYM-momentum run's param must have moved from p0");
 }
 
