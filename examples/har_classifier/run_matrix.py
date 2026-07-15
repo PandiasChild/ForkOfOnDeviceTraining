@@ -26,7 +26,7 @@ knee. It is deliberately NOT wired into CI. Smoke a subset first, e.g.::
 Requires a trainer build (pick the matching --build-subdir)::
 
     cmake --preset examples && cmake --build --preset examples --target \
-        train_c_har_classifier train_c_har_classifier_sym
+        train_c_har_classifier train_c_har_classifier_sym train_c_har_classifier_adamw
     # ...then --build-subdir examples  (default: examples_memprofile)
 
 Caveat (parallel): fixed-path trainer artifacts (e.g. outputs/*.npy) are
@@ -67,16 +67,26 @@ CONFIGS: dict[str, tuple[str, dict[str, str]]] = {
 }
 
 
-def is_complete(log_path: Path) -> bool:
-    """A run is complete if its JSON log exists and carries a `final` block.
-    Lets --resume skip finished (config, seed) pairs so a sweep survives an
-    interruption / kill and continues where it left off on relaunch."""
+def is_complete(log_path: Path, epochs: int, seed: int) -> bool:
+    """A run is complete if its JSON log exists, carries a `final` block, and its
+    persisted config matches the requested run identity. Lets --resume skip
+    finished (config, seed) pairs so a sweep survives an interruption / kill and
+    continues where it left off on relaunch.
+
+    Epochs and seed are the two identity parameters not already bound by the
+    log filename (config name determines binary + env), so compare them against
+    the log's `config` block: without this, a 2-epoch smoke log would silently
+    survive into a 50-epoch sweep's aggregate. Missing/malformed config counts
+    as incomplete -- the trainers open the log with mode "w", so a rerun
+    overwrites cleanly."""
     if not log_path.exists():
         return False
     try:
-        return "final" in json.loads(log_path.read_text())
+        data = json.loads(log_path.read_text())
     except (json.JSONDecodeError, OSError):
         return False
+    config = data.get("config", {})
+    return "final" in data and config.get("epochs") == epochs and config.get("seed") == seed
 
 
 def parse_final_acc(stdout: str) -> float | None:
@@ -154,8 +164,9 @@ def main() -> None:
     )
     ap.add_argument(
         "--resume", action="store_true",
-        help="skip (config, seed) pairs whose log already has a `final` block, so "
-             "an interrupted/killed sweep continues where it left off on relaunch",
+        help="skip (config, seed) pairs whose log already has a `final` block AND "
+             "matching config (epochs, seed), so an interrupted/killed sweep "
+             "continues where it left off on relaunch; mismatched logs rerun",
     )
     args = ap.parse_args()
 
@@ -166,11 +177,36 @@ def main() -> None:
     pairs = [(config, seed) for seed in args.seeds for config in args.configs]
     if args.resume:
         before = len(pairs)
-        pairs = [(c, s) for c, s in pairs if not is_complete(logs_dir / f"{c}_seed{s}.json")]
+        pairs = [
+            (c, s)
+            for c, s in pairs
+            if not is_complete(logs_dir / f"{c}_seed{s}.json", args.epochs, s)
+        ]
         skipped = before - len(pairs)
         if skipped:
             print(f"resume: skipping {skipped} already-complete run(s)", flush=True)
     total = len(pairs)
+
+    # Preflight every selected binary BEFORE submitting jobs: a missing binary
+    # discovered mid-sweep would otherwise surface only after the executor
+    # drains its whole queue (shutdown(wait=True) keeps STARTING queued jobs),
+    # i.e. hours of unrelated training runs for a setup error.
+    missing = {
+        build_dir / CONFIGS[config][0]
+        for config, _ in pairs
+        if not (build_dir / CONFIGS[config][0]).exists()
+    }
+    if missing:
+        sys.exit(
+            "trainer binaries not found:\n"
+            + "\n".join(f"  {path}" for path in sorted(missing))
+            + "\nBuild the trainer preset first, e.g.:\n"
+            "  cmake --preset examples && \\\n"
+            "  cmake --build --preset examples --target "
+            + " ".join(sorted(path.name for path in missing))
+            + "\n(and pass the matching --build-subdir; default is examples_memprofile)"
+        )
+
     print(
         f"HAR sweep: {len(args.configs)} configs x {len(args.seeds)} seeds "
         f"x {args.epochs} epochs = {total} runs, {args.jobs}-way parallel -> {logs_dir}",
@@ -191,8 +227,12 @@ def main() -> None:
             try:
                 acc, wall = future.result()
             except FileNotFoundError as exc:
-                # Missing binary is a setup error common to every run -- abort now.
+                # Binary vanished mid-sweep (preflight passed at launch): a setup
+                # error common to every run. Cancel the queued jobs -- otherwise
+                # the executor's exit shutdown(wait=True) keeps starting them --
+                # and let the in-flight ones finish writing their logs.
                 print(f"\n{exc}", file=sys.stderr)
+                pool.shutdown(wait=False, cancel_futures=True)
                 raise
             except subprocess.CalledProcessError as exc:
                 failures += 1

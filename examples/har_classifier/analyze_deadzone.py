@@ -13,6 +13,12 @@ HALF_AWAY plateaus on, in aggregate over >=10 seeds? Reports mean +/- std of the
 final test accuracy / loss and the final train loss, plus the gap each SYM arm
 leaves to the FLOAT32 twin and the fraction of that gap SR recovers.
 
+The sweep is a seed-paired A/B (same binary + seed, only the write-back rounding
+differs), so each verdict is computed over the INTERSECTION of seeds present in
+all three arms -- unmatched means from partial/crashed sweeps would let sampling
+noise flip the recovered% sign. Verdicts under --min-seeds matched seeds are
+flagged SMOKE ONLY (warned, not suppressed, so 2-seed smoke runs stay readable).
+
     uv run examples/har_classifier/analyze_deadzone.py --logs examples/har_classifier/logs
 """
 from __future__ import annotations
@@ -21,6 +27,7 @@ import argparse
 import json
 import math
 import re
+import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -67,12 +74,22 @@ def summarize(run_list: list[dict]) -> dict:
         if epochs and epochs[-1].get("train_loss") is not None:
             train_losses.append(float(epochs[-1]["train_loss"]))
     return {
-        "n": len(run_list),
+        "n": len(accs),  # runs actually contributing a final test_acc
         "acc": _mean_std(accs),
         "test_loss": _mean_std(test_losses),
         "train_loss": _mean_std(train_losses),
         "accs": accs,
     }
+
+
+def accs_by_seed(run_list: list[dict]) -> dict[int, float]:
+    """seed -> final test_acc, only for runs that carry a valid final block."""
+    out: dict[int, float] = {}
+    for r in run_list:
+        acc = r.get("final", {}).get("test_acc")
+        if acc is not None:
+            out[r["_seed"]] = float(acc)
+    return out
 
 
 def main() -> None:
@@ -81,6 +98,11 @@ def main() -> None:
     )
     ap.add_argument("--logs", default=str(Path(__file__).resolve().parent / "logs"))
     ap.add_argument("--ref", default="float", help="reference config (default: float)")
+    ap.add_argument(
+        "--min-seeds", type=int, default=10,
+        help="matched seeds per verdict below which it is flagged SMOKE ONLY "
+             "(default: 10, the #279 decision threshold; verdicts still print)",
+    )
     args = ap.parse_args()
 
     logs_dir = Path(args.logs)
@@ -106,30 +128,51 @@ def main() -> None:
         )
 
     # ---- verdict: pair each sym<N>det with sym<N> vs the reference ---------
-    ref = summ.get(args.ref)
-    if ref is None or math.isnan(ref["acc"][0]):
+    # Seed-paired: the sweep runs the same seed through every arm, so each
+    # verdict averages ONLY the seeds present (with a valid final block) in all
+    # three arms. Recovered% is a ratio of small mean differences (per-config
+    # sd is comparable to the gaps) -- unmatched seed sets could flip its sign.
+    ref_by_seed = accs_by_seed(runs.get(args.ref, []))
+    if not ref_by_seed:
         print(f"\n(no reference '{args.ref}' runs -- skipping gap verdict)")
         return
-    ref_acc = ref["acc"][0]
 
     widths = sorted(
         {m.group(1) for cfg in summ if (m := re.match(r"sym(\d+)$", cfg))},
         key=int,
     )
-    print(f"\nVerdict vs {args.ref} (test_acc={ref_acc:.4f}):\n")
+    print(f"\nVerdict vs {args.ref} (seed-paired means, all-seed "
+          f"test_acc={summ[args.ref]['acc'][0]:.4f}):\n")
+    smoke_only: list[str] = []
     for w in widths:
-        sr = summ.get(f"sym{w}")
-        det = summ.get(f"sym{w}det")
-        if sr is None or det is None:
+        sr_by_seed = accs_by_seed(runs.get(f"sym{w}", []))
+        det_by_seed = accs_by_seed(runs.get(f"sym{w}det", []))
+        if not sr_by_seed or not det_by_seed:
             continue
-        sr_acc, det_acc = sr["acc"][0], det["acc"][0]
+        common = sorted(ref_by_seed.keys() & sr_by_seed.keys() & det_by_seed.keys())
+        if not common:
+            print(f"  SYM@{w}: no seed present in all three arms -- skipped")
+            continue
+        n = len(common)
+        ref_acc = sum(ref_by_seed[s] for s in common) / n
+        sr_acc = sum(sr_by_seed[s] for s in common) / n
+        det_acc = sum(det_by_seed[s] for s in common) / n
         gap_det = ref_acc - det_acc
         gap_sr = ref_acc - sr_acc
         recovered = (gap_det - gap_sr) / gap_det if abs(gap_det) > 1e-9 else math.nan
-        print(f"  SYM@{w}:")
+        if n < args.min_seeds:
+            smoke_only.append(f"SYM@{w}={n}")
+        print(f"  SYM@{w} (n={n} matched seeds, {args.ref} acc={ref_acc:.4f}):")
         print(f"    HALF_AWAY (det): acc={det_acc:.4f}  gap-to-float={gap_det:+.4f}")
         print(f"    SR_HALF_AWAY   : acc={sr_acc:.4f}  gap-to-float={gap_sr:+.4f}")
         print(f"    -> SR recovers {recovered*100:5.1f}% of the HALF_AWAY dead-zone gap")
+    if smoke_only:
+        print(
+            f"\n*** SMOKE ONLY: verdict(s) [{', '.join(smoke_only)}] have < "
+            f"--min-seeds={args.min_seeds} matched seeds. A pipeline check, NOT a "
+            "shippable #279 claim (needs >=10). ***",
+            file=sys.stderr,
+        )
 
 
 if __name__ == "__main__":

@@ -23,6 +23,9 @@ def acc_bwt(log: dict) -> tuple[float, float]:
 
 
 def main() -> int:
+    if len(sys.argv) != 2:
+        print(f"usage: {Path(sys.argv[0]).name} LOG_OR_DIRECTORY", file=sys.stderr)
+        return 2
     target = Path(sys.argv[1])
     logs = sorted(target.glob("*.json")) if target.is_dir() else [target]
     results = []

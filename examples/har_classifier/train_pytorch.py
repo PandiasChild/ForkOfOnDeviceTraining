@@ -164,11 +164,13 @@ def main() -> None:
 
     test_loss, test_acc = evaluate(model, test_x, test_y, BATCH)
     config = {
-        "epochs": EPOCHS, "batch": BATCH, "lr": LR, "momentum": MOMENTUM,
+        "epochs": EPOCHS, "batch": BATCH, "lr": LR,
         "seed": SEED, "shuffle_seed": SHUFFLE_SEED,
         "lr_schedule": SCHEDULER or "none", "lr_min": LR_MIN,
         "optimizer": OPTIMIZER,
     }
+    if OPTIMIZER == "sgd":
+        config["momentum"] = MOMENTUM  # AdamW has no momentum; keep its log free of it (#328)
     if OPTIMIZER == "adamw":
         config["weight_decay"] = WEIGHT_DECAY
     log: RunLog = {

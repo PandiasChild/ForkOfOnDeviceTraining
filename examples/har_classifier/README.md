@@ -157,7 +157,7 @@ byte-identical bare calloc/free.
 ```bash
 cmake --preset examples_memprofile
 cmake --build --preset examples_memprofile --target \
-    train_c_har_classifier train_c_har_classifier_sym
+    train_c_har_classifier train_c_har_classifier_sym train_c_har_classifier_adamw
 ```
 
 All three binaries are env-configured: `SEED`, `EPOCHS`, `LR`, `MOMENTUM`, `LOG_PATH`
@@ -170,8 +170,8 @@ stream — recorded, never massaged).
 ### Offline sweep + honest aggregation
 
 ```bash
-# Full study: {float, sym@12, sym@10, sym@8, sym@6, sym@4, sym@8cos, sym@4cos}
-# × seed 1..10 = 80 runs.
+# Full study: {float, sym@12, sym@10, sym@8, sym@6, sym@4, sym@8cos, sym@4cos,
+# adamw, sym@8det, sym@6det, sym@4det} × seed 1..10 = 120 runs.
 # LONG (~60+ h offline; NOT wired into CI). Use --configs/--seeds/--epochs to smoke.
 uv run examples/har_classifier/run_matrix.py                 # full
 uv run examples/har_classifier/run_matrix.py --configs float sym8 --seeds 1 2 --epochs 2  # smoke
