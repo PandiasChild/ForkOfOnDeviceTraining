@@ -195,6 +195,60 @@ def fig_paired_bwt(arms: dict, seeds: list[int], out: Path) -> None:
     save(fig, out, "fig_paired_bwt")
 
 
+RANK_SWEEP = {1: (9308, 2), 2: (13920, 3), 4: (23144, 5), 8: (41592, 9), 16: (78488, 17)}
+# k -> (ppcaReplayBytes per class, memory-matched exemplar count X = bytes // 4608)
+
+
+def fig_rank_sweep(logs: Path, seeds: list[int], out: Path) -> None:
+    rankdir = logs / "continual_rank"
+    if not rankdir.is_dir():
+        print(f"  rank-sweep logs missing under {rankdir} -> skipped")
+        return
+    ref = [metrics(json.loads((logs / "continual_main" / f"replay0_seed{s}.json").read_text())
+                   ["accuracy_matrix"]) for s in seeds]
+
+    def dip(R):
+        T = len(R)
+        return float(np.mean([min(R[t][j] for t in range(j, T)) - R[j][j] for j in range(T - 1)]))
+
+    def arm_stats(name):
+        rows = []
+        for k, (nbytes, _) in RANK_SWEEP.items():
+            vals = []
+            for s in seeds:
+                R = json.loads((rankdir / f"rank{k}_{name}_seed{s}.json").read_text())["accuracy_matrix"]
+                acc, bwt = metrics(R)
+                vals.append((acc, bwt, dip(R)))
+            v = np.array(vals)
+            rows.append((nbytes / 1024, v.mean(axis=0), v.std(axis=0, ddof=1)))
+        return rows
+
+    ref_dip = [dip(json.loads((logs / "continual_main" / f"replay0_seed{s}.json").read_text())
+                   ["accuracy_matrix"]) for s in seeds]
+    ref_vals = [np.array([r[0] for r in ref]), np.array([r[1] for r in ref]), np.array(ref_dip)]
+    fig, axes = plt.subplots(1, 3, figsize=(FULL_W, 2.1), constrained_layout=True)
+    titles = ["final accuracy", "backward transfer", "transient dip"]
+    for mi, (ax, title) in enumerate(zip(axes, titles)):
+        for name, color, label in (("exemplar", ARMS["exemplar"][3], "exemplar replay"),
+                                   ("ppca", ARMS["ppca"][3], "PPCA replay")):
+            rows = arm_stats(name)
+            xs = [r[0] for r in rows]
+            ax.errorbar(xs, [r[1][mi] for r in rows], yerr=[r[2][mi] for r in rows],
+                        color=color, lw=1.1, marker="o", ms=2.5, capsize=2,
+                        elinewidth=0.8, label=label)
+        ax.axhline(ref_vals[mi].mean(), color="#898781", lw=0.8, ls=(0, (4, 3)), zorder=0)
+        ax.annotate("no replay", (0.98, ref_vals[mi].mean()), xycoords=("axes fraction", "data"),
+                    fontsize=6, color="#898781", va="bottom", ha="right")
+        ax.set_xscale("log", base=2)
+        ax.set_xticks([b / 1024 for b, _ in RANK_SWEEP.values()],
+                      [f"{b / 1024:.0f}\nk={k}" for k, (b, _) in RANK_SWEEP.items()])
+        ax.minorticks_off()
+        ax.set_title(title)
+        ax.set_xlabel("replay state per class (KB)")
+    axes[0].legend(loc="upper left", frameon=False, handlelength=1.4)
+    save(fig, out, "fig_rank_sweep")
+
+
 def fig_calibration(logs: Path, out: Path) -> None:
     calib = logs / "continual_calib"
     eps, cal_seeds = [1, 5, 10], [42, 43, 44]
@@ -234,6 +288,7 @@ def main() -> None:
     fig_accuracy_matrices(arms, args.out)
     fig_delta_matrices(arms, args.out)
     fig_paired_bwt(arms, args.seeds, args.out)
+    fig_rank_sweep(args.logs, args.seeds, args.out)
     fig_calibration(args.logs, args.out)
 
 
