@@ -99,26 +99,54 @@ void testAxpbyRejectsDimMismatch(void) {
     freeTensor(x);
 }
 
-void testAxpbyRejectsNonInvolutionPermutation(void) {
+void testAxpbyThreeCyclePermutationRead(void) {
     /* Two composed transposes turn orderOfDimensions into a 3-cycle
-     * ([0,1,2] -> [1,0,2] -> [1,2,0]): the shared index algebra
-     * (calcElementIndexByIndices) only addresses involutions (identity or
-     * one axis-pair swap) correctly, so the guard must fail fast instead of
-     * reading out of bounds. y/out use x's LOGICAL dims [4,2,3] so this
-     * test cannot pass vacuously via the dim-mismatch guard. */
-    tensor_t *x = buildFloat32TensorND(3, (size_t[]){2, 3, 4}, NULL);
+     * ([0,1,2] -> [1,0,2] -> [1,2,0]). Post-#344 the shared index algebra
+     * (calcElementIndexByIndices) inverts arbitrary permutations, so the read
+     * must be CORRECT -- the old involution-only fail-fast guard is gone.
+     * Storage is filled with its own flat index, so each expected value spells
+     * out the logical->physical map storage[l1*12 + l2*4 + l0] over x's
+     * logical dims [4,2,3]. y/out use those logical dims; a=1, b=0 makes out
+     * a pure gather of x through the 3-cycle view. */
+    tensor_t *x = buildFloat32TensorND(
+        3, (size_t[]){2, 3, 4}, (float[]){0.0f,  1.0f,  2.0f,  3.0f,  4.0f,  5.0f,  6.0f,  7.0f,
+                                          8.0f,  9.0f,  10.0f, 11.0f, 12.0f, 13.0f, 14.0f, 15.0f,
+                                          16.0f, 17.0f, 18.0f, 19.0f, 20.0f, 21.0f, 22.0f, 23.0f});
     transposeTensor(x, 0, 1);
     transposeTensor(x, 1, 2);
 
     tensor_t *y = buildFloat32TensorND(3, (size_t[]){4, 2, 3}, NULL);
     tensor_t *out = buildFloat32TensorND(3, (size_t[]){4, 2, 3}, NULL);
 
-    ASSERT_EXITS_WITH_FAILURE(axpbyFloat32Tensors(1.0f, x, 1.0f, y, out));
+    axpbyFloat32Tensors(1.0f, x, 0.0f, y, out);
+
+    float expected[] = {0.0f,  4.0f,  8.0f,  12.0f, 16.0f, 20.0f, 1.0f,  5.0f,
+                        9.0f,  13.0f, 17.0f, 21.0f, 2.0f,  6.0f,  10.0f, 14.0f,
+                        18.0f, 22.0f, 3.0f,  7.0f,  11.0f, 15.0f, 19.0f, 23.0f};
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(expected, (float *)out->data, 24);
 
     freeTensor(out);
     freeTensor(y);
     transposeTensor(x, 1, 2); /* unwind the cycle before freeing (Linear.c idiom) */
     transposeTensor(x, 0, 1);
+    freeTensor(x);
+}
+
+void testAxpbyRejectsPermutedOut(void) {
+    /* out is a transposed VIEW: the write path is flat contiguous row-major
+     * (Axpby.h contract), so a permuted out would scatter results into wrong
+     * slots -- must fail fast instead. Logical dims still match ([2,3]), so
+     * this cannot pass vacuously via the dim-mismatch guard. */
+    tensor_t *x = buildFloat32TensorND(2, (size_t[]){2, 3}, NULL);
+    tensor_t *y = buildFloat32TensorND(2, (size_t[]){2, 3}, NULL);
+    tensor_t *out = buildFloat32TensorND(2, (size_t[]){3, 2}, NULL);
+    transposeTensor(out, 0, 1);
+
+    ASSERT_EXITS_WITH_FAILURE(axpbyFloat32Tensors(1.0f, x, 1.0f, y, out));
+
+    transposeTensor(out, 0, 1); /* unwind before freeing (Linear.c idiom) */
+    freeTensor(out);
+    freeTensor(y);
     freeTensor(x);
 }
 
@@ -148,7 +176,8 @@ int main(void) {
     RUN_TEST(testAxpbyAliasedOutput);
     RUN_TEST(testAxpbyPermutationAwareRead);
     RUN_TEST(testAxpbyRejectsDimMismatch);
-    RUN_TEST(testAxpbyRejectsNonInvolutionPermutation);
+    RUN_TEST(testAxpbyThreeCyclePermutationRead);
+    RUN_TEST(testAxpbyRejectsPermutedOut);
     RUN_TEST(testAxpbyRejectsNonFloat);
     return UNITY_END();
 }
