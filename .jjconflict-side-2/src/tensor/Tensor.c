@@ -191,19 +191,25 @@ int min(int a, int b) {
 }
 //TODO: besserer kommentar
 /* will not be filled with 0 prior writing. caller needs to ensure that dataOut is clear*/
-void byteConversionWithOffsets(uint8_t *dataIn, size_t dataInBits, uint8_t *dataOut, size_t startbitInOffset,
-                               size_t dataOutBits, size_t numValues, size_t startbitOutOffset){
-    size_t dataOutIndex = startbitOutOffset/8;
-    size_t dataInIndex = startbitInOffset / 8;
-    int dataOutStartbit = startbitOutOffset % 8;
-    int dataInStartbit = startbitInOffset % 8;
-    int dataInEndbit = dataInStartbit + (int)dataInBits;
-    int dataOutEndbit =  dataOutStartbit + (int)dataOutBits;
+//if no offset: dataInOffsetBits = dataInBits
+//dataOutOffsetBits = dataOutBits
+void byteConversionWithOffsets(uint8_t *dataIn, size_t dataInBits, size_t dataInOffsetBits, uint8_t *dataOut,
+                               size_t dataOutBits, size_t dataOutOffsetBits, size_t numValues, size_t numValuesOffset){
+    memset(dataOut, 0, ((numValues-numValuesOffset) * dataOutBits + numValuesOffset * dataOutOffsetBits - 1) / 8 + 1);
+    int inBits = (int)dataInOffsetBits;
+    int outBits = (int)dataOutOffsetBits;
+    size_t dataOutIndex = 0;
+    size_t dataInIndex = 0;
+    int dataOutStartbit = 0;
+    int dataInStartbit = 0;
+    int dataInEndbit = inBits;
+    int dataOutEndbit = outBits;
     for (size_t i = 0; i < numValues; i++) {
         /*
         printf("\n");
         printf("\n");
-        printf("Value %i\n", i);*/
+        printf("Value %i\n", i);
+        */
         while ((dataInStartbit < dataInEndbit) | (dataOutStartbit < dataOutEndbit)) {
             /* Guard each side: input may exhaust before output (widening) or
              * output may fill before input (narrowing); skipping the out-of-range
@@ -236,8 +242,8 @@ void byteConversionWithOffsets(uint8_t *dataIn, size_t dataInBits, uint8_t *data
             /*
             printf("valuesRead %d\n", valuesRead);
             printf("valuesWritten %d\n", valuesWritten);
-            printf("minValue %d\n", minValue);*/
-
+            printf("minValue %d\n", minValue);
+            */
             uint8_t deltaIn = minValue;
             uint8_t deltaOut = minValue;
             if (dataInStartbit == dataInEndbit) {
@@ -260,19 +266,28 @@ void byteConversionWithOffsets(uint8_t *dataIn, size_t dataInBits, uint8_t *data
             if (dataOutStartbit / 8 > (dataOutStartbit - deltaOut) / 8) {
                 dataOutIndex += 1;
             }
-            // printf("\n");
+            //printf("\n");
         }
-        dataInStartbit = dataInEndbit;
-        dataInEndbit = dataInStartbit + dataInBits;
-        dataOutStartbit = dataOutEndbit;
-        dataOutEndbit = dataOutStartbit + dataOutBits;
+        if (numValuesOffset > 0)
+        {
+            numValuesOffset = numValuesOffset-1;
+        }
+        if (numValuesOffset == 0)
+        {
+            inBits = dataInBits;
+            outBits = dataOutBits;
+        }
+        dataInStartbit = dataInEndbit % 8;
+        dataInEndbit = dataInStartbit + inBits;
+        dataOutStartbit = dataOutEndbit % 8;
+        dataOutEndbit = dataOutStartbit + outBits;
     }
 }
 
 void byteConversion(uint8_t *dataIn, size_t dataInBits, uint8_t *dataOut, size_t dataOutBits,
                     size_t numValues) {
     memset(dataOut, 0, (numValues * dataOutBits - 1) / 8 + 1);
-    byteConversionWithOffsets(dataIn, dataInBits, dataOut, 0, dataOutBits, numValues, 0);
+    byteConversionWithOffsets(dataIn, dataInBits, dataInBits, dataOut, dataOutBits, dataOutBits, numValues, 0);
 }
 
 tensor_t *getParamFromParameter(parameter_t *parameter) {
