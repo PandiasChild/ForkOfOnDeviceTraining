@@ -144,6 +144,18 @@ void testRoundTripPacked(void) {
     TEST_ASSERT_EQUAL_MEMORY(serial->generators[0]->mean->data, deserial->generators[0]->mean->data,
                              meanBytes);
     TEST_ASSERT_EQUAL_UINT32(9, deserial->generators[0]->count);
+    /* qConfig metadata is file-carried (Serialize.c writes scale/zeroPoint per
+     * tensor) -- pin it so packed payload bytes can never silently decode
+     * against a drifted grid (PR #366 review). */
+    TEST_ASSERT_EQUAL_FLOAT(
+        ((symQConfig_t *)serial->generators[0]->basis->quantization->qConfig)->scale,
+        ((symQConfig_t *)deserial->generators[0]->basis->quantization->qConfig)->scale);
+    TEST_ASSERT_EQUAL_FLOAT(
+        ((asymQConfig_t *)serial->generators[0]->mean->quantization->qConfig)->scale,
+        ((asymQConfig_t *)deserial->generators[0]->mean->quantization->qConfig)->scale);
+    TEST_ASSERT_EQUAL_INT16(
+        ((asymQConfig_t *)serial->generators[0]->mean->quantization->qConfig)->zeroPoint,
+        ((asymQConfig_t *)deserial->generators[0]->mean->quantization->qConfig)->zeroPoint);
     freePpcaReplaySet(deserial);
     freePpcaReplaySet(serial);
     freePpcaReplaySet(train);

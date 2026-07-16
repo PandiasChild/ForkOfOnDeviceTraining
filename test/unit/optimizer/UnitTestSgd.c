@@ -933,6 +933,40 @@ void testSgdMCreateOptimRejectsBoolGradStorage(void) {
     freeQuantization(fQ);
 }
 
+void testSgdMCreateOptimRejectsNullGradSlot(void) {
+    /* PR #366 hardening: every factory-collected trainable parameter must
+     * carry an allocated grad -- no freeze mechanism exists, and step/zeroGrad
+     * dereference grad unconditionally, so a NULL grad in a slot is a
+     * mis-built model that would otherwise crash mid-training. Fail fast at
+     * create instead of silently skipping the slot (old behavior). */
+    size_t *wDims = reserveMemory(2 * sizeof(size_t));
+    wDims[0] = 2;
+    wDims[1] = 3;
+    size_t *wOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, wOrder);
+    shape_t *wShape = reserveMemory(sizeof(shape_t));
+    setShape(wShape, wDims, 2, wOrder);
+    tensor_t *wParam = initTensor(wShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(wParam, (float[]){0.f, 0.f, 0.f, 0.f, 0.f, 0.f}, 6);
+    parameter_t weights = {.param = wParam, .grad = NULL};
+
+    quantization_t *fQ = quantizationInitFloat();
+    layer_t *layer = buildBorrowedLinearLayer(&weights, NULL, fQ);
+    layer_t *model[1] = {layer};
+
+    quantization_t *momentumQ = quantizationInitFloat();
+    ASSERT_EXITS_WITH_FAILURE(
+        sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 1, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY}));
+
+    /* Teardown (parent continues after the fork-based assert; weights is
+     * stack-local, only the heap tensor + shells need freeing). */
+    freeLinearLayerShellOnly(layer);
+    freeTensor(wParam);
+    freeQuantization(momentumQ);
+    freeQuantization(fQ);
+}
+
 void testSgdMCreateOptimRejectsNonFloat32UpdateMath(void) {
     /* #310: ARITH_SYM_INT32 update arithmetic is not implemented -- the
      * factory must fail fast at creation, not corrupt at step time. Also
@@ -1349,6 +1383,7 @@ int main() {
     RUN_TEST(testSgdStepMMomentumZeroIgnoresStatesAndUpdatesParam);
     RUN_TEST(testSgdMCreateOptimAdmitsPackedSymGradStorage);
     RUN_TEST(testSgdMCreateOptimRejectsBoolGradStorage);
+    RUN_TEST(testSgdMCreateOptimRejectsNullGradSlot);
     RUN_TEST(testSgdMCreateOptimRejectsNonFloat32UpdateMath);
     RUN_TEST(testSgdStepMRejectsNonFloat32UpdateMath);
     RUN_TEST(testSgdStepMFloatReadsPackedSymGradGeneric);

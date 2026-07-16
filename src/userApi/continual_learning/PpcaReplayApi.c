@@ -43,6 +43,14 @@ ppcaReplay_t *ppcaReplayCreate(const ppcaReplayConfig_t *cfg) {
                     cfg->rank);
         exit(1);
     }
+    /* NaN-robust (adamWInit betas idiom): sigma2Floor seeds sigma2 AND floors
+     * every merge -- a NaN or non-positive floor silently collapses generated
+     * samples toward the class mean (the sigma-noise term dies), poisoning
+     * replay results with no crash. */
+    if (!(cfg->sigma2Floor > 0.0f)) {
+        PRINT_ERROR("ppcaReplayCreate: sigma2Floor must be > 0 (got %g)", (double)cfg->sigma2Floor);
+        exit(1);
+    }
     validateStateStorage(cfg->meanQ, "meanQ");
     validateStateStorage(cfg->basisQ, "basisQ");
     validateStateStorage(cfg->eigvalsQ, "eigvalsQ");

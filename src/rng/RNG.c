@@ -47,7 +47,10 @@ uint32_t rngGetSeed(void) {
 }
 
 float rngNextFloatCtx(rng32_t *rngCtx) {
-    return (float)(rngNext(rngCtx) >> 8) / (float)(1 << 24);
+    /* 0x1p24f == 2^24 as a float literal: value-identical to the former
+     * (float)(1 << 24), minus the (16-bit-int-only) UB of a wide untyped
+     * shift -- the repo's one such site (PR #366 review). */
+    return (float)(rngNext(rngCtx) >> 8) / 0x1p24f;
 }
 
 float rngNextFloat(void) {

@@ -28,6 +28,21 @@ static void validateRowBroadcast(tensor_t *mat, tensor_t *vec, size_t vecDimInde
         PRINT_ERROR("%s: out dims must match mat", op);
         exit(1);
     }
+    /* The kernels index flat row-major and ignore orderOfDimensions -- a
+     * permuted operand would be silently misindexed (dims stay physical, so
+     * no OOB, just wrong values). Same gate family as PointwiseFused (#339). */
+    tensor_t *operands[3] = {mat, vec, out};
+    for (size_t k = 0; k < 3; k++) {
+        shape_t *shape = operands[k]->shape;
+        for (size_t d = 0; d < shape->numberOfDimensions; d++) {
+            if (shape->orderOfDimensions[d] != d) {
+                PRINT_ERROR("%s: operand %zu is permuted (identity orderOfDimensions "
+                            "required; see #339)",
+                            op, k);
+                exit(1);
+            }
+        }
+    }
 }
 
 void scaleRowsFloat32(tensor_t *mat, tensor_t *rowScales, tensor_t *out) {

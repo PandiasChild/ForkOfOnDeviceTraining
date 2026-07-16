@@ -253,7 +253,10 @@ streamed (path B) far beyond that horizon will see its weighting arithmetic
 quietly lose exactness — long before `count` itself could overflow. It's a
 soft, very large streaming horizon, not a hard cap enforced anywhere in
 code — worth knowing before running an always-on generator across an
-extremely long deployment.
+extremely long deployment. (At an exact `uint32` wrap, ~256× beyond that
+horizon, `count` would pass through 0 and the `1/(n+1)`-family weights would
+briefly degenerate rather than crash — academic, but stated for
+completeness.)
 
 Packed state (SYM/ASYM) is mechanically compatible with path B, but is
 **grid-bounded**, not data-bounded: each streamed sample forces a

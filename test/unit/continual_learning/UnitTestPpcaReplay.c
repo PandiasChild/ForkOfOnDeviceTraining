@@ -132,6 +132,23 @@ void testCreateRejectsRankGeDim(void) {
     ASSERT_EXITS_WITH_FAILURE(ppcaReplayCreate(&cfg));
 }
 
+void testCreateRejectsNanSigma2Floor(void) {
+    /* PR #366 hardening: sigma2Floor seeds sigma2 AND floors every merge --
+     * a NaN (or non-positive) floor silently collapses generated samples
+     * toward the class mean (sigma-noise term dies), poisoning replay
+     * research results with no crash. Fail fast at create, NaN-robust
+     * (adamWInit betas idiom). */
+    ppcaReplayConfig_t cfg = floatConfig(8, 2, 16);
+    cfg.sigma2Floor = NAN;
+    ASSERT_EXITS_WITH_FAILURE(ppcaReplayCreate(&cfg));
+}
+
+void testCreateRejectsNonPositiveSigma2Floor(void) {
+    ppcaReplayConfig_t cfg = floatConfig(8, 2, 16);
+    cfg.sigma2Floor = 0.0f;
+    ASSERT_EXITS_WITH_FAILURE(ppcaReplayCreate(&cfg));
+}
+
 void testCreateRejectsSymInt32Storage(void) {
     ppcaReplayConfig_t cfg = floatConfig(8, 2, 16);
     symInt32QConfig_t qc;
@@ -944,6 +961,8 @@ int main(void) {
     RUN_TEST(testSetCreate);
     RUN_TEST(testCreateRejectsZeroDim);
     RUN_TEST(testCreateRejectsRankGeDim);
+    RUN_TEST(testCreateRejectsNanSigma2Floor);
+    RUN_TEST(testCreateRejectsNonPositiveSigma2Floor);
     RUN_TEST(testCreateRejectsSymInt32Storage);
     RUN_TEST(testCreateRejectsInt32Storage);
     RUN_TEST(testCreateRejectsBoolStorage);

@@ -97,6 +97,34 @@ void testSubRowBroadcastRejectsRowLenMismatch(void) {
     freeTensor(mat);
 }
 
+void testScaleRowsRejectsPermutedMat(void) {
+    /* PR #366 hardening (same gate family as PointwiseFused, #339): the
+     * kernels read/write flat row-major and ignore orderOfDimensions -- a
+     * permuted operand would be silently misindexed (dims stay physical, so
+     * no OOB -- just wrong values). Fail fast instead. */
+    tensor_t *mat = buildFloat32TensorND(2, (size_t[]){2, 3}, NULL);
+    tensor_t *scales = buildFloat32TensorND(1, (size_t[]){2}, NULL);
+    tensor_t *out = buildFloat32TensorND(2, (size_t[]){2, 3}, NULL);
+    mat->shape->orderOfDimensions[0] = 1;
+    mat->shape->orderOfDimensions[1] = 0;
+    ASSERT_EXITS_WITH_FAILURE(scaleRowsFloat32(mat, scales, out));
+    freeTensor(out);
+    freeTensor(scales);
+    freeTensor(mat);
+}
+
+void testSubRowBroadcastRejectsPermutedOut(void) {
+    tensor_t *mat = buildFloat32TensorND(2, (size_t[]){2, 3}, NULL);
+    tensor_t *row = buildFloat32TensorND(1, (size_t[]){3}, NULL);
+    tensor_t *out = buildFloat32TensorND(2, (size_t[]){2, 3}, NULL);
+    out->shape->orderOfDimensions[0] = 1;
+    out->shape->orderOfDimensions[1] = 0;
+    ASSERT_EXITS_WITH_FAILURE(subRowBroadcastFloat32(mat, row, out));
+    freeTensor(out);
+    freeTensor(row);
+    freeTensor(mat);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testScaleRows);
@@ -104,5 +132,7 @@ int main(void) {
     RUN_TEST(testSubRowBroadcast);
     RUN_TEST(testScaleRowsRejectsScaleLenMismatch);
     RUN_TEST(testSubRowBroadcastRejectsRowLenMismatch);
+    RUN_TEST(testScaleRowsRejectsPermutedMat);
+    RUN_TEST(testSubRowBroadcastRejectsPermutedOut);
     return UNITY_END();
 }

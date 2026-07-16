@@ -158,11 +158,18 @@ void validateOptimizerGradStorage(optimizer_t *optim, const char *factoryName) {
      * low-level knob), or packed SYM/ASYM (explicit grad-storage knob,
      * memory-constrained targets). INT32/BOOL grad storage remains
      * unimplemented - fail fast rather than silently misread bytes in an
-     * unsupported layout. Non-trainable params carry no grad: skip. */
+     * unsupported layout. A NULL grad in a collected slot is a mis-built
+     * model (no freeze mechanism exists; every factory allocates grads, and
+     * step/zeroGrad dereference them unconditionally) - fail fast here
+     * instead of crashing mid-training (PR #366 review). */
     for (size_t s = 0; s < optim->sizeStates; s++) {
         tensor_t *grad = optim->parameter[s]->grad;
         if (grad == NULL) {
-            continue;
+            PRINT_ERROR("%s: trainable parameter slot %zu has no grad tensor "
+                        "(mis-built model; every trainable param must carry an "
+                        "allocated grad)",
+                        factoryName, s);
+            exit(1);
         }
         qtype_t gradType = grad->quantization->type;
         if (gradType != FLOAT32 && gradType != SYM_INT32 && gradType != SYM && gradType != ASYM) {
