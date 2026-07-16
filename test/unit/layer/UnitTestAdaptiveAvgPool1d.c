@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "AdaptiveAvgPool1d.h"
+#include "DeathTest.h"
 #include "Layer.h"
 #include "QuantizationApi.h"
 #include "StorageApi.h"
@@ -301,6 +302,150 @@ void testAdaptiveAvgPool1dForwardWithSymInt32Input(void) {
     }
 }
 
+/* ---- SYM_INT32 arm (#205) ---- */
+
+/* Build a SYM_INT32 (HALF_AWAY, qMaxBits=12) tensor from a float fixture —
+ * UnitTestConv1d.c helper pattern; fixtures are dequant-round-trip-stable
+ * (sym_gold.stable_dequant_i12) so the C side lands on exactly the gold
+ * mantissas+scale. NULL vals -> zero mantissas, scale 1.0. */
+static tensor_t *buildSymTensor(size_t const *dims, size_t numDims, float const *vals) {
+    size_t *ownedDims = reserveMemory(numDims * sizeof(size_t));
+    memcpy(ownedDims, dims, numDims * sizeof(size_t));
+    size_t *order = reserveMemory(numDims * sizeof(size_t));
+    setOrderOfDimsForNewTensor(numDims, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, ownedDims, numDims, order);
+    tensor_t *t = initTensor(shape, quantizationInitSymInt32WithBits(HALF_AWAY, 12), NULL);
+    if (vals != NULL) {
+        tensorFillFromFloatBuffer(t, vals, calcNumberOfElementsByTensor(t));
+    }
+    return t;
+}
+
+static void assertSymTensorMatchesGold(tensor_t *t, int32_t const *mantissas, size_t len,
+                                       float expectedScale, int32_t mantissaTol, float scaleTol,
+                                       float const *dequant, float dequantTol) {
+    int32_t const *m = (int32_t const *)t->data;
+    float scale = ((symInt32QConfig_t *)t->quantization->qConfig)->scale;
+    TEST_ASSERT_FLOAT_WITHIN(expectedScale * scaleTol, expectedScale, scale);
+    for (size_t i = 0; i < len; i++) {
+        TEST_ASSERT_INT_WITHIN(mantissaTol, mantissas[i], m[i]);
+        TEST_ASSERT_FLOAT_WITHIN(dequantTol, dequant[i], (float)m[i] * scale);
+    }
+}
+
+#define ASSERT_SYM_FORWARD_GOLD(t, fix)                                                            \
+    assertSymTensorMatchesGold(                                                                    \
+        t, expectedForwardMantissas_adaptiveAvgPool1dSym_##fix,                                    \
+        expectedForwardMantissas_adaptiveAvgPool1dSym_##fix##_len,                                 \
+        expectedForwardScale_adaptiveAvgPool1dSym_##fix, mantissaTol_adaptiveAvgPool1dSym_##fix,   \
+        scaleTol_adaptiveAvgPool1dSym_##fix, expectedForwardDequant_adaptiveAvgPool1dSym_##fix,    \
+        forwardDequantTol_adaptiveAvgPool1dSym_##fix)
+
+#define ASSERT_SYM_PROPLOSS_GOLD(t, fix)                                                           \
+    assertSymTensorMatchesGold(                                                                    \
+        t, expectedPropLossMantissas_adaptiveAvgPool1dSym_##fix,                                   \
+        expectedPropLossMantissas_adaptiveAvgPool1dSym_##fix##_len,                                \
+        expectedPropLossScale_adaptiveAvgPool1dSym_##fix, mantissaTol_adaptiveAvgPool1dSym_##fix,  \
+        scaleTol_adaptiveAvgPool1dSym_##fix, expectedPropLossDequant_adaptiveAvgPool1dSym_##fix,   \
+        propLossDequantTol_adaptiveAvgPool1dSym_##fix)
+
+/* Mirrors build() but on SYM_INT32 wires: forwardQ/propLossQ declare
+ * ARITH_SYM_INT32 compute via arithmeticFromQuantizationOrDefault. */
+static adaptivePoolRun_t buildSym(float const *inputData, size_t const *inputDims,
+                                  size_t outputSize, size_t const *outputDims) {
+    static adaptiveAvgPool1dConfig_t cfgStore;
+    static layer_t layerStore;
+    static layerConfig_t lcStore;
+
+    quantization_t *q = quantizationInitSymInt32(HALF_AWAY);
+    initAdaptiveAvgPool1dConfig(&cfgStore, outputSize, q, q);
+
+    lcStore.adaptiveAvgPool1d = &cfgStore;
+    layerStore.config = &lcStore;
+
+    adaptivePoolRun_t r = {0};
+    r.layer = &layerStore;
+    r.input = buildSymTensor(inputDims, 3, inputData);
+    r.output = buildSymTensor(outputDims, 3, NULL);
+    r.q = q;
+    return r;
+}
+
+void testForwardBackwardSymUneven(void) {
+    size_t inDims[] = {1, 1, 5};
+    size_t outDims[] = {1, 1, 3};
+
+    // L=5 -> O=3: window counts 2/3/2 with overlaps — varying divisor is the
+    // core adaptive case; the symUneven gold set contains an exact .5-tie
+    // (sum 981, count 2), pinning half-away-from-zero integer division.
+    adaptivePoolRun_t r = buildSym(input_adaptiveAvgPool1dSym_symUneven, inDims, 3, outDims);
+
+    adaptiveAvgPool1dForward(r.layer, r.input, r.output);
+    ASSERT_SYM_FORWARD_GOLD(r.output, symUneven);
+
+    tensor_t *lossGrad = buildSymTensor(outDims, 3, lossGrad_adaptiveAvgPool1dSym_symUneven);
+    tensor_t *propLoss = buildSymTensor(inDims, 3, NULL);
+
+    adaptiveAvgPool1dBackward(r.layer, r.input, lossGrad, propLoss);
+    ASSERT_SYM_PROPLOSS_GOLD(propLoss, symUneven);
+}
+
+void testForwardBackwardSymGlobal(void) {
+    size_t inDims[] = {1, 2, 6};
+    size_t outDims[] = {1, 2, 1};
+
+    // Global average: count = L, the largest divisor.
+    adaptivePoolRun_t r = buildSym(input_adaptiveAvgPool1dSym_symGlobal, inDims, 1, outDims);
+
+    adaptiveAvgPool1dForward(r.layer, r.input, r.output);
+    ASSERT_SYM_FORWARD_GOLD(r.output, symGlobal);
+
+    tensor_t *lossGrad = buildSymTensor(outDims, 3, lossGrad_adaptiveAvgPool1dSym_symGlobal);
+    tensor_t *propLoss = buildSymTensor(inDims, 3, NULL);
+
+    adaptiveAvgPool1dBackward(r.layer, r.input, lossGrad, propLoss);
+    ASSERT_SYM_PROPLOSS_GOLD(propLoss, symGlobal);
+}
+
+static tensor_t *buildSymTensorWithBits(size_t const *dims, size_t numDims, uint8_t qMaxBits) {
+    size_t *ownedDims = reserveMemory(numDims * sizeof(size_t));
+    memcpy(ownedDims, dims, numDims * sizeof(size_t));
+    size_t *order = reserveMemory(numDims * sizeof(size_t));
+    setOrderOfDimsForNewTensor(numDims, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, ownedDims, numDims, order);
+    return initTensor(shape, quantizationInitSymInt32WithBits(HALF_AWAY, qMaxBits), NULL);
+}
+
+/* Value-sum guard, N branch: the global-pool window (outputSize=1) sums
+ * inputLength terms — at qMaxBits=16 the bound is 2^(32-16) = 65536, so
+ * L=65536 must fail fast instead of silently overflowing the int32 sum. */
+void testForwardSymRejectsTermsOverBound(void) {
+    size_t inDims[] = {1, 1, 65536};
+    size_t outDims[] = {1, 1, 1};
+
+    adaptivePoolRun_t r = buildSym(NULL, inDims, 1, outDims);
+    r.input = buildSymTensorWithBits(inDims, 3, 16);
+
+    ASSERT_EXITS_WITH_FAILURE(adaptiveAvgPool1dForward(r.layer, r.input, r.output));
+}
+
+/* Value-sum guard, width branch: a 31-bit loss-grad mantissa can overflow the
+ * int32 scatter accumulator after 2 covering windows — the backward kernel
+ * must fail fast on qMaxBits > 16. */
+void testBackwardSymRejectsWideLossGrad(void) {
+    size_t inDims[] = {1, 1, 5};
+    size_t outDims[] = {1, 1, 3};
+
+    adaptivePoolRun_t r = buildSym(input_adaptiveAvgPool1dSym_symUneven, inDims, 3, outDims);
+
+    tensor_t *lossGrad = buildSymTensorWithBits(outDims, 3, 31);
+    tensor_t *propLoss = buildSymTensor(inDims, 3, NULL);
+
+    ASSERT_EXITS_WITH_FAILURE(adaptiveAvgPool1dBackward(r.layer, r.input, lossGrad, propLoss));
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testForwardBasic);
@@ -316,5 +461,9 @@ int main(void) {
     RUN_TEST(testBackwardGlobal);
     RUN_TEST(testBackwardUpsample);
     RUN_TEST(testAdaptiveAvgPool1dForwardWithSymInt32Input);
+    RUN_TEST(testForwardBackwardSymUneven);
+    RUN_TEST(testForwardBackwardSymGlobal);
+    RUN_TEST(testForwardSymRejectsTermsOverBound);
+    RUN_TEST(testBackwardSymRejectsWideLossGrad);
     return UNITY_END();
 }

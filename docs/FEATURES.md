@@ -27,9 +27,9 @@ FLOAT32 and SYM_INT32; SYM/ASYM/BOOL are partial.
 | `SOFTMAX` | – | ✓ | ~ dequant-to-float | n/a | n/a | ✓ |
 | `FLATTEN` | – | ✓ | ✓ scale-transparent | n/a | n/a | ✓ |
 | `DROPOUT` | – | ✓ | ✓ scale-transparent | n/a | n/a | ✓ |
-| `MAXPOOL1D` | – | ✓ | ✗ | n/a | n/a | ✓ |
-| `AVGPOOL1D` | – | ✓ | ✗ | n/a | n/a | ✓ |
-| `ADAPTIVE_AVGPOOL1D` | – | ✓ | ✗ | n/a | n/a | ✓ |
+| `MAXPOOL1D` | – | ✓ | ✓ native (fwd+bwd) | n/a | n/a | ✓ |
+| `AVGPOOL1D` | – | ✓ | ✓ native (fwd+bwd) | n/a | n/a | ✓ |
+| `ADAPTIVE_AVGPOOL1D` | – | ✓ | ✓ native (fwd+bwd) | n/a | n/a | ✓ |
 | `QUANTIZATION` | – | converter node | converter node | n/a | n/a | ✓ |
 
 Notes on the qualified cells:
@@ -40,9 +40,10 @@ Notes on the qualified cells:
   values verbatim and folds any factor into the wire scale, bypassing the funnel.
   *dequant-to-float* (Softmax backward) converts operands to FLOAT32, computes, and
   requantizes — no integer arithmetic. Pools (`MAXPOOL1D`/`AVGPOOL1D`/
-  `ADAPTIVE_AVGPOOL1D`) have **only** a FLOAT32 kernel body; their forward still routes
-  through the funnel, so a mismatched SYM_INT32 input is dequantized to float scratch
-  first, but no SYM kernel exists (backward exits on non-FLOAT32).
+  `ADAPTIVE_AVGPOOL1D`) carry integer-exact funnel arms (#205): MaxPool selects
+  mantissas (scale copy), AvgPool folds the constant divisor into the scale
+  (`s_out = s_in/K`), AdaptiveAvgPool uses rounded integer division (half-away) at an
+  unchanged scale — mechanics in `docs/conventions/arithmetic-sym.md`.
 - **`QUANTIZATION`** is a pure storage-to-storage conversion node (`executeConvert`,
   conversionMatrix), not an arithmetic layer — it deliberately changes dtype/scale.
 - **Quant params** — trainable weight/bias storage. Linear/Conv are hard-gated to
@@ -255,7 +256,6 @@ checkpointing, limitations, literature).
 - CrossEntropy forward is FLOAT32-only; `classWeights` field is allocated but unused.
 - Serialization: sparsity stub, non-portable wire format, no I/O error handling.
 - `sparsityType_t` is scaffolding only (propagated but no kernel exploits it).
-- Pooling layers are FLOAT32-only.
 - Continual-learning (PPCA replay, #326) arithmetic is `ARITH_FLOAT32` only;
   no integer eigensolver exists yet. State storage is unaffected (FLOAT32/
   SYM/ASYM all accepted).

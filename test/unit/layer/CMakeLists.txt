@@ -32,6 +32,7 @@ add_custom_command(
         COMMAND uv run ${CMAKE_CURRENT_SOURCE_DIR}/generate_expected_max_pool_1d.py
                 --out ${GEN_MAX_POOL_1D_HEADER}
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/generate_expected_max_pool_1d.py
+                ${CMAKE_CURRENT_SOURCE_DIR}/../goldgen/sym_gold.py
         COMMENT "Generating expected_max_pool_1d.h via PyTorch"
         VERBATIM
 )
@@ -44,6 +45,7 @@ add_custom_command(
         COMMAND uv run ${CMAKE_CURRENT_SOURCE_DIR}/generate_expected_avg_pool_1d.py
                 --out ${GEN_AVG_POOL_1D_HEADER}
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/generate_expected_avg_pool_1d.py
+                ${CMAKE_CURRENT_SOURCE_DIR}/../goldgen/sym_gold.py
         COMMENT "Generating expected_avg_pool_1d.h via PyTorch"
         VERBATIM
 )
@@ -156,6 +158,7 @@ add_elastic_ai_unit_test(
         TensorApi
         QuantizationApi
         StorageApi
+        odt_test_death
 )
 add_dependencies(UnitTestMaxPool1d generate_expected_max_pool_1d)
 target_include_directories(UnitTestMaxPool1d PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
@@ -168,6 +171,7 @@ add_elastic_ai_unit_test(
         TensorApi
         QuantizationApi
         StorageApi
+        odt_test_death
 )
 add_dependencies(UnitTestAvgPool1d generate_expected_avg_pool_1d)
 target_include_directories(UnitTestAvgPool1d PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
@@ -178,6 +182,7 @@ add_custom_command(
         COMMAND uv run ${CMAKE_CURRENT_SOURCE_DIR}/generate_expected_adaptive_avg_pool_1d.py
                 --out ${GEN_ADAPTIVE_AVG_POOL_1D_HEADER}
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/generate_expected_adaptive_avg_pool_1d.py
+                ${CMAKE_CURRENT_SOURCE_DIR}/../goldgen/sym_gold.py
         COMMENT "Generating expected_adaptive_avg_pool_1d.h via PyTorch"
         VERBATIM
 )
@@ -192,6 +197,7 @@ add_elastic_ai_unit_test(
         TensorApi
         QuantizationApi
         StorageApi
+        odt_test_death
 )
 add_dependencies(UnitTestAdaptiveAvgPool1d generate_expected_adaptive_avg_pool_1d)
 target_include_directories(UnitTestAdaptiveAvgPool1d PRIVATE ${CMAKE_CURRENT_BINARY_DIR})

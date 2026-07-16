@@ -75,3 +75,107 @@ def stable_dequant(x: torch.Tensor):
     q2, _ = quantize_sym(deq32.to(torch.float64))
     assert torch.equal(q, q2), "fixture is not dequantization round-trip stable"
     return q, s, deq32
+
+
+# ---- int12 operand helpers (#227 operand flip; default quantizationInitSymInt32
+# tensors carry qMaxBits = ODT_SYM_OPERAND_QMAXBITS = 12). Additive: existing
+# int16-era users above keep their semantics; pool/conv generators use these. ----
+
+QMAX_I12 = 2047.0
+QMIN_I12 = -2048.0
+
+
+def quantize_sym_i12(x: torch.Tensor):
+    """convertFloatTensorToSymInt32Tensor into an int12 config (qMaxBits=12):
+    absmax -> scale=absmax/2047 (1.0 if absmax==0), round-clamp half-away."""
+    absmax = x.abs().max().item()
+    scale = 1.0 if absmax == 0.0 else absmax / QMAX_I12
+    q = round_half_away(torch.clamp(x / scale, QMIN_I12, QMAX_I12))
+    return q.to(torch.int32), scale
+
+
+def stable_dequant_i12(x: torch.Tensor):
+    """int12 variant of stable_dequant: quantize once, assert the emitted
+    float32 fixture is dequantization round-trip stable."""
+    q, s = quantize_sym_i12(x.to(torch.float64))
+    deq32 = (q.to(torch.float64) * s).to(torch.float32)
+    q2, _ = quantize_sym_i12(deq32.to(torch.float64))
+    assert torch.equal(q, q2), "int12 fixture not dequant round-trip stable"
+    return q, s, deq32
+
+
+def f32_scale_i12(deq32: torch.Tensor) -> float:
+    """int12 scale the C runtime derives from the EMITTED float32 fixture:
+    float32(absmax)/2047 computed in float32 (convertFloatTensorToSymInt32Tensor)."""
+    absmax = deq32.abs().max().to(torch.float32)
+    if absmax.item() == 0.0:
+        return 1.0
+    return (absmax / torch.tensor(QMAX_I12, dtype=torch.float32)).item()
+
+
+def requant_absmax_i12_f32(mantissas: torch.Tensor, in_scale: float):
+    """executeOp OUT_WRITE epilogue for a SYM_INT32 target: the conversionMatrix
+    diagonal (requantSymInt32Tensor, TensorConversion.c) at the target's declared
+    qMaxBits=12. Emulates the same float32 sequence: dequant (f32) -> absmax (f32)
+    -> scale=absmax/2047 (f32) -> round_half_away(clamp(...)). Returns
+    (restored int32 mantissas, restored scale)."""
+    deq = mantissas.to(torch.float32) * torch.tensor(in_scale, dtype=torch.float32)
+    absmax = deq.abs().max().to(torch.float32)
+    if absmax.item() == 0.0:
+        return torch.zeros_like(mantissas, dtype=torch.int32), 1.0
+    scale = absmax / torch.tensor(QMAX_I12, dtype=torch.float32)
+    q = round_half_away(torch.clamp(deq / scale, QMIN_I12, QMAX_I12))
+    return q.to(torch.int32), scale.item()
+
+
+def assert_rounding_canary():
+    """Fires if round_half_away is ever a half-even rounder — per-fixture
+    tolerances cannot catch this on non-tie fixtures (Conv1d goldgen precedent)."""
+    c = round_half_away(torch.tensor([0.5, -0.5], dtype=torch.float32))
+    assert c.tolist() == [1.0, -1.0], \
+        "round_half_away is not half-away-from-zero — rounding mode wrong"
+
+
+# ---- 1D sliding-window geometry emulation (SlidingWindow1d.c) for pool/conv
+# generators that emulate C kernels in the mantissa domain. All divisions below
+# operate on non-negative operands, so Python floor-division matches C
+# truncation exactly. ----
+
+
+def window_geometry_1d(input_length, kernel_size, stride, dilation, padding_type,
+                       padding=0):
+    """Mirror windowGeometry1dCalc: returns dict with pad_left and out_len."""
+    eff_k = dilation * (kernel_size - 1) + 1
+    if padding_type == "VALID":
+        pad_left = 0
+        out_len = (input_length - eff_k) // stride + 1 if input_length >= eff_k else 0
+    elif padding_type == "SAME":
+        out_len = (input_length + stride - 1) // stride
+        needed = eff_k + (out_len - 1) * stride
+        total = needed - input_length if needed > input_length else 0
+        pad_left = total // 2
+    elif padding_type == "EXPLICIT":
+        pad_left = padding
+        padded = input_length + 2 * padding
+        out_len = (padded - eff_k) // stride + 1 if padded >= eff_k else 0
+    else:
+        raise ValueError(padding_type)
+    return dict(input_length=input_length, kernel_size=kernel_size, stride=stride,
+                dilation=dilation, pad_left=pad_left, out_len=out_len)
+
+
+def window_slice_1d(geom, out_pos):
+    """Mirror windowSlice1dAt: returns (first_valid_input_idx, valid_count)."""
+    input_start = out_pos * geom["stride"] - geom["pad_left"]
+    length = geom["input_length"]
+    if input_start >= length:
+        return 0, 0
+    d = geom["dilation"]
+    first_k = 0 if input_start >= 0 else (-input_start + d - 1) // d
+    last_k = geom["kernel_size"] - 1
+    max_k = (length - 1 - input_start) // d
+    if max_k < last_k:
+        last_k = max_k
+    if first_k > last_k:
+        return 0, 0
+    return input_start + first_k * d, last_k - first_k + 1

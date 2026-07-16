@@ -18,6 +18,18 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "goldgen"))
+from sym_gold import (
+    assert_rounding_canary,
+    emit_float_scalar,
+    emit_int32_scalar,
+    f32_scale_i12,
+    requant_absmax_i12_f32,
+    stable_dequant_i12,
+    window_geometry_1d,
+    window_slice_1d,
+)
+
 
 def _format_float_literal(v: float) -> str:
     """Format a Python float as a valid C float literal.
@@ -187,6 +199,144 @@ def emit_fixture(parts, fx):
         parts.append(emit_float_array(f"lossGrad_{pre}", fx["gy"]))
 
 
+# ---------------- SYM_INT32 fixtures (#205) ----------------
+#
+# The SYM forward/backward kernels are integer-EXACT in the mantissa domain
+# (pure select + scatter, no products, no divisions), so this emulation
+# reproduces the raw kernel output bit-for-bit. The only C-vs-emulation gap is
+# the executeOp OUT_WRITE restore (requantSymInt32Tensor): C evaluates
+# m * (inScale / scale) where the emulation evaluates (m * inScale) / scale —
+# a 1-ULP expression-order difference that can flip one rounding boundary.
+# Hence MANTISSA_TOL = 1 and the Conv1d-precedent 1e-4 relative scale floor.
+MANTISSA_TOL_SYM = 1
+SCALE_REL_TOL_SYM = 1e-4
+
+
+def _max_sym_forward(xq, geom):
+    """Mirror maxPool1dForwardKernelSymInt32: per-window argmax over int32
+    mantissas with strict > (first occurrence wins — same tie-break as the
+    FLOAT32 arm); empty window -> (0, -1) sentinel. Quantized-domain argmax is
+    the documented semantics: inputs that quantize to the same mantissa tie
+    HERE even when their float values differ."""
+    batch, channels, _ = xq.shape
+    out_len = geom["out_len"]
+    y = torch.zeros((batch, channels, out_len), dtype=torch.int32)
+    am = torch.zeros((batch, channels, out_len), dtype=torch.int32)
+    for b in range(batch):
+        for c in range(channels):
+            for o in range(out_len):
+                first, count = window_slice_1d(geom, o)
+                best = None
+                best_idx = -1
+                for i in range(count):
+                    idx = first + i * geom["dilation"]
+                    v = int(xq[b, c, idx])
+                    if best is None or v > best:
+                        best, best_idx = v, idx
+                y[b, c, o] = best if count > 0 else 0
+                am[b, c, o] = best_idx
+    return y, am
+
+
+def _run_max_sym_fixture(name, x, *, kernel_size, stride, dilation, padding_type,
+                         loss_grad_kind="ones"):
+    assert_rounding_canary()
+    x = x.to(torch.float64)
+    xq, _, x_deq = stable_dequant_i12(x)
+    s_in = f32_scale_i12(x_deq)
+    geom = window_geometry_1d(x.shape[2], kernel_size, stride, dilation, padding_type)
+
+    y_raw, argmax = _max_sym_forward(xq, geom)
+    yq_r, s_y = requant_absmax_i12_f32(y_raw, s_in)
+
+    # C-semantics float64 reference: the selected mantissas at the input scale
+    # (select is exact — the restore is the only rounding on this path).
+    y_ref = y_raw.to(torch.float64) * s_in
+    y_dequant_tol = (MANTISSA_TOL_SYM + 0.5) * s_y * 1.5
+    err = (yq_r.to(torch.float64) * s_y - y_ref).abs().max().item()
+    assert err <= y_dequant_tol, f"{name}: restored fwd dequant {err} > {y_dequant_tol}"
+
+    if loss_grad_kind == "ones":
+        gy = torch.ones((x.shape[0], x.shape[1], geom["out_len"]), dtype=torch.float64)
+    elif loss_grad_kind == "randn":
+        torch.manual_seed(hash(name) & 0xFFFF)
+        gy = torch.randn(x.shape[0], x.shape[1], geom["out_len"], dtype=torch.float64)
+    else:
+        raise ValueError(loss_grad_kind)
+    gyq, _, gy_deq = stable_dequant_i12(gy)
+    s_gy = f32_scale_i12(gy_deq)
+
+    # Mirror maxPool1dBackwardKernelSymInt32: zero + scatter gy mantissas to the
+    # argmax positions (raw scale = s_gy), restored by the same OUT_WRITE diagonal.
+    dx_raw = torch.zeros_like(xq)
+    for b in range(x.shape[0]):
+        for c in range(x.shape[1]):
+            for o in range(geom["out_len"]):
+                idx = int(argmax[b, c, o])
+                if idx >= 0:
+                    dx_raw[b, c, idx] += gyq[b, c, o]
+    dxq_r, s_dx = requant_absmax_i12_f32(dx_raw, s_gy)
+
+    dx_ref = dx_raw.to(torch.float64) * s_gy
+    dx_dequant_tol = (MANTISSA_TOL_SYM + 0.5) * s_dx * 1.5
+    err = (dxq_r.to(torch.float64) * s_dx - dx_ref).abs().max().item()
+    assert err <= dx_dequant_tol, f"{name}: restored bwd dequant {err} > {dx_dequant_tol}"
+
+    return {
+        "name": name,
+        "x": x_deq,
+        "y_mantissas": yq_r, "y_scale": s_y,
+        "y_dequant": y_ref.to(torch.float32), "y_dequant_tol": y_dequant_tol,
+        "argmax": argmax,
+        "gy": gy_deq,
+        "dx_mantissas": dxq_r, "dx_scale": s_dx,
+        "dx_dequant": dx_ref.to(torch.float32), "dx_dequant_tol": dx_dequant_tol,
+    }
+
+
+def fixture_sym_basic():
+    # Same values as the FLOAT basic fixture: K=2, S=1, D=1, VALID.
+    x = torch.tensor([[[1.0, 4.0, 2.0, 3.0]]])
+    return _run_max_sym_fixture("symBasic", x, kernel_size=2, stride=1, dilation=1,
+                                padding_type="VALID")
+
+
+def fixture_sym_stride_dilation():
+    # K=2, S=3, D=2, VALID on L=9 (outLen 3). Random lossGrad so positional
+    # mutations on the SYM scatter path are non-vacuous.
+    torch.manual_seed(205)
+    x = torch.randn(1, 1, 9)
+    return _run_max_sym_fixture("symStrideDilation", x, kernel_size=2, stride=3,
+                                dilation=2, padding_type="VALID",
+                                loss_grad_kind="randn")
+
+
+def fixture_sym_tie_same_padding():
+    # K=3, S=1, SAME on L=5 (padLeft=1): edge windows exercise validCount < K,
+    # and x[0] == x[1] quantize to the SAME mantissa — the argmax gold pins the
+    # first-occurrence tie-break (a `>` -> `>=` mutation flips it).
+    x = torch.tensor([[[3.0, 3.0, 1.0, -2.0, 2.0]]])
+    return _run_max_sym_fixture("symTieSamePadding", x, kernel_size=3, stride=1,
+                                dilation=1, padding_type="SAME")
+
+
+def emit_sym_fixture(parts, fx):
+    pre = f"maxPool1dSym_{fx['name']}"
+    parts.append(emit_float_array(f"input_{pre}", fx["x"]))
+    parts.append(emit_int32_array(f"expectedForwardMantissas_{pre}", fx["y_mantissas"]))
+    parts.append(emit_float_scalar(f"expectedForwardScale_{pre}", fx["y_scale"]))
+    parts.append(emit_int32_array(f"expectedArgmax_{pre}", fx["argmax"]))
+    parts.append(emit_float_array(f"expectedForwardDequant_{pre}", fx["y_dequant"]))
+    parts.append(emit_float_scalar(f"forwardDequantTol_{pre}", fx["y_dequant_tol"]))
+    parts.append(emit_float_array(f"lossGrad_{pre}", fx["gy"]))
+    parts.append(emit_int32_array(f"expectedPropLossMantissas_{pre}", fx["dx_mantissas"]))
+    parts.append(emit_float_scalar(f"expectedPropLossScale_{pre}", fx["dx_scale"]))
+    parts.append(emit_float_array(f"expectedPropLossDequant_{pre}", fx["dx_dequant"]))
+    parts.append(emit_float_scalar(f"propLossDequantTol_{pre}", fx["dx_dequant_tol"]))
+    parts.append(emit_int32_scalar(f"mantissaTol_{pre}", MANTISSA_TOL_SYM))
+    parts.append(emit_float_scalar(f"scaleTol_{pre}", SCALE_REL_TOL_SYM))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True, type=Path)
@@ -210,6 +360,10 @@ def main() -> int:
     ]
     for fx in fixtures:
         emit_fixture(parts, fx)
+
+    for fx in [fixture_sym_basic(), fixture_sym_stride_dilation(),
+               fixture_sym_tie_same_padding()]:
+        emit_sym_fixture(parts, fx)
 
     parts.append("\n#endif // ODT_EXPECTED_MAX_POOL_1D_H\n")
 

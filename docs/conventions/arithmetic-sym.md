@@ -236,6 +236,53 @@ overridable by the same knob, #261).
 `Conv1dTransposed → Quant → MSE` trains under
 `calculateGradsSequential` + `sgdStepM(SYM_INT32)`.
 
+## Pooling SYM_INT32 (#205)
+
+All three pooling layers (MaxPool1d / AvgPool1d / AdaptiveAvgPool1d) carry
+funnel-routed `ARITH_SYM_INT32` arms, forward AND backward (dx via `OUT_WRITE`,
+Conv1d-dx precedent). The kernels are **integer-exact** — no products, so the
+no-int64 rule is trivially satisfied — and differ only in how the divisor is
+handled:
+
+- **MaxPool1d** — pure mantissa select: argmax over int32 mantissas IS argmax
+  over values (scale > 0 preserves order); the scale is copied to the raw
+  intermediate (ReLU idiom). Tie-break matches the FLOAT32 arm (strict `>`,
+  first occurrence wins), but ties live in the QUANTIZED domain: inputs that
+  quantize to the same mantissa tie here even when their float values differ,
+  so the recorded argmax may deviate from float argmax within quantization
+  noise — documented semantics, pinned by an argmax-gold tie fixture.
+  Backward scatters loss-grad mantissas to the argmax positions (scale copy).
+- **AvgPool1d** — constant divisor K: exact scale fold `s_out = s_in / K`
+  (Dropout idiom), mantissas carry the raw window sum. Zero kernel rounding;
+  `count_include_pad=true` falls out for free (padded positions add 0 to the
+  sum, the fold keeps the divisor at K). Backward is the transpose with the
+  same fold (`s_dx = s_gy / K`). The raw wire is accumulator-range (bounded
+  by K·qMax — plain sums, no headroom concern for realistic K).
+- **AdaptiveAvgPool1d** — per-window element count varies, so no single fold
+  exists: rounded INTEGER division of the mantissa sum
+  (`roundedDivHalfAwayInt32`, half-away-from-zero = `roundByMode(HALF_AWAY)`
+  semantics without leaving the integer domain), scale unchanged. At most
+  0.5 LSB error per element — standard fixed-point practice, not homegrown
+  numerics. Backward divides the loss-grad mantissa per window and scatters.
+
+Every arm's producer output is width-restored by the `OUT_WRITE` epilogue
+(SYM→SYM conversionMatrix diagonal) like all funnel SYM paths. Gold values are
+emulated bit-exactly in the pool generators (`generate_expected_*_pool_1d.py`,
+shared int12 helpers + `windowSlice1dAt` emulation in
+`test/unit/goldgen/sym_gold.py`); the only C-vs-emulation tolerance is the
+restore's float32 expression-order ULP (mantissa ±1, scale rel 1e-4).
+
+The summing arms carry the same **value-sum guard** as every other value-sum
+path in-tree (`poolValidateSymValueSum`, per-file like the Reduce/LayerNorm
+validators): operand `qMaxBits` in [1,16] AND worst-case summed terms
+`< 2^(32-qMaxBits)`, checked against K (AvgPool forward), `ceil(L/O)+1`
+(AdaptiveAvgPool forward), and the covering-window count `(effK-1)/stride+1`
+resp. `ceil(O/L)+1` for the backward scatters (MaxPool's scatter shares the
+AvgPool bound: an argmax hit implies window membership). At the int12 operand
+default these bounds are unreachable; they exist for the legal wider-wire
+configs (`quantizationInitSymInt32WithBits` allows up to 31 bits, where even a
+2-term window sum overflows int32). Death-tested per call site.
+
 ## Quantized gradient accumulation — known precision Open Problem
 
 As of the quantized-gradient prerequisite (`gradInit`, 2026-06-05) a trainable

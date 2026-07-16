@@ -16,6 +16,17 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "goldgen"))
+from sym_gold import (
+    assert_rounding_canary,
+    emit_float_scalar,
+    emit_int32_array,
+    emit_int32_scalar,
+    f32_scale_i12,
+    requant_absmax_i12_f32,
+    stable_dequant_i12,
+)
+
 
 def _format_float_literal(v: float) -> str:
     s = repr(v)
@@ -122,6 +133,161 @@ def emit_fixture(parts, fx):
         parts.append(emit_float_array(f"lossGrad_{pre}", fx["gy"]))
 
 
+# ---------------- SYM_INT32 fixtures (#205) ----------------
+#
+# Per-window element count varies, so the division cannot fold into ONE scale
+# (unlike AvgPool1d). Decided mechanics: rounded INTEGER division of the
+# mantissa sum (half-away-from-zero, roundByMode-consistent; standard
+# fixed-point practice), scale unchanged — at most 0.5 LSB rounding error per
+# element, and the quotient stays in operand range (|mean| <= |max|), so the
+# raw wire is NOT accumulator-range here. The restore is the usual OUT_WRITE
+# renormalization. C-vs-emulation gap: restore ULP only (mantissa +-1, scale
+# rel 1e-4 — see generate_expected_max_pool_1d.py).
+MANTISSA_TOL_SYM = 1
+SCALE_REL_TOL_SYM = 1e-4
+
+
+def _round_div_half_away(s: int, k: int) -> int:
+    """Rounded integer division, half away from zero — mirrors the C kernel's
+    (|s| + k/2) / k with truncating division (exact for k odd, tie-away for k
+    even; no float involved)."""
+    mag = abs(s)
+    q = (mag + k // 2) // k
+    return q if s >= 0 else -q
+
+
+def _adaptive_window(L, O, o):
+    start = (o * L) // O
+    end = ((o + 1) * L + O - 1) // O
+    return start, end - start
+
+
+def _adaptive_sym_forward(xq, output_size, div):
+    batch, channels, L = xq.shape
+    y = torch.zeros((batch, channels, output_size), dtype=torch.int32)
+    for b in range(batch):
+        for c in range(channels):
+            for o in range(output_size):
+                start, count = _adaptive_window(L, output_size, o)
+                acc = sum(int(xq[b, c, start + i]) for i in range(count))
+                y[b, c, o] = div(acc, count)
+    return y
+
+
+def _run_adaptive_sym_fixture(name, x, *, output_size, loss_grad_kind="ones",
+                              loss_seed=None):
+    assert_rounding_canary()
+    x = x.to(torch.float64)
+    xq, _, x_deq = stable_dequant_i12(x)
+    s_in = f32_scale_i12(x_deq)
+    batch, channels, L = xq.shape
+
+    y_raw = _adaptive_sym_forward(xq, output_size, _round_div_half_away)
+    # Rounding-mutation canaries for task-7: record whether truncating or
+    # half-even division would change THIS fixture's gold values anywhere.
+    y_trunc = _adaptive_sym_forward(
+        xq, output_size,
+        lambda s, k: (abs(s) // k) if s >= 0 else -(abs(s) // k))
+    y_even = _adaptive_sym_forward(
+        xq, output_size,
+        lambda s, k: int(round(s / k)))  # Python banker's rounding = half-even
+    yq_r, s_y = requant_absmax_i12_f32(y_raw, s_in)
+
+    # C-semantics reference: rounded quotient at the input scale. Sanity-check
+    # it stays within 0.5 LSB of the true mean of the dequantized inputs.
+    y_ref = y_raw.to(torch.float64) * s_in
+    true_mean = torch.zeros_like(y_ref)
+    for b in range(batch):
+        for c in range(channels):
+            for o in range(output_size):
+                start, count = _adaptive_window(L, output_size, o)
+                true_mean[b, c, o] = x_deq.to(torch.float64)[b, c, start:start + count].mean()
+    # Relative epsilon: an exact .5-tie sits ON the 0.5 LSB bound, and the
+    # float32 rounding of the emitted fixture values (2^-24 rel of values up
+    # to qMax LSBs ~ 2.4e-4 of the half-LSB) must not tip it over. 1e-3 keeps
+    # this a real sanity check — a wrong divisor overshoots by orders of
+    # magnitude.
+    assert (y_ref - true_mean).abs().max().item() <= 0.5 * s_in * (1.0 + 1e-3), \
+        f"{name}: rounded-div forward leaves the 0.5 LSB band"
+
+    y_dequant_tol = (MANTISSA_TOL_SYM + 0.5) * s_y * 1.5
+    err = (yq_r.to(torch.float64) * s_y - y_ref).abs().max().item()
+    assert err <= y_dequant_tol, f"{name}: restored fwd dequant {err} > {y_dequant_tol}"
+
+    if loss_grad_kind == "ones":
+        gy = torch.ones((batch, channels, output_size), dtype=torch.float64)
+    elif loss_grad_kind == "randn":
+        if loss_seed is None:
+            raise ValueError(f"{name}: randn lossGrad requires an explicit loss_seed")
+        torch.manual_seed(loss_seed)
+        gy = torch.randn(batch, channels, output_size, dtype=torch.float64)
+    else:
+        raise ValueError(loss_grad_kind)
+    gyq, _, gy_deq = stable_dequant_i12(gy)
+    s_gy = f32_scale_i12(gy_deq)
+
+    # Mirror the backward kernel: per-window rounded quotient of the loss-grad
+    # mantissa, scattered += into every window member; scale unchanged.
+    dx_raw = torch.zeros_like(xq)
+    for b in range(batch):
+        for c in range(channels):
+            for o in range(output_size):
+                start, count = _adaptive_window(L, output_size, o)
+                contribution = _round_div_half_away(int(gyq[b, c, o]), count)
+                for i in range(count):
+                    dx_raw[b, c, start + i] += contribution
+    dxq_r, s_dx = requant_absmax_i12_f32(dx_raw, s_gy)
+
+    dx_ref = dx_raw.to(torch.float64) * s_gy
+    dx_dequant_tol = (MANTISSA_TOL_SYM + 0.5) * s_dx * 1.5
+    err = (dxq_r.to(torch.float64) * s_dx - dx_ref).abs().max().item()
+    assert err <= dx_dequant_tol, f"{name}: restored bwd dequant {err} > {dx_dequant_tol}"
+
+    return {
+        "name": name,
+        "x": x_deq,
+        "y_mantissas": yq_r, "y_scale": s_y,
+        "y_dequant": y_ref.to(torch.float32), "y_dequant_tol": y_dequant_tol,
+        "gy": gy_deq,
+        "dx_mantissas": dxq_r, "dx_scale": s_dx,
+        "dx_dequant": dx_ref.to(torch.float32), "dx_dequant_tol": dx_dequant_tol,
+        "_diff_trunc": not torch.equal(y_raw, y_trunc),
+        "_diff_even": not torch.equal(y_raw, y_even),
+    }
+
+
+def fixture_sym_uneven():
+    # L=5 -> O=3: window counts 2/3/2 with overlaps at indices 1 and 3 — the
+    # core adaptive case (varying divisor + overlapping backward scatter).
+    torch.manual_seed(207)
+    x = torch.randn(1, 1, 5)
+    return _run_adaptive_sym_fixture("symUneven", x, output_size=3,
+                                     loss_grad_kind="randn", loss_seed=404)
+
+
+def fixture_sym_global():
+    # L=6 -> O=1: global average, the largest divisor (count = L).
+    torch.manual_seed(208)
+    x = torch.randn(1, 2, 6)
+    return _run_adaptive_sym_fixture("symGlobal", x, output_size=1)
+
+
+def emit_sym_fixture(parts, fx):
+    pre = f"adaptiveAvgPool1dSym_{fx['name']}"
+    parts.append(emit_float_array(f"input_{pre}", fx["x"]))
+    parts.append(emit_int32_array(f"expectedForwardMantissas_{pre}", fx["y_mantissas"]))
+    parts.append(emit_float_scalar(f"expectedForwardScale_{pre}", fx["y_scale"]))
+    parts.append(emit_float_array(f"expectedForwardDequant_{pre}", fx["y_dequant"]))
+    parts.append(emit_float_scalar(f"forwardDequantTol_{pre}", fx["y_dequant_tol"]))
+    parts.append(emit_float_array(f"lossGrad_{pre}", fx["gy"]))
+    parts.append(emit_int32_array(f"expectedPropLossMantissas_{pre}", fx["dx_mantissas"]))
+    parts.append(emit_float_scalar(f"expectedPropLossScale_{pre}", fx["dx_scale"]))
+    parts.append(emit_float_array(f"expectedPropLossDequant_{pre}", fx["dx_dequant"]))
+    parts.append(emit_float_scalar(f"propLossDequantTol_{pre}", fx["dx_dequant_tol"]))
+    parts.append(emit_int32_scalar(f"mantissaTol_{pre}", MANTISSA_TOL_SYM))
+    parts.append(emit_float_scalar(f"scaleTol_{pre}", SCALE_REL_TOL_SYM))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True, type=Path)
@@ -142,6 +308,18 @@ def main() -> int:
         fixture_upsample(),
     ]:
         emit_fixture(parts, fx)
+
+    sym_fixtures = [fixture_sym_uneven(), fixture_sym_global()]
+    # Divisor-rounding mutation canary: somewhere in the SYM fixture set the
+    # half-away gold values must differ from BOTH truncating and half-even
+    # division, else a rounding mutation in the C kernel would be untestable.
+    assert any(fx["_diff_trunc"] for fx in sym_fixtures), \
+        "no SYM fixture distinguishes half-away from truncating division"
+    assert any(fx["_diff_even"] for fx in sym_fixtures), \
+        "no SYM fixture distinguishes half-away from half-even division"
+    for fx in sym_fixtures:
+        emit_sym_fixture(parts, fx)
+
     parts.append("\n#endif // ODT_EXPECTED_ADAPTIVE_AVG_POOL_1D_H\n")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
