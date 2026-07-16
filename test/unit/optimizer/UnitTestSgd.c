@@ -659,6 +659,8 @@ void testSgdStepSymInt32DoesNotRoundTripGrad(void) {
     optim.states = NULL;
     optim.sizeStates = 1;
     optim.impl = &impl;
+    optim.writeBackRounding =
+        HALF_AWAY; /* hand-built: field is otherwise uninitialized stack (#279) */
 
     sgdStepM(&optim);
 
@@ -707,6 +709,8 @@ void testSgdStepMMomentumZeroIgnoresStatesAndUpdatesParam(void) {
     optim.states = NULL; /* the #308 contract under test */
     optim.sizeStates = 1;
     optim.impl = &impl;
+    optim.writeBackRounding =
+        HALF_AWAY; /* hand-built: field is otherwise uninitialized stack (#279) */
 
     sgdStepM(&optim);
 
@@ -759,6 +763,8 @@ void testSgdZeroGradAsymSubByteZeroesAllPackedBytes(void) {
     optim.parameter = params;
     optim.sizeStates = 1;
     optim.impl = &impl;
+    optim.writeBackRounding =
+        HALF_AWAY; /* hand-built: field is otherwise uninitialized stack (#279) */
 
     optimizerZeroGrad(&optim);
 
@@ -813,6 +819,8 @@ void testSgdZeroGradSymSubByteZeroesAllPackedBytesAndResetsScale(void) {
     optim.parameter = params;
     optim.sizeStates = 1;
     optim.impl = &impl;
+    optim.writeBackRounding =
+        HALF_AWAY; /* hand-built: field is otherwise uninitialized stack (#279) */
 
     optimizerZeroGrad(&optim);
 
@@ -1027,6 +1035,8 @@ void testSgdStepMRejectsNonFloat32UpdateMath(void) {
     optim.states = NULL;
     optim.sizeStates = 1;
     optim.impl = &impl;
+    optim.writeBackRounding =
+        HALF_AWAY; /* hand-built: field is otherwise uninitialized stack (#279) */
 
     ASSERT_EXITS_WITH_FAILURE(sgdStepM(&optim));
 
@@ -1078,6 +1088,8 @@ void testSgdStepMFloatReadsPackedSymGradGeneric(void) {
     optim.states = NULL;
     optim.sizeStates = 1;
     optim.impl = &impl;
+    optim.writeBackRounding =
+        HALF_AWAY; /* hand-built: field is otherwise uninitialized stack (#279) */
 
     sgdStepM(&optim);
 
@@ -1150,6 +1162,8 @@ void testSgdStepMMixedDtypeMovesBothParamsCorrectly(void) {
     optim.states = NULL;
     optim.sizeStates = 2;
     optim.impl = &impl;
+    optim.writeBackRounding =
+        HALF_AWAY; /* hand-built: field is otherwise uninitialized stack (#279) */
 
     sgdStepM(&optim);
 
@@ -1225,14 +1239,15 @@ static parameter_t *buildSymDeadZoneFixture(roundingMode_t roundingMode, float l
 }
 
 void testSgdStepHalfAwayNeverEscapesSymDeadZone(void) {
-    /* #279 control: HALF_AWAY (round-to-nearest) on the target's own qConfig.
-     * Every sgdStepM momentum==0 step re-decodes the target from its
-     * (unchanged) integer code, applies the same sub-ULP delta, and requants
-     * -- landing back on the exact same code every time. Mutation guard: if
-     * writeOut ever stopped re-deriving the target's value from its stored
-     * code (e.g. a latent float accumulator were added), this would go RED
-     * (code would drift and eventually move), so this test also pins that
-     * absence of hidden state. */
+    /* #279 control: deterministic HALF_AWAY write-back (the explicit opt-out
+     * on the OPTIMIZER, matching the param's own qConfig). Every sgdStepM
+     * momentum==0 step re-decodes the target from its (unchanged) integer
+     * code, applies the same sub-ULP delta, and requants -- landing back on
+     * the exact same code every time. Mutation guard: if writeOut ever
+     * stopped re-deriving the target's value from its stored code (e.g. a
+     * latent float accumulator were added), this would go RED (code would
+     * drift and eventually move), so this test also pins that absence of
+     * hidden state. */
     const float lr = 0.1f;
     parameter_t *param = buildSymDeadZoneFixture(HALF_AWAY, lr);
 
@@ -1249,6 +1264,7 @@ void testSgdStepHalfAwayNeverEscapesSymDeadZone(void) {
     optim.states = NULL;
     optim.sizeStates = 1;
     optim.impl = &impl;
+    optim.writeBackRounding = HALF_AWAY;
 
     int codeEverMoved = 0;
     for (int i = 0; i < 500; i++) {
@@ -1266,17 +1282,13 @@ void testSgdStepHalfAwayNeverEscapesSymDeadZone(void) {
     TEST_ASSERT_EQUAL_INT(0, finalTargetCode);
 }
 
-void testSgdStepSrHalfAwayEscapesSymDeadZone(void) {
-    /* #279 treatment: same fixture, but the param's own qConfig carries
-     * SR_HALF_AWAY. executeOp's OUT_WRITE epilogue requants by the TARGET
-     * tensor's roundingMode (ExecuteOp.c writeOut -> convertTensor ->
-     * convertFloatTensorToSymInt32Tensor(..., outputSymInt32QC->roundingMode)),
-     * so a SYM param that opts into SR_HALF_AWAY gets a stochastic write-back
-     * "for free" -- no optimizer-side numerics change (Task 1 already routed
-     * the update through executeOp). Per-step P(code moves) == fraction ==
-     * 0.25 (stochastic rounding is unbiased: jitter ~ Uniform[-0.5, 0.5) added
-     * before round-half-away), so P(never escapes in 500 iterations) =
-     * 0.75^500 -- astronomically small; seeded for reproducibility. */
+void testSgdStepDetWriteBackOverridesSrParamQConfig(void) {
+    /* #279 inverse direction: the param's own qConfig says SR_HALF_AWAY, but
+     * the OPTIMIZER opts out to deterministic HALF_AWAY -- the write-back
+     * must stay frozen. Together with the SR-over-HALF_AWAY test below this
+     * pins that the optimizer's writeBackRounding wins in BOTH directions
+     * (the storage qConfig never leaks into the training write-back), which
+     * is what makes HALF_AWAY-for-storage + SR-for-training composable. */
     rngSetSeed(12345u);
 
     const float lr = 0.1f;
@@ -1295,6 +1307,109 @@ void testSgdStepSrHalfAwayEscapesSymDeadZone(void) {
     optim.states = NULL;
     optim.sizeStates = 1;
     optim.impl = &impl;
+    optim.writeBackRounding = HALF_AWAY;
+
+    int codeEverMoved = 0;
+    for (int i = 0; i < 500; i++) {
+        sgdStepM(&optim);
+        if (((int32_t *)param->param->data)[1] != initialTargetCode) {
+            codeEverMoved = 1;
+        }
+    }
+    roundingMode_t storageModeAfter =
+        ((symInt32QConfig_t *)param->param->quantization->qConfig)->roundingMode;
+
+    freeParameter(param);
+
+    TEST_ASSERT_FALSE_MESSAGE(codeEverMoved,
+                              "#279 opt-out: deterministic writeBackRounding must keep a "
+                              "sub-ULP update frozen even when the param's own qConfig "
+                              "says SR_HALF_AWAY");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(SR_HALF_AWAY, storageModeAfter,
+                                  "write-back swap must restore the param's own storage "
+                                  "roundingMode");
+}
+
+void testSgdStepOptimizerSrWriteBackOverridesHalfAwayParamQConfig(void) {
+    /* #279 default policy: the OPTIMIZER owns the training write-back rounding.
+     * A param whose storage qConfig says HALF_AWAY (the obvious construction,
+     * and what serialization persists) must still escape the dead-zone when
+     * optim->writeBackRounding is SR_HALF_AWAY -- and the swap must be
+     * transient: after stepping, the storage config still reads HALF_AWAY. */
+    rngSetSeed(24680u);
+
+    const float lr = 0.1f;
+    parameter_t *param = buildSymDeadZoneFixture(HALF_AWAY, lr);
+
+    int32_t initialTargetCode = ((int32_t *)param->param->data)[1];
+    TEST_ASSERT_EQUAL_INT(0, initialTargetCode); /* fixture guard */
+
+    sgd_t sgd;
+    sgdInit(&sgd, lr, 0.f, 0.f, (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
+    parameter_t *params[1] = {param};
+    optimImpl_t impl;
+    impl.sgd = &sgd;
+    optimizer_t optim;
+    optim.parameter = params;
+    optim.states = NULL;
+    optim.sizeStates = 1;
+    optim.impl = &impl;
+    optim.writeBackRounding = SR_HALF_AWAY;
+
+    int codeEverMoved = 0;
+    for (int i = 0; i < 500; i++) {
+        sgdStepM(&optim);
+        if (((int32_t *)param->param->data)[1] != initialTargetCode) {
+            codeEverMoved = 1;
+        }
+    }
+    roundingMode_t storageModeAfter =
+        ((symInt32QConfig_t *)param->param->quantization->qConfig)->roundingMode;
+
+    freeParameter(param);
+
+    TEST_ASSERT_TRUE_MESSAGE(codeEverMoved, "#279 default: optimizer-owned SR_HALF_AWAY write-back "
+                                            "must escape the dead-zone of a HALF_AWAY-configured "
+                                            "SYM_INT32 param within 500 iterations");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(HALF_AWAY, storageModeAfter,
+                                  "write-back swap must restore the param's own storage "
+                                  "roundingMode (it is serialized into checkpoints)");
+}
+
+void testSgdStepMMomentumPathHonorsOptimizerSrWriteBack(void) {
+    /* #279: the momentum>0 param write-back is the same training write-back
+     * seam as the momentum==0 fast path -- the optimizer's SR_HALF_AWAY must
+     * escape the dead-zone of a HALF_AWAY-configured param through THIS path
+     * too. momentumFactor=0.25 keeps the asymptotic per-step delta at
+     * fraction/(1-m) = 0.333*scale -- still sub-ULP (< the 0.5 half-grid
+     * boundary a deterministic round needs), so HALF_AWAY would stay frozen
+     * forever while SR escapes with per-step probability >= 0.25. FLOAT32
+     * momentum state (the shipped #277 decoupling) accumulates exactly. */
+    rngSetSeed(97531u);
+
+    const float lr = 0.1f;
+    parameter_t *param = buildSymDeadZoneFixture(HALF_AWAY, lr);
+
+    int32_t initialTargetCode = ((int32_t *)param->param->data)[1];
+    TEST_ASSERT_EQUAL_INT(0, initialTargetCode); /* fixture guard */
+
+    sgd_t sgd;
+    sgdInit(&sgd, lr, 0.25f, 0.f, (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
+    parameter_t *params[1] = {param};
+    optimImpl_t impl;
+    impl.sgd = &sgd;
+
+    tensor_t *state = initTensor(getShapeLike(param->param->shape), quantizationInitFloat(), NULL);
+    tensor_t *stateBuffers[1] = {state};
+    states_t paramStates = {.stateBuffers = stateBuffers, .statesPerParameter = 1};
+    states_t *states[1] = {&paramStates};
+
+    optimizer_t optim;
+    optim.parameter = params;
+    optim.states = states;
+    optim.sizeStates = 1;
+    optim.impl = &impl;
+    optim.writeBackRounding = SR_HALF_AWAY;
 
     int codeEverMoved = 0;
     for (int i = 0; i < 500; i++) {
@@ -1304,11 +1419,83 @@ void testSgdStepSrHalfAwayEscapesSymDeadZone(void) {
         }
     }
 
+    freeTensor(state);
     freeParameter(param);
 
-    TEST_ASSERT_TRUE_MESSAGE(codeEverMoved,
-                             "#279 mechanism: SR_HALF_AWAY must escape the SYM_INT32 "
-                             "dead-zone within 500 iterations");
+    TEST_ASSERT_TRUE_MESSAGE(codeEverMoved, "#279: optimizer SR write-back must escape the "
+                                            "dead-zone through the momentum param path");
+}
+
+void testSgdStepMStateWriteBackHonorsOptimizerSrRounding(void) {
+    /* #279: momentum-STATE storage is a training write-back too (Leo's call:
+     * params + states). A quantized state accumulating sub-ULP increments has
+     * the identical dead-zone -- the running velocity freezes instead of the
+     * weight. Fixture: SYM_INT32 state with a 100.0 anchor pinning the scale
+     * (same construction as buildSymDeadZoneFixture); momentumFactor=1 makes
+     * the state kernel out = state + grad, so a grad of 0.25*scale is a pure
+     * sub-ULP state increment. HALF_AWAY on the state's own qConfig would
+     * freeze it; the optimizer's SR_HALF_AWAY must move it. The param is
+     * FLOAT32 so the param write-back stays out of the picture. */
+    rngSetSeed(86420u);
+
+    size_t *pDims = reserveMemory(1 * sizeof(size_t));
+    pDims[0] = 2;
+    size_t *pOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, pOrder);
+    shape_t *pShape = reserveMemory(sizeof(shape_t));
+    setShape(pShape, pDims, 1, pOrder);
+    tensor_t *p = initTensor(pShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(p, (float[]){0.f, 0.f}, 2);
+
+    const float anchorVal = 100.f;
+    const float qMax = 2047.f;
+    const float scale = anchorVal / qMax;
+    const float subUlpIncrement = 0.25f * scale;
+
+    tensor_t *g = gradInitFloat(p, NULL);
+    tensorFillFromFloatBuffer(g, (float[]){0.f, subUlpIncrement}, 2);
+    parameter_t *param = parameterInit(p, g);
+
+    tensor_t *state = initTensor(getShapeLike(p->shape), quantizationInitSymInt32(HALF_AWAY), NULL);
+    tensorFillFromFloatBuffer(state, (float[]){anchorVal, 0.f}, 2);
+    int32_t initialStateCode = ((int32_t *)state->data)[1];
+    TEST_ASSERT_EQUAL_INT(0, initialStateCode); /* fixture guard */
+
+    sgd_t sgd;
+    sgdInit(&sgd, 0.1f, 1.0f, 0.f,
+            (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
+    parameter_t *params[1] = {param};
+    optimImpl_t impl;
+    impl.sgd = &sgd;
+    tensor_t *stateBuffers[1] = {state};
+    states_t paramStates = {.stateBuffers = stateBuffers, .statesPerParameter = 1};
+    states_t *states[1] = {&paramStates};
+    optimizer_t optim;
+    optim.parameter = params;
+    optim.states = states;
+    optim.sizeStates = 1;
+    optim.impl = &impl;
+    optim.writeBackRounding = SR_HALF_AWAY;
+
+    int stateCodeEverMoved = 0;
+    for (int i = 0; i < 500; i++) {
+        sgdStepM(&optim);
+        if (((int32_t *)state->data)[1] != initialStateCode) {
+            stateCodeEverMoved = 1;
+        }
+    }
+    roundingMode_t stateStorageModeAfter =
+        ((symInt32QConfig_t *)state->quantization->qConfig)->roundingMode;
+
+    freeTensor(state);
+    freeParameter(param);
+
+    TEST_ASSERT_TRUE_MESSAGE(stateCodeEverMoved,
+                             "#279: optimizer SR write-back must move a sub-ULP increment "
+                             "on quantized momentum-state storage within 500 iterations");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(HALF_AWAY, stateStorageModeAfter,
+                                  "state write-back swap must restore the state's own "
+                                  "storage roundingMode");
 }
 
 void testSgdMCreateOptimMomentumZeroAllocatesNoStates(void) {
@@ -1351,6 +1538,87 @@ void testSgdMCreateOptimMomentumZeroAllocatesNoStates(void) {
     TEST_ASSERT_NULL(capturedStates);
 }
 
+void testSgdMCreateOptimDefaultsWriteBackRoundingToSr(void) {
+    /* #279 ratified default: a factory-built optimizer trains with seeded
+     * SR_HALF_AWAY write-backs (the sweep-proven dead-zone escape), so a
+     * quantized model built the obvious way cannot silently sit frozen.
+     * Deterministic HALF_AWAY is the explicit opt-out. */
+    quantization_t *layerQ = quantizationInitFloat();
+
+    size_t *wDims = reserveMemory(2 * sizeof(size_t));
+    wDims[0] = 1;
+    wDims[1] = 3;
+    size_t *wOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, wOrder);
+    shape_t *wShape = reserveMemory(sizeof(shape_t));
+    setShape(wShape, wDims, 2, wOrder);
+    tensor_t *wParam = initTensor(wShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(wParam, (float[]){1.f, 2.f, 3.f}, 3);
+    tensor_t *wGrad = gradInitFloat(wParam, NULL);
+    parameter_t *weights = parameterInit(wParam, wGrad);
+
+    layer_t *linear = buildBorrowedLinearLayer(weights, NULL, layerQ);
+    layer_t *model[] = {linear};
+
+    quantization_t *momentumQ = quantizationInitFloat();
+    optimizer_t *optim =
+        sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 1, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
+
+    /* CAPTURE -> free -> assert. */
+    roundingMode_t capturedDefault = optim->writeBackRounding;
+
+    freeOptim(optim);
+    freeLinearLayerShellOnly(linear);
+    freeQuantization(momentumQ);
+    freeQuantization(layerQ);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(SR_HALF_AWAY, capturedDefault,
+                                  "#279: sgdMCreateOptim must default writeBackRounding "
+                                  "to seeded SR_HALF_AWAY");
+}
+
+void testOptimizerSetWriteBackRoundingOptsOutToDeterministic(void) {
+    /* #279: the explicit opt-out -- callers wanting deterministic write-backs
+     * (bit-parity twins, storage round-trip tests) state it in one call
+     * instead of silently inheriting the non-learning default. */
+    quantization_t *layerQ = quantizationInitFloat();
+
+    size_t *wDims = reserveMemory(2 * sizeof(size_t));
+    wDims[0] = 1;
+    wDims[1] = 3;
+    size_t *wOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, wOrder);
+    shape_t *wShape = reserveMemory(sizeof(shape_t));
+    setShape(wShape, wDims, 2, wOrder);
+    tensor_t *wParam = initTensor(wShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(wParam, (float[]){1.f, 2.f, 3.f}, 3);
+    tensor_t *wGrad = gradInitFloat(wParam, NULL);
+    parameter_t *weights = parameterInit(wParam, wGrad);
+
+    layer_t *linear = buildBorrowedLinearLayer(weights, NULL, layerQ);
+    layer_t *model[] = {linear};
+
+    quantization_t *momentumQ = quantizationInitFloat();
+    optimizer_t *optim =
+        sgdMCreateOptim(0.1f, 0.0f, 0.0f, model, 1, momentumQ,
+                        (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
+
+    optimizerSetWriteBackRounding(optim, HALF_AWAY);
+
+    /* CAPTURE -> free -> assert. */
+    roundingMode_t capturedAfterOptOut = optim->writeBackRounding;
+
+    freeOptim(optim);
+    freeLinearLayerShellOnly(linear);
+    freeQuantization(momentumQ);
+    freeQuantization(layerQ);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(HALF_AWAY, capturedAfterOptOut,
+                                  "optimizerSetWriteBackRounding must write through to the "
+                                  "field the step write-backs read");
+}
+
 void testOptimizerVtableGetSetLrRoundTripsSgdLearningRate(void) {
     /* #327: the scheduler reaches the LR only through the vtable. Pin that
      * the SGD row exposes working accessors and that setLr writes through to
@@ -1391,8 +1659,13 @@ int main() {
     RUN_TEST(testSgdZeroGradSymSubByteZeroesAllPackedBytesAndResetsScale);
     RUN_TEST(testSgdStepMMixedDtypeMovesBothParamsCorrectly);
     RUN_TEST(testSgdStepHalfAwayNeverEscapesSymDeadZone);
-    RUN_TEST(testSgdStepSrHalfAwayEscapesSymDeadZone);
+    RUN_TEST(testSgdStepDetWriteBackOverridesSrParamQConfig);
+    RUN_TEST(testSgdStepOptimizerSrWriteBackOverridesHalfAwayParamQConfig);
+    RUN_TEST(testSgdStepMMomentumPathHonorsOptimizerSrWriteBack);
+    RUN_TEST(testSgdStepMStateWriteBackHonorsOptimizerSrRounding);
     RUN_TEST(testSgdMCreateOptimMomentumZeroAllocatesNoStates);
+    RUN_TEST(testSgdMCreateOptimDefaultsWriteBackRoundingToSr);
+    RUN_TEST(testOptimizerSetWriteBackRoundingOptsOutToDeterministic);
     RUN_TEST(testOptimizerVtableGetSetLrRoundTripsSgdLearningRate);
     return UNITY_END();
 }

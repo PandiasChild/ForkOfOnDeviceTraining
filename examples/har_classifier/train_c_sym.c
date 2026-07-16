@@ -26,8 +26,11 @@
  *     OUT_WRITE epilogue requants rawOut into each TARGET tensor's own dtype,
  *     so the packed-SYM weight round-trips SYM->FLOAT32->SYM every step.
  *     Update arithmetic itself = FLOAT32 via the `updateMath` knob (fail-fast
- *     on anything else, #310); write-back rounding comes from the param's own
- *     qConfig (`SYM_ROUNDING` env -> HALF_AWAY/SR_HALF_AWAY, #279/#284).
+ *     on anything else, #310); write-back rounding is OPTIMIZER-owned (#279):
+ *     the factory defaults to seeded SR_HALF_AWAY, `SYM_ROUNDING=det` opts
+ *     out to deterministic HALF_AWAY via optimizerSetWriteBackRounding.
+ *     Param storage qConfigs stay HALF_AWAY (deterministic init encode +
+ *     serialization truth).
  *
  * SYM_BITS / SEED / LR / MOMENTUM / EPOCHS / LOG_PATH are env-overridable. */
 
@@ -500,20 +503,23 @@ int main(void) {
     size_t markDataset = memProfileMark(); /* dataset_b */
 #endif
 
-    /* Stochastic rounding (SR_HALF_AWAY) on the packed-SYM param storage is the
-     * optimizer epic's dead-zone escape (#279): a FLOAT32 grad step smaller than
-     * one SYM level would deterministically round back to the same int under
-     * HALF_AWAY and vanish; SR_HALF_AWAY rounds it up with probability equal to
-     * the fractional part, so sub-ULP updates move the weight IN EXPECTATION.
-     * SYM_ROUNDING=det forces deterministic HALF_AWAY to A/B the dead-zone claim
-     * (the numerics hypothesis this example exists to test). */
+    /* Stochastic rounding (SR_HALF_AWAY) on the training write-back is the
+     * dead-zone escape (#279, sweep-ratified default): a FLOAT32 grad step
+     * smaller than one SYM level would deterministically round back to the
+     * same int under HALF_AWAY and vanish; SR_HALF_AWAY rounds it up with
+     * probability equal to the fractional part, so sub-ULP updates move the
+     * weight IN EXPECTATION. Since #279 the mode is OPTIMIZER-owned (set on
+     * the optimizer below); the param storage qConfig stays HALF_AWAY so the
+     * initial requantize + any storage encode stay deterministic.
+     * SYM_ROUNDING=det forces deterministic HALF_AWAY write-backs to A/B the
+     * dead-zone claim (the numerics hypothesis this example exists to test). */
     const char *roundingEnv = getenv("SYM_ROUNDING");
     roundingMode_t symRounding =
         (roundingEnv != NULL && strcmp(roundingEnv, "det") == 0) ? HALF_AWAY : SR_HALF_AWAY;
 
     symQuant_t sq = {
         .floatQ = quantizationInitFloat(),
-        .symQ = quantizationInitSym((uint8_t)g_symBits, symRounding),
+        .symQ = quantizationInitSym((uint8_t)g_symBits, HALF_AWAY),
     };
 
     layerQuant_t lqFloat;
@@ -566,10 +572,10 @@ int main(void) {
 
     /* SGD-M routes through executeOp (#284): per-target dtype dispatch is a
      * funnel property, so the packed-SYM weights round-trip SYM<->FLOAT32 each
-     * step, write-back rounding taken from each param's own qConfig
-     * (SYM_ROUNDING env, #279), while the FLOAT32 grad and momentum state
-     * (below) are read/written directly. Update arithmetic itself is FLOAT32
-     * via updateMath. */
+     * step, write-back rounding OPTIMIZER-owned (SYM_ROUNDING env -> setter
+     * below, #279), while the FLOAT32 grad and momentum state (below) are
+     * read/written directly. Update arithmetic itself is FLOAT32 via
+     * updateMath. */
 #ifdef ODT_MEM_PROFILE
     size_t markBeforeOpt = memProfileMark();
 #endif
@@ -582,6 +588,9 @@ int main(void) {
     optimizer_t *sgd =
         sgdMCreateOptim(g_lr, g_momentum, /*weightDecay*/ 0.0f, model, MODEL_SIZE, momentumQ,
                         (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
+    /* Set explicitly in BOTH directions (factory already defaults SR): the
+     * A/B arms of the #279 sweep should read symmetrically from the code. */
+    optimizerSetWriteBackRounding(sgd, symRounding);
 #ifdef ODT_MEM_PROFILE
     size_t markAfterOpt = memProfileMark(); /* optstate_b = delta */
 #endif

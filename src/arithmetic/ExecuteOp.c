@@ -165,6 +165,44 @@ static void accumulateOut(tensor_t *intermediate, tensor_t *target, outputMode_t
     }
 }
 
+/* #279/#282 seam: where a quantized tensor keeps its storage-requant rounding
+ * mode. NULL for dtypes without one (FLOAT32/INT32/BOOL). */
+static roundingMode_t *storageRoundingSlot(tensor_t *tensor) {
+    switch (tensor->quantization->type) {
+    case SYM_INT32:
+        return &((symInt32QConfig_t *)tensor->quantization->qConfig)->roundingMode;
+    case SYM:
+        return &((symQConfig_t *)tensor->quantization->qConfig)->roundingMode;
+    case ASYM:
+        return &((asymQConfig_t *)tensor->quantization->qConfig)->roundingMode;
+    default:
+        return NULL;
+    }
+}
+
+void executeOpWithEpilogueRounding(const opSpec_t *spec, tensor_t *target,
+                                   roundingMode_t epilogueRounding) {
+    if (spec->mode != OUT_WRITE) {
+        PRINT_ERROR("executeOpWithEpilogueRounding: OUT_WRITE only -- ACC epilogues keep "
+                    "target-owned rounding (got mode %d)",
+                    (int)spec->mode);
+        exit(1);
+    }
+    roundingMode_t *slot = storageRoundingSlot(target);
+    if (slot == NULL) {
+        executeOp(spec, target);
+        return;
+    }
+    /* Swap is transient: the target's qConfig is serialized into checkpoints
+     * and read by init/storage encodes -- it must never be left mutated. The
+     * prologue is unaffected even when the target aliases an operand
+     * (dequantization does not round). */
+    roundingMode_t storageMode = *slot;
+    *slot = epilogueRounding;
+    executeOp(spec, target);
+    *slot = storageMode;
+}
+
 void executeOp(const opSpec_t *spec, tensor_t *target) {
     tensor_t **inputs = spec->inputs;
     size_t nInputs = spec->nInputs;

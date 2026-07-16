@@ -96,10 +96,15 @@ Notes on the qualified cells:
   implemented; any other type fails fast at optimizer-create time and again at
   `sgdStepM` (no integer/fixed-point update kernel exists yet). Rounding ownership:
   `updateMath.roundingMode` governs only the `executeOp` funnel's prologue (operand
-  conversion into the compute format; inert for FLOAT32) — the OUT_WRITE epilogue
-  rounds by each **target** tensor's own qConfig, e.g. a packed-SYM param's write-back
-  rounding comes from its own `SYM_ROUNDING`-controlled config, independent of
-  `updateMath`.
+  conversion into the compute format; inert for FLOAT32) — training write-backs are
+  **optimizer-owned** (#279): both step functions route every param/state OUT_WRITE
+  through `executeOpWithEpilogueRounding` with `optim->writeBackRounding`, which the
+  factories default to **seeded `SR_HALF_AWAY`** (the sweep-ratified dead-zone escape:
+  sub-ULP updates on quantized storage survive in expectation).
+  `optimizerSetWriteBackRounding(optim, HALF_AWAY)` is the explicit deterministic
+  opt-out (bit-parity twins, storage round-trip tests). The tensor's own qConfig
+  roundingMode stays authoritative for storage/inference encodes and serialization —
+  the funnel swaps it only for the duration of the write-back op.
 - **Quant grads** — ✓. The update kernels route through `executeOp` like every other
   op in the framework: the funnel dispatches per operand's ACTUAL dtype, so FLOAT32 /
   SYM_INT32 / SYM / ASYM grads are all consumed with no optimizer-level dtype switch.

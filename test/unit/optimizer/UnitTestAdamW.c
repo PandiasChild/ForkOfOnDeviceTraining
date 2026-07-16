@@ -14,6 +14,7 @@
 #include "Optimizer.h"
 #include "OptimizerApi.h"
 #include "QuantizationApi.h"
+#include "RNG.h"
 #include "StorageApi.h"
 #include "Tensor.h"
 #include "TensorApi.h"
@@ -536,6 +537,10 @@ void testAdamWCreateOptimSymMomentSmoke(void) {
     optimizer_t *optimS =
         adamWCreateOptim(0.001f, 0.9, 0.999, 1e-8, 0.01, modelS, 1, momentQS,
                          (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
+    /* #279: this smoke pins the DETERMINISTIC HALF_AWAY moment quantization
+     * (the 2*scale bounds were margin-audited for it, PR #367) -- opt out of
+     * the factory's seeded-SR training default. */
+    optimizerSetWriteBackRounding(optimS, HALF_AWAY);
 
     /* Step 1 (both runs). */
     optimizerFunctions[optimF->type].step(optimF);
@@ -676,6 +681,183 @@ void testAdamWCreateOptimRejectsInt32GradStorage(void) {
     freeQuantization(layerQ);
 }
 
+void testAdamWCreateOptimDefaultsWriteBackRoundingToSr(void) {
+    /* #279 ratified default, AdamW side: same param-storage write-back seam
+     * as SGD, same silent non-learning footgun without it. */
+    quantization_t *layerQ = quantizationInitFloat();
+
+    size_t *wDims = reserveMemory(2 * sizeof(size_t));
+    wDims[0] = 1;
+    wDims[1] = 32;
+    size_t *wOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, wOrder);
+    shape_t *wShape = reserveMemory(sizeof(shape_t));
+    setShape(wShape, wDims, 2, wOrder);
+    tensor_t *wParam = initTensor(wShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(wParam, adamw_step1_default_p0, 32);
+    tensor_t *wGrad = gradInitFloat(wParam, NULL);
+    parameter_t *weights = parameterInit(wParam, wGrad);
+
+    layer_t *linear = buildBorrowedLinearLayer(weights, NULL, layerQ);
+    layer_t *model[] = {linear};
+
+    quantization_t *momentQ = quantizationInitFloat();
+    optimizer_t *optim =
+        adamWCreateOptim(0.001f, 0.9, 0.999, 1e-8, 0.01, model, 1, momentQ,
+                         (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
+
+    /* CAPTURE -> free -> assert. */
+    roundingMode_t capturedDefault = optim->writeBackRounding;
+
+    freeOptim(optim);
+    freeLinearLayerShellOnly(linear);
+    freeQuantization(momentQ);
+    freeQuantization(layerQ);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(SR_HALF_AWAY, capturedDefault,
+                                  "#279: adamWCreateOptim must default writeBackRounding "
+                                  "to seeded SR_HALF_AWAY");
+}
+
+void testAdamWStepOptimizerSrWriteBackEscapesSymDeadZone(void) {
+    /* #279: AdamW's param write-back (K3's OUT_WRITE epilogue requant) is the
+     * same training write-back seam as SGD's -- the optimizer's SR_HALF_AWAY
+     * must beat the param's own HALF_AWAY qConfig here too. With a constant
+     * grad the bias-corrected update magnitude is ~lr (mhat/sqrt(vhat) ~ 1),
+     * so lr = 0.25*scale is a persistent sub-ULP step: deterministic rounding
+     * freezes the code forever, SR escapes with per-step probability ~0.25.
+     * Anchor element (grad 0 -> m = v = 0 -> delta 0 at wd = 0) pins the
+     * re-derived scale, same construction as UnitTestSgd's dead-zone
+     * fixture. */
+    rngSetSeed(13579u);
+
+    size_t *pDims = reserveMemory(1 * sizeof(size_t));
+    pDims[0] = 2;
+    size_t *pOrder = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, pOrder);
+    shape_t *pShape = reserveMemory(sizeof(shape_t));
+    setShape(pShape, pDims, 1, pOrder);
+    tensor_t *p = initTensor(pShape, quantizationInitSymInt32(HALF_AWAY), NULL);
+    tensorFillFromFloatBuffer(p, (float[]){100.f, 0.f}, 2);
+
+    const float qMax = 2047.f; /* 2^(ODT_SYM_OPERAND_QMAXBITS-1) - 1 */
+    const float scale = 100.f / qMax;
+    const float lr = 0.25f * scale;
+
+    tensor_t *g = makeFloatTensor1D((float[]){0.f, 1.f}, 2);
+    parameter_t *par = parameterInit(p, g);
+
+    int32_t initialTargetCode = ((int32_t *)p->data)[1];
+    TEST_ASSERT_EQUAL_INT(0, initialTargetCode); /* fixture guard */
+
+    adamW_t adamW;
+    adamWInit(&adamW, lr, 0.9, 0.999, 1e-8, 0.0,
+              (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
+    optimImpl_t impl = {.adamW = &adamW};
+    tensor_t *m = makeFloatTensor1D(NULL, 2);
+    tensor_t *v = makeFloatTensor1D(NULL, 2);
+    tensor_t *stateBuffers[2] = {m, v};
+    states_t st = {.stateBuffers = stateBuffers, .statesPerParameter = 2};
+    parameter_t *parArr[1] = {par};
+    states_t *stArr[1] = {&st};
+    optimizer_t optim = {.type = ADAM_W,
+                         .impl = &impl,
+                         .parameter = parArr,
+                         .states = stArr,
+                         .sizeStates = 1,
+                         .writeBackRounding = SR_HALF_AWAY};
+
+    int codeEverMoved = 0;
+    for (int i = 0; i < 500; i++) {
+        adamWStep(&optim);
+        if (((int32_t *)p->data)[1] != initialTargetCode) {
+            codeEverMoved = 1;
+        }
+    }
+    roundingMode_t storageModeAfter = ((symInt32QConfig_t *)p->quantization->qConfig)->roundingMode;
+
+    freeTensor(m);
+    freeTensor(v);
+    freeParameter(par);
+
+    TEST_ASSERT_TRUE_MESSAGE(codeEverMoved, "#279: AdamW param write-back must honor the "
+                                            "optimizer's SR_HALF_AWAY and escape the dead-zone");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(HALF_AWAY, storageModeAfter,
+                                  "AdamW write-back swap must restore the param's storage mode");
+}
+
+/* Three hand-assembled AdamW steps over packed-SYM@12 m/v moments with the
+ * given optimizer write-back rounding; decodes both moments into the caller's
+ * float buffers. Fixed p/g so two calls differ ONLY in the rounding mode; 3
+ * steps x 6 elements gives 18 SR draws per moment over step-evolving requant
+ * fractions, so an SR run cannot stay bit-identical to the deterministic
+ * one by fraction luck (a single step can: seed-dependent ~15%). */
+static void adamWStepWithSymMoments(roundingMode_t writeBackRounding, float *mOut, float *vOut) {
+    const float p0[6] = {0.5f, -0.25f, 0.125f, 0.75f, -0.5f, 0.3f};
+    const float g0[6] = {0.11f, 0.23f, -0.37f, 0.41f, -0.53f, 0.61f};
+
+    adamW_t adamW;
+    adamWInit(&adamW, 0.001f, 0.9, 0.999, 1e-8, 0.0,
+              (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});
+    optimImpl_t impl = {.adamW = &adamW};
+    tensor_t *p = makeFloatTensor1D(p0, 6);
+    tensor_t *g = makeFloatTensor1D(g0, 6);
+    parameter_t *par = parameterInit(p, g);
+    tensor_t *m = initTensor(getShapeLike(p->shape), quantizationInitSym(12, HALF_AWAY), NULL);
+    tensor_t *v = initTensor(getShapeLike(p->shape), quantizationInitSym(12, HALF_AWAY), NULL);
+    tensor_t *stateBuffers[2] = {m, v};
+    states_t st = {.stateBuffers = stateBuffers, .statesPerParameter = 2};
+    parameter_t *parArr[1] = {par};
+    states_t *stArr[1] = {&st};
+    optimizer_t optim = {.type = ADAM_W,
+                         .impl = &impl,
+                         .parameter = parArr,
+                         .states = stArr,
+                         .sizeStates = 1,
+                         .writeBackRounding = writeBackRounding};
+
+    adamWStep(&optim);
+    adamWStep(&optim);
+    adamWStep(&optim);
+
+    tensor_t *mDecoded = makeFloatTensor1D(NULL, 6);
+    tensor_t *vDecoded = makeFloatTensor1D(NULL, 6);
+    executeConvert(m, mDecoded);
+    executeConvert(v, vDecoded);
+    memcpy(mOut, mDecoded->data, 6 * sizeof(float));
+    memcpy(vOut, vDecoded->data, 6 * sizeof(float));
+
+    freeTensor(mDecoded);
+    freeTensor(vDecoded);
+    freeTensor(m);
+    freeTensor(v);
+    freeParameter(par);
+}
+
+void testAdamWMomentWriteBacksHonorOptimizerSrRounding(void) {
+    /* #279 (params + states): the m/v moment write-backs (K1/K2 OUT_WRITE
+     * requants into packed-SYM storage) must also run under the optimizer's
+     * writeBackRounding. Two otherwise-identical single steps -- one SR, one
+     * deterministic -- must decode to different m AND different v: the m/v
+     * requant fractions are generic values, so seeded-SR jitter almost surely
+     * moves at least one of the 6 codes per moment (and with this seed,
+     * reproducibly does). If either kernel's write-back ignored the optimizer
+     * mode, its decoded moments would be bit-identical across the two runs. */
+    rngSetSeed(11111u);
+    float mSr[6], vSr[6];
+    adamWStepWithSymMoments(SR_HALF_AWAY, mSr, vSr);
+
+    float mDet[6], vDet[6];
+    adamWStepWithSymMoments(HALF_AWAY, mDet, vDet);
+
+    TEST_ASSERT_TRUE_MESSAGE(memcmp(mSr, mDet, sizeof mSr) != 0,
+                             "#279: the m write-back must honor the optimizer's SR rounding "
+                             "(decoded m identical to the deterministic run)");
+    TEST_ASSERT_TRUE_MESSAGE(memcmp(vSr, vDet, sizeof vSr) != 0,
+                             "#279: the v write-back must honor the optimizer's SR rounding "
+                             "(decoded v identical to the deterministic run)");
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testAdamWInitStoresDoubleHyperparamsAndZeroStepCount);
@@ -697,6 +879,9 @@ int main(void) {
     RUN_TEST(testAdamWCreateOptimAllocatesTwoZeroMomentBuffersPerParameter);
     RUN_TEST(testAdamWCreateOptimStepMatchesHandAssembledGold);
     RUN_TEST(testAdamWCreateOptimSymMomentSmoke);
+    RUN_TEST(testAdamWCreateOptimDefaultsWriteBackRoundingToSr);
+    RUN_TEST(testAdamWStepOptimizerSrWriteBackEscapesSymDeadZone);
+    RUN_TEST(testAdamWMomentWriteBacksHonorOptimizerSrRounding);
     RUN_TEST(testAdamWCreateOptimRejectsInt32GradStorage);
     return UNITY_END();
 }

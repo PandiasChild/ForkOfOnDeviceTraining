@@ -19,6 +19,9 @@ optimizer_t *adamWCreateOptim(float learningRate, double beta1, double beta2, do
                               quantization_t *momentQuant, arithmetic_t updateMath) {
     optimizer_t *optim = reserveMemory(sizeof(optimizer_t));
     optim->type = ADAM_W;
+    /* #279 ratified default: seeded-SR training write-back (dead-zone escape);
+     * optimizerSetWriteBackRounding(optim, HALF_AWAY) is the explicit opt-out. */
+    optim->writeBackRounding = SR_HALF_AWAY;
 
     optimImpl_t *impl = reserveMemory(sizeof(optimImpl_t));
     adamW_t *adamW = reserveMemory(sizeof(adamW_t));

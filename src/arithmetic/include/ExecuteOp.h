@@ -100,4 +100,15 @@ void executeOpIdentityKernel(tensor_t **operands, size_t nOperands, tensor_t *ra
  * populated conversionMatrix cell. */
 void executeConvert(tensor_t *input, tensor_t *target);
 
+/* executeOp with an operation-owned epilogue rounding mode (#279/#282): the
+ * OUT_WRITE requant into a quantized target rounds with `epilogueRounding`
+ * instead of the target's own qConfig roundingMode. The storage config is
+ * restored before returning -- it stays authoritative for storage/inference
+ * encodes and for serialization. Use for training write-backs (optimizer
+ * param/state updates); FLOAT32/INT32/BOOL targets have no storage rounding
+ * and behave exactly like executeOp. OUT_WRITE only -- the ACC epilogues keep
+ * their documented target-owned rounding (fail-fast otherwise). */
+void executeOpWithEpilogueRounding(const opSpec_t *spec, tensor_t *target,
+                                   roundingMode_t epilogueRounding);
+
 #endif // ENV5_RUNTIME_EXECUTE_OP_H

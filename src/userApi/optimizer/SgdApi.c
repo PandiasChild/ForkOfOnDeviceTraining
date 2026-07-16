@@ -28,6 +28,9 @@ optimizer_t *sgdMCreateOptim(float learningRate, float momentumFactor, float wei
                              arithmetic_t updateMath) {
     optimizer_t *optim = reserveMemory(sizeof(optimizer_t));
     optim->type = SGD_M;
+    /* #279 ratified default: seeded-SR training write-back (dead-zone escape);
+     * optimizerSetWriteBackRounding(optim, HALF_AWAY) is the explicit opt-out. */
+    optim->writeBackRounding = SR_HALF_AWAY;
 
     optimImpl_t *sgdImpl = reserveMemory(sizeof(optimImpl_t));
     sgd_t *sgd = reserveMemory(sizeof(sgd_t));

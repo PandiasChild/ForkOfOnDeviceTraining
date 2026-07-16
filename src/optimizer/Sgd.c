@@ -120,7 +120,7 @@ void sgdStepM(optimizer_t *optim) {
             /* #296 Stage 1: all three update kernels are elementwise (read i before
              * write i), so the FLOAT32 fast paths may write params/state in place
              * instead of staging through rawData. */
-            executeOp(
+            executeOpWithEpilogueRounding(
                 &(opSpec_t){
                     .kernel = sgdUpdateKernel,
                     .ctx = &ctx,
@@ -131,7 +131,7 @@ void sgdStepM(optimizer_t *optim) {
                     .auxOut = NULL,
                     .writesInPlaceSafe = true,
                 },
-                p->param);
+                p->param, optim->writeBackRounding);
         }
         return;
     }
@@ -141,7 +141,7 @@ void sgdStepM(optimizer_t *optim) {
         tensor_t *state = optim->states[i]->stateBuffers[0];
 
         sgdMStateCtx_t sc = {.momentum = sgd->momentumFactor, .weightDecay = sgd->weightDecay};
-        executeOp(
+        executeOpWithEpilogueRounding(
             &(opSpec_t){
                 .kernel = sgdMStateKernel,
                 .ctx = &sc,
@@ -152,10 +152,10 @@ void sgdStepM(optimizer_t *optim) {
                 .auxOut = NULL,
                 .writesInPlaceSafe = true,
             },
-            state);
+            state, optim->writeBackRounding);
 
         sgdMParamCtx_t pc = {.lr = sgd->learningRate};
-        executeOp(
+        executeOpWithEpilogueRounding(
             &(opSpec_t){
                 .kernel = sgdMParamKernel,
                 .ctx = &pc,
@@ -166,7 +166,7 @@ void sgdStepM(optimizer_t *optim) {
                 .auxOut = NULL,
                 .writesInPlaceSafe = true,
             },
-            p->param);
+            p->param, optim->writeBackRounding);
     }
 }
 

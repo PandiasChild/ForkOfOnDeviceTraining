@@ -388,6 +388,10 @@ int main(void) {
         requantizeTensorInPlace(cfg->bias->param, mq.biasQ);
     }
 
+    /* Factory default (#279): param write-backs run under seeded SR_HALF_AWAY
+     * (dead-zone escape) -- deterministic given the fixed rngSetSeed above.
+     * The gates below are dtype + loss-decrease checks, not gold values, so
+     * this example deliberately trains under the framework default. */
     optimizer_t *sgd = sgdMCreateOptim(
         LR, MOMENTUM, /*weightDecay*/ 0.0f, model, MODEL_SIZE, quantizationInitFloat(),
         (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY});

@@ -80,10 +80,13 @@ Key design points (see `docs/CONVENTIONS.md` and the source comments):
 - **Momentum is FLOAT32**, decoupled from the packed-SYM params via the optimizer's
   own-config knob (`sgdMCreateOptim(..., momentumQuant)`). A packed-SYM momentum
   would re-quantize the velocity to the same coarse levels as the weights.
-- **Stochastic rounding** (`SR_HALF_AWAY`) on the packed-SYM param storage lets a
+- **Stochastic rounding** (`SR_HALF_AWAY`) on the training write-back lets a
   FLOAT32 gradient step smaller than one SYM level move the weight *in expectation*
-  (the #279 dead-zone escape). `SYM_ROUNDING=det` forces deterministic rounding to
-  A/B that claim — which is still a **hypothesis** until the ≥10-seed sweep confirms it.
+  (the #279 dead-zone escape). Since #279 this is the **framework default**: the
+  optimizer factories set seeded-SR write-back rounding (optimizer-owned, param
+  storage qConfigs stay deterministic `HALF_AWAY`). `SYM_ROUNDING=det` opts out via
+  `optimizerSetWriteBackRounding` to A/B the dead-zone claim — confirmed by the
+  ≥10-seed sweep (SR recovers 96–97% of the dead-zone gap; see #279).
 
 ### Cosine LR schedule vs. the SYM dead zone (#327)
 

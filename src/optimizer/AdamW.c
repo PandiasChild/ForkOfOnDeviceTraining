@@ -147,32 +147,32 @@ void adamWStep(optimizer_t *optim) {
         tensor_t *m = optim->states[i]->stateBuffers[0];
         tensor_t *v = optim->states[i]->stateBuffers[1];
 
-        executeOp(&(opSpec_t){.kernel = adamWMomentKernel,
-                              .ctx = &mc,
-                              .inputs = (tensor_t *[]){m, p->grad},
-                              .nInputs = 2,
-                              .arithmetic = adamW->updateMath,
-                              .mode = OUT_WRITE,
-                              .auxOut = NULL,
-                              .writesInPlaceSafe = true},
-                  m);
-        executeOp(&(opSpec_t){.kernel = adamWVarianceKernel,
-                              .ctx = &vc,
-                              .inputs = (tensor_t *[]){v, p->grad},
-                              .nInputs = 2,
-                              .arithmetic = adamW->updateMath,
-                              .mode = OUT_WRITE,
-                              .auxOut = NULL,
-                              .writesInPlaceSafe = true},
-                  v);
-        executeOp(&(opSpec_t){.kernel = adamWParamKernel,
-                              .ctx = &pc,
-                              .inputs = (tensor_t *[]){p->param, m, v},
-                              .nInputs = 3,
-                              .arithmetic = adamW->updateMath,
-                              .mode = OUT_WRITE,
-                              .auxOut = NULL,
-                              .writesInPlaceSafe = true},
-                  p->param);
+        executeOpWithEpilogueRounding(&(opSpec_t){.kernel = adamWMomentKernel,
+                                                  .ctx = &mc,
+                                                  .inputs = (tensor_t *[]){m, p->grad},
+                                                  .nInputs = 2,
+                                                  .arithmetic = adamW->updateMath,
+                                                  .mode = OUT_WRITE,
+                                                  .auxOut = NULL,
+                                                  .writesInPlaceSafe = true},
+                                      m, optim->writeBackRounding);
+        executeOpWithEpilogueRounding(&(opSpec_t){.kernel = adamWVarianceKernel,
+                                                  .ctx = &vc,
+                                                  .inputs = (tensor_t *[]){v, p->grad},
+                                                  .nInputs = 2,
+                                                  .arithmetic = adamW->updateMath,
+                                                  .mode = OUT_WRITE,
+                                                  .auxOut = NULL,
+                                                  .writesInPlaceSafe = true},
+                                      v, optim->writeBackRounding);
+        executeOpWithEpilogueRounding(&(opSpec_t){.kernel = adamWParamKernel,
+                                                  .ctx = &pc,
+                                                  .inputs = (tensor_t *[]){p->param, m, v},
+                                                  .nInputs = 3,
+                                                  .arithmetic = adamW->updateMath,
+                                                  .mode = OUT_WRITE,
+                                                  .auxOut = NULL,
+                                                  .writesInPlaceSafe = true},
+                                      p->param, optim->writeBackRounding);
     }
 }

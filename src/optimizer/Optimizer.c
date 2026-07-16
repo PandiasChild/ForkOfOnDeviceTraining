@@ -48,6 +48,10 @@ void optimizerZeroGrad(optimizer_t *optimizer) {
     }
 }
 
+void optimizerSetWriteBackRounding(optimizer_t *optimizer, roundingMode_t writeBackRounding) {
+    optimizer->writeBackRounding = writeBackRounding;
+}
+
 optimizerFunctions_t optimizerFunctions[] = {
     [SGD_M] = {.step = sgdStepM, .zero = optimizerZeroGrad, .getLr = sgdGetLr, .setLr = sgdSetLr},
     [ADAM_W] = {

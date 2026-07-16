@@ -189,6 +189,19 @@ paths (ASYM, BOOL, SYM width-restore), unifying the Quantization layer into a pu
 conversion node (#266). This separation keeps arithmetic orthogonal to storage,
 enabling per-op compute-dtype divergence (#218 knobs) without ownership complexity.
 
+**Training write-backs are the one operation-owned rounding exception (#279/#282).**
+The `OUT_WRITE` epilogue normally rounds by the target's own storage qConfig, but a
+deterministic `HALF_AWAY` write-back silently freezes any parameter whose per-step
+update is sub-ULP at its fixed scale (the dead-zone; catastrophic at coarse widths —
+sweep: sym4 HALF_AWAY = random-guessing from step 0). The optimizer step functions
+therefore route every param/state `OUT_WRITE` through
+`executeOpWithEpilogueRounding(spec, target, optim->writeBackRounding)` — the funnel
+swaps the target's storage rounding mode for the duration of that op and restores it
+before returning. Factories default the knob to seeded `SR_HALF_AWAY`;
+`optimizerSetWriteBackRounding(optim, HALF_AWAY)` is the explicit opt-out. Storage,
+inference, and serialization encodes keep reading the tensor's own qConfig, which
+never changes.
+
 ### Validator retirement (PR1b.2)
 
 `ModelValidationApi.c`'s `isAccumulatorRangeSymProducer` + `validateModelQuantization`'s
