@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <float.h>
 
 #include "Common.h"
 #include "DTypes.h"
@@ -14,7 +15,10 @@
 
 static void packFloatBufferAsSym(const float *values, size_t n, symQConfig_t *outQC, uint8_t *dst,
                                  const char *what);
+static void packFloatBufferAsSymForDelta(const float *values, size_t n, symQDeltaConfig_t *outQC, uint8_t *dst,
+                                 const char *what);
 static void quantizeFloatToAsym(const float *values, size_t n, asymQConfig_t *outQC, uint8_t *dst);
+
 static void unpackSignExtend(const uint8_t *src, size_t srcBits, int32_t *dst, size_t n);
 
 _Static_assert(ODT_CONVERSION_CHUNK_ELEMS % 8 == 0,
@@ -30,12 +34,29 @@ static void unpackZeroExtendChunk(const uint8_t *srcBase, size_t srcBits, size_t
                                   size_t count, int32_t *dst);
 static void packChunkGuarded(const int32_t *codes, size_t count, uint8_t *dstBase, size_t dstBits,
                              size_t elemOffset, const char *what);
+static void packChunckGuardedForDelta(const int32_t *src, size_t n, uint8_t *dst, size_t qBits, size_t deltabits,
+                           const char *what);
 /* Factored out of quantizeFloatToAsym verbatim, incl. the single zeroPoint
  * roundByMode draw -- called BEFORE any per-element round (bit-identity
  * invariant: exactly one roundByMode call per element, in element order). */
 static void deriveAsymGridFromMinMax(float mn, float mx, asymQConfig_t *outQC);
 static void emitAsymChunk(const float *vals, size_t count, const asymQConfig_t *qc,
                           uint8_t *dstBase, size_t elemOffset);
+
+float saturatingSubstraction(float minuend, float subtrahend, float min, float max)
+{
+    if (subtrahend > 0) {
+        if (minuend < min + subtrahend) {
+            return min;
+        }
+    } else {
+        if (minuend > max + subtrahend) {
+            return max;
+        }
+    }
+    int32_t difference = minuend - subtrahend;
+    return difference;
+}
 
 void zeroTensorData(tensor_t *tensor) {
     size_t numberOfElements = calcNumberOfElementsByTensor(tensor);
@@ -304,6 +325,26 @@ void convertFloatTensorToSymTensor(tensor_t *inputTensor, tensor_t *outputTensor
                          "convertFloatTensorToSymTensor");
 }
 
+void convertFloatTensorToDeltaTensor(tensor_t *inputTensor, tensor_t *outputTensor){
+    size_t numberOfElements = calcNumberOfElementsByTensor(inputTensor);
+    symQDeltaConfig_t *outQC = outputTensor->quantization->qConfig;
+    float *inputData = (float *)inputTensor->data;
+    float deltaData[numberOfElements];
+    memset(deltaData, 0, numberOfElements * sizeof(float));
+    deltaData[0] = inputData[0];
+    printf("deltaData[%d] = %f\n", 0, deltaData[0]);
+    size_t firstIndex = 1;
+    size_t lastIndex = numberOfElements-1;
+    for (int i= firstIndex; i <= lastIndex; i++){
+        deltaData[i] = inputData[i] - inputData[i-1];
+        printf("deltaData[%d] = %f\n", i, deltaData[i]);
+    }
+
+    packFloatBufferAsSymForDelta(deltaData, numberOfElements, outQC, outputTensor->data,
+                         "convertFloatTensorToDeltaTensor");
+
+}
+
 void convertFloatTensorToAsymTensor(tensor_t *inputTensor, tensor_t *outputTensor) {
     size_t numberOfElements = calcNumberOfElementsByTensor(inputTensor);
     asymQConfig_t *asymQConfig = outputTensor->quantization->qConfig;
@@ -481,6 +522,150 @@ void convertAsymTensorToSymInt32Tensor(tensor_t *inputTensor, tensor_t *outputTe
     outQC->scale = inQC->scale; /* scale copy unchanged */
 }
 
+static void packChunckGuardedForDelta(const int32_t *src, size_t n, uint8_t *dst, size_t qBits, size_t deltabits,
+                           const char *what) {
+    if (qBits == 0 || qBits > 31) {
+        /* 1 << (dstBits - 1) needs dstBits in [1, 31]: 0 underflows size_t and
+         * >= 32 overshoots the int32 sign bit -> UB shift (#247). */
+        PRINT_ERROR("%s: qBits (%u) must be in [1, 31]", what, (unsigned)qBits);
+        exit(1);
+    }
+    if (deltabits == 0 || deltabits > 31) {
+        /* 1 << (dstBits - 1) needs dstBits in [1, 31]: 0 underflows size_t and
+         * >= 32 overshoots the int32 sign bit -> UB shift (#247). */
+        PRINT_ERROR("%s: deltabits (%u) must be in [1, 31]", what, (unsigned)deltabits);
+        exit(1);
+    }
+    int32_t hi = ((int32_t)1 << (qBits - 1)) - 1;
+    int32_t lo = -((int32_t)1 << (qBits - 1));
+    if (src[0] < lo || src[0] > hi) {
+        PRINT_ERROR("%s: value %d does not fit %u-bit SYM range [%d, %d] (#227)", what, src[0],
+                    (unsigned)qBits, lo, hi);
+        exit(1);
+    }
+    hi = ((int32_t)1 << (deltabits - 1)) - 1;
+    lo = -((int32_t)1 << (deltabits - 1));
+    for (size_t i = 1; i < n; i++) {
+        if (src[i] < lo || src[i] > hi) {
+            PRINT_ERROR("%s: value %d does not fit %u-bit SYM range [%d, %d] (#227)", what, src[i],
+                        (unsigned)deltabits, lo, hi);
+            exit(1);
+        }
+    }
+    int32_t tmp[n];
+    for (size_t i = 0; i < n; i++) {
+        tmp[i] = src[i];
+    }
+    byteConversionWithOffsets((uint8_t *)tmp, 32, 32, dst, deltabits, qBits, n, 1);
+}
+
+void unpackSignExtendForDelta(const uint8_t *src, size_t qBits, size_t deltabits, int32_t *dst, size_t numberOfValues){
+    if (qBits == 0) {
+    /* 1 << (srcBits - 1) below underflows size_t to SIZE_MAX -> UB shift (#247). */
+    PRINT_ERROR("unpackSignExtend: qBits must be > 0");
+    exit(1);
+    }
+    if (deltabits == 0) {
+        /* 1 << (srcBits - 1) below underflows size_t to SIZE_MAX -> UB shift (#247). */
+        PRINT_ERROR("unpackSignExtend: deltabits must be > 0");
+        exit(1);
+    }
+    uint8_t helperDst[numberOfValues * sizeof(int32_t)];
+    byteConversionWithOffsets((uint8_t *)src, deltabits, qBits, helperDst, 32, 32, numberOfValues, 1);
+    memcpy(dst, helperDst, numberOfValues * sizeof(int32_t));
+    if (qBits >= 32) {
+        return;
+    }
+    int32_t signBit = (int32_t)1 << (qBits - 1);
+    int32_t mask = (int32_t)(((uint32_t)1 << qBits) - 1u);
+    int32_t v = dst[0] & mask;
+    dst[0] = (v ^ signBit) - signBit; /* sign-extend from qBits */
+
+    if (deltabits >= 32) {
+        return;
+    }
+    signBit = (int32_t)1 << (deltabits - 1);
+    mask = (int32_t)(((uint32_t)1 << deltabits) - 1u);
+    for (size_t i = 1; i < numberOfValues; i++) {
+        int32_t v = dst[i] & mask;
+        dst[i] = (v ^ signBit) - signBit; /* sign-extend from deltabits */
+    }
+
+}
+
+static void packChunckGuardedForDelta(const int32_t *src, size_t n, uint8_t *dst, size_t qBits, size_t deltabits,
+                           const char *what) {
+    if (qBits == 0 || qBits > 31) {
+        /* 1 << (dstBits - 1) needs dstBits in [1, 31]: 0 underflows size_t and
+         * >= 32 overshoots the int32 sign bit -> UB shift (#247). */
+        PRINT_ERROR("%s: qBits (%u) must be in [1, 31]", what, (unsigned)qBits);
+        exit(1);
+    }
+    if (deltabits == 0 || deltabits > 31) {
+        /* 1 << (dstBits - 1) needs dstBits in [1, 31]: 0 underflows size_t and
+         * >= 32 overshoots the int32 sign bit -> UB shift (#247). */
+        PRINT_ERROR("%s: deltabits (%u) must be in [1, 31]", what, (unsigned)deltabits);
+        exit(1);
+    }
+    int32_t hi = ((int32_t)1 << (qBits - 1)) - 1;
+    int32_t lo = -((int32_t)1 << (qBits - 1));
+    if (src[0] < lo || src[0] > hi) {
+        PRINT_ERROR("%s: value %d does not fit %u-bit SYM range [%d, %d] (#227)", what, src[0],
+                    (unsigned)qBits, lo, hi);
+        exit(1);
+    }
+    hi = ((int32_t)1 << (deltabits - 1)) - 1;
+    lo = -((int32_t)1 << (deltabits - 1));
+    for (size_t i = 1; i < n; i++) {
+        if (src[i] < lo || src[i] > hi) {
+            PRINT_ERROR("%s: value %d does not fit %u-bit SYM range [%d, %d] (#227)", what, src[i],
+                        (unsigned)deltabits, lo, hi);
+            exit(1);
+        }
+    }
+    int32_t tmp[n];
+    for (size_t i = 0; i < n; i++) {
+        tmp[i] = src[i];
+    }
+    //static void packChunkGuarded(const int32_t *codes, size_t count, uint8_t *dstBase, size_t dstBits, size_t elemOffset, const char *what);
+    //byteConversion((uint8_t *)codes, 32, dstBase + packedByteOffset(elemOffset, dstBits), dstBits, count);
+    byteConversionWithOffsets((uint8_t *)tmp, 32, 32, dst, deltabits, qBits, n, 1);
+}
+
+void unpackSignExtendForDelta(const uint8_t *src, size_t qBits, size_t deltabits, int32_t *dst, size_t numberOfValues){
+    if (qBits == 0) {
+    /* 1 << (srcBits - 1) below underflows size_t to SIZE_MAX -> UB shift (#247). */
+    PRINT_ERROR("unpackSignExtend: qBits must be > 0");
+    exit(1);
+    }
+    if (deltabits == 0) {
+        /* 1 << (srcBits - 1) below underflows size_t to SIZE_MAX -> UB shift (#247). */
+        PRINT_ERROR("unpackSignExtend: deltabits must be > 0");
+        exit(1);
+    }
+    uint8_t helperDst[numberOfValues * sizeof(int32_t)];
+    byteConversionWithOffsets((uint8_t *)src, deltabits, qBits, helperDst, 32, 32, numberOfValues, 1);
+    memcpy(dst, helperDst, numberOfValues * sizeof(int32_t));
+    if (qBits >= 32) {
+        return;
+    }
+    int32_t signBit = (int32_t)1 << (qBits - 1);
+    int32_t mask = (int32_t)(((uint32_t)1 << qBits) - 1u);
+    int32_t v = dst[0] & mask;
+    dst[0] = (v ^ signBit) - signBit; /* sign-extend from qBits */
+
+    if (deltabits >= 32) {
+        return;
+    }
+    signBit = (int32_t)1 << (deltabits - 1);
+    mask = (int32_t)(((uint32_t)1 << deltabits) - 1u);
+    for (size_t i = 1; i < numberOfValues; i++) {
+        int32_t v = dst[i] & mask;
+        dst[i] = (v ^ signBit) - signBit; /* sign-extend from deltabits */
+    }
+
+}
+
 static void unpackSignExtend(const uint8_t *src, size_t srcBits, int32_t *dst, size_t n) {
     if (srcBits == 0) {
         /* 1 << (srcBits - 1) below underflows size_t to SIZE_MAX -> UB shift (#247). */
@@ -626,6 +811,8 @@ char *quantTypeToString(qtype_t t) {
         return "ASYM";
     case BOOL:
         return "BOOL";
+    case DELTA:
+        return "DELTA";
     default:
         return "UNKNOWN";
     }
@@ -640,6 +827,42 @@ void unsupportedConversionTypes(tensor_t *inputTensor, tensor_t *outputTensor) {
     exit(1);
 }
 
+static void packFloatBufferAsSymForDelta(const float *values, size_t n, symQDeltaConfig_t *outQC, uint8_t *dst,
+                                 const char *what) {
+    float absMax = findAbsMaxFloat((uint8_t *)values, n);
+    const float qMax = powf(2, (float)outQC->qBits - 1) - 1;
+    const float qMin = -powf(2, (float)outQC->qBits - 1);
+    const float deltaMax = powf(2, (float)outQC->deltabits - 1) - 1;
+    const float deltaMin = -powf(2, (float)outQC->deltabits - 1);
+    printf("qMax = %f, deltaMax = %f\n", qMax, deltaMax);
+    float scale = (absMax == 0.f) ? 1.f : absMax / qMax;
+
+    outQC->scale = scale;
+    int32_t codes[ODT_CONVERSION_CHUNK_ELEMS];
+    /*first loop is different because of element 0 -> qMin, qMax */
+    size_t count = n  < ODT_CONVERSION_CHUNK_ELEMS ? n : ODT_CONVERSION_CHUNK_ELEMS;
+    codes[0] = clampInt32(roundByMode(values[0] / scale, outQC->roundingMode),
+                              (int32_t)qMin, (int32_t)qMax);
+    for (size_t i = 1; i < count; i++)
+    {
+        printf("roundedVal[%ld]= rounded(values[%ld]/scale)\n = %.6f/%.6f = %d\n", i, i, values[i], scale, roundByMode(values[i] / scale, outQC->roundingMode));
+        codes[i] = clampInt32(roundByMode(values[i] / scale, outQC->roundingMode),
+                              (int32_t)deltaMin, (int32_t)deltaMax);
+    }
+    packChunkGuarded(codes, count, dst, outQC->qBits, 0, what);
+
+    for (size_t off = ODT_CONVERSION_CHUNK_ELEMS; off < n; off += ODT_CONVERSION_CHUNK_ELEMS) {
+        count = n - off < ODT_CONVERSION_CHUNK_ELEMS ? n - off : ODT_CONVERSION_CHUNK_ELEMS;
+        for (size_t i = 0; i < count; i++) {
+            printf("roundedVal[%ld]= rounded(values[%ld]/scale)\n = %.6f/%.6f = %d\n", off + i, off + i, values[i], scale, roundByMode(values[i] / scale, outQC->roundingMode));
+            codes[i] = clampInt32(roundByMode(values[off + i] / scale, outQC->roundingMode),
+                                  (int32_t)deltaMin, (int32_t)deltaMax);
+        }
+        packChunkGuarded(codes, count, dst, outQC->qBits, off, what);
+    }
+
+}
+
 static void packFloatBufferAsSym(const float *values, size_t n, symQConfig_t *outQC, uint8_t *dst,
                                  const char *what) {
     float absMax = findAbsMaxFloat((uint8_t *)values, n);
@@ -651,6 +874,7 @@ static void packFloatBufferAsSym(const float *values, size_t n, symQConfig_t *ou
     for (size_t off = 0; off < n; off += ODT_CONVERSION_CHUNK_ELEMS) {
         size_t count = n - off < ODT_CONVERSION_CHUNK_ELEMS ? n - off : ODT_CONVERSION_CHUNK_ELEMS;
         for (size_t i = 0; i < count; i++) {
+            printf("roundedVal[%ld]= rounded(values[%ld]/scale)\n = %.6f/%.6f = %d\n", i, i, values[i], scale, roundByMode(values[i] / scale, outQC->roundingMode));
             codes[i] = clampInt32(roundByMode(values[off + i] / scale, outQC->roundingMode),
                                   (int32_t)qMin, (int32_t)qMax);
         }
@@ -694,13 +918,40 @@ void repackSymInt32ToSymNoRescale(tensor_t *inputTensor, tensor_t *outputTensor)
     symInt32QConfig_t *inQC = inputTensor->quantization->qConfig;
     symQConfig_t *outQC = outputTensor->quantization->qConfig;
     outQC->scale = inQC->scale;
-    const int32_t *in = (const int32_t *)inputTensor->data;
-    for (size_t off = 0; off < n; off += ODT_CONVERSION_CHUNK_ELEMS) {
-        size_t count = n - off < ODT_CONVERSION_CHUNK_ELEMS ? n - off : ODT_CONVERSION_CHUNK_ELEMS;
-        packChunkGuarded(in + off, count, outputTensor->data, outQC->qBits, off,
-                         "repackSymInt32ToSymNoRescale");
+    packFitGuarded((int32_t *)inputTensor->data, n, outputTensor->data, outQC->qBits,
+                   "repackSymInt32ToSymNoRescale");
+}
+
+void convertDeltaTensorToFloatTensor(tensor_t *inputTensor, tensor_t *outputTensor){
+    size_t n = calcNumberOfElementsByTensor(inputTensor);
+    symQDeltaConfig_t *inQC = inputTensor->quantization->qConfig;
+    int32_t mant[n];
+    unpackSignExtendForDelta(inputTensor->data, inQC->qBits, inQC->deltabits, mant, n);
+    float *out = (float *)outputTensor->data;
+    for (size_t i = 0; i < n; i++) {
+        out[i] = (float)mant[i] * inQC->scale;
+    }
+    size_t firstIndex = 1;
+    size_t lastIndex = n-1;
+    for (int i= firstIndex; i <= lastIndex; i++){
+        out[i] = out[i] + out[i-1];
     }
 }
+void convertDeltaTensorToSymInt32Tensor(tensor_t *inputTensor, tensor_t *outputTensor){
+    size_t n = calcNumberOfElementsByTensor(inputTensor);
+    symQDeltaConfig_t *inQC = inputTensor->quantization->qConfig;
+    symInt32QConfig_t *outQC = outputTensor->quantization->qConfig;
+    int32_t *out = (int32_t *)outputTensor->data;
+    unpackSignExtendForDelta(inputTensor->data, inQC->qBits, inQC->deltabits, out, n);
+    outQC->scale = inQC->scale;
+    outQC->qMaxBits = inQC->qBits;
+    size_t firstIndex = 1;
+    size_t lastIndex = n-1;
+    for (int i= firstIndex; i <= lastIndex; i++){
+        out[i] = out[i] + out[i-1];
+    }
+}
+
 
 /* Grad-accumulate primitives (PR3, #261; streamed #296 Stage 2) -- see header
  * doc comments for the when-to-use contract. Increment source: exactly one of
@@ -1012,43 +1263,56 @@ void accumulateTensorIntoFloat32Inplace(tensor_t *target, const tensor_t *increm
 
 _Static_assert(BOOL + 1 == 6, "extend conversionMatrix when adding qtype_t entries");
 
-conversionFunction_t conversionMatrix[6][6] = {
+conversionFunction_t conversionMatrix[7][7] = {
     [INT32] = {[INT32] = NULL,
                [FLOAT32] = convertInt32TensorToFloatTensor,
                [SYM_INT32] = convertInt32TensorToSymInt32Tensor,
                [SYM] = convertInt32TensorToSymTensor,
                [ASYM] = convertInt32TensorToAsymTensor,
-               [BOOL] = unsupportedConversionTypes},
+               [BOOL] = unsupportedConversionTypes,
+               [DELTA] = unsupportedConversionTypes},
     [FLOAT32] = {[INT32] = convertFloatTensorToInt32Tensor,
                  [FLOAT32] = NULL,
                  [SYM_INT32] = convertFloatTensorToSymInt32Tensor,
                  [SYM] = convertFloatTensorToSymTensor,
                  [ASYM] = convertFloatTensorToAsymTensor,
-                 [BOOL] = unsupportedConversionTypes},
+                 [BOOL] = unsupportedConversionTypes,
+                 [DELTA] = convertFloatTensorToDeltaTensor},
     [SYM_INT32] = {[INT32] = extractInt32TensorFromSymInt32Tensor,
                    [FLOAT32] = convertSymInt32TensorToFloat32Tensor,
                    [SYM_INT32] = requantSymInt32Tensor,
                    [SYM] = convertSymInt32TensorToSymTensor,
                    [ASYM] = convertSymInt32TensorToAsymTensor,
-                   [BOOL] = unsupportedConversionTypes},
+                   [BOOL] = unsupportedConversionTypes,
+                   [DELTA] = unsupportedConversionTypes},
     [SYM] = {[INT32] = convertSymTensorToInt32Tensor,
              [FLOAT32] = convertSymTensorToFloat32Tensor,
              [SYM_INT32] = convertSymTensorToSymInt32Tensor,
              [SYM] = NULL,
              [ASYM] = convertSymTensorToAsymTensor,
-             [BOOL] = unsupportedConversionTypes},
+             [BOOL] = unsupportedConversionTypes,
+             [DELTA] = unsupportedConversionTypes},
     [ASYM] = {[INT32] = convertAsymTensorToInt32Tensor,
               [FLOAT32] = convertAsymTensorToFloatTensor,
               [SYM_INT32] = convertAsymTensorToSymInt32Tensor,
               [SYM] = convertAsymTensorToSymTensor,
               [ASYM] = NULL,
-              [BOOL] = unsupportedConversionTypes},
+              [BOOL] = unsupportedConversionTypes,
+              [DELTA] = unsupportedConversionTypes},
     [BOOL] = {[INT32] = unsupportedConversionTypes,
               [FLOAT32] = unsupportedConversionTypes,
               [SYM_INT32] = unsupportedConversionTypes,
               [SYM] = unsupportedConversionTypes,
               [ASYM] = unsupportedConversionTypes,
-              [BOOL] = NULL}};
+              [BOOL] = NULL,
+              [DELTA] = unsupportedConversionTypes},
+    [DELTA] = {[INT32] = unsupportedConversionTypes,
+               [FLOAT32] = convertDeltaTensorToFloatTensor,
+               [SYM_INT32] = convertDeltaTensorToSymInt32Tensor,
+               [SYM] = unsupportedConversionTypes,
+               [ASYM] = unsupportedConversionTypes,
+               [BOOL] = unsupportedConversionTypes,
+               [DELTA]= NULL}};
 
 static void convertTensorsWithSameType(tensor_t *inputTensor, tensor_t *outputTensor,
                                        qtype_t qType) {
@@ -1086,6 +1350,12 @@ static void convertTensorsWithSameType(tensor_t *inputTensor, tensor_t *outputTe
         asymQConfig_t *outputAsymQC = outputTensor->quantization->qConfig;
         outputAsymQC->scale = inputAsymQC->scale;
         outputAsymQC->zeroPoint = inputAsymQC->zeroPoint;
+        break;
+    }
+    case DELTA: {
+        symQConfig_t *inputDeltaQC = inputTensor->quantization->qConfig;
+        symQConfig_t *outputDeltaQC = outputTensor->quantization->qConfig;
+        outputDeltaQC->scale = inputDeltaQC->scale;
         break;
     }
     default:

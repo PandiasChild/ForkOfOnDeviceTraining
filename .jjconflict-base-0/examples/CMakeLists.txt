@@ -1,8 +1,0 @@
-add_subdirectory(_shared)
-add_subdirectory(har_classifier)
-add_subdirectory(ecg_anomaly_ae)
-add_subdirectory(mnist_mlp)
-add_subdirectory(mnist_cnn)
-add_subdirectory(kws_mfcc)
-add_subdirectory(kws_raw)
-add_subdirectory(mixed_width_mlp)

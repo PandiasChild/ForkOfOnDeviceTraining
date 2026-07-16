@@ -31,6 +31,23 @@ static void symTestUnpackSignExtend(const uint8_t *packed, size_t qBits, int32_t
     }
 }
 
+/* PR-C pack tests verify the packed SYM output by unpacking it here in-test:
+ * byteConversion zero-fills on widen, so sign-extend each value from qBits.
+ * (The SYM->* unpack cells live on the parallel PR-B branch, not here.) */
+static void symTestUnpackSignExtendForDeltas(size_t qBits, size_t deltabits, int32_t *out, size_t n) {
+    int32_t signBit = (int32_t)1 << (qBits - 1);
+    int32_t mask = (int32_t)(((uint32_t)1 << qBits) - 1u);
+        int32_t v = out[0] & mask;
+        out[0] = (v ^ signBit) - signBit;
+
+    signBit = (int32_t)1 << (deltabits - 1);
+    mask = (int32_t)(((uint32_t)1 << deltabits) - 1u);
+    for (size_t i = 1; i < n; i++) {
+        int32_t v = out[i] & mask;
+        out[i] = (v ^ signBit) - signBit;
+    }
+}
+
 void testZeroTensorDataSymSubByteZeroesOnlyPackedBytes() {
     /* SYM qBits=3, N=10 -> packed 4 bytes; the guard byte behind them must survive.
      * Mutation guard: the pre-fix N * calcBytesPerElement memset (10 bytes) clobbers
@@ -1310,6 +1327,7 @@ void testConversionFloatToSymRoundTripsSymmetric() {
     symTestUnpackSignExtend(symTensor.data, 6, codes, 6);
     for (size_t i = 0; i < n; i++) {
         float rec = (float)codes[i] * outQC.scale;
+        printf("rec[%d] = %f\n", i, rec);
         TEST_ASSERT_FLOAT_WITHIN(0.12f, floatData[i], rec);
     }
 
@@ -1319,17 +1337,19 @@ void testConversionFloatToSymRoundTripsSymmetric() {
     TEST_ASSERT_TRUE(codes[5] < 0); /* floatData[5] = -3.5 */
 }
 
-void testConversionFloatToDeltaRoundTripsSymmetric() {
-    /* n=6, absMax=3.5 => scale = 3.5 / (2^(6-1) - 1) = 3.5/31 ≈ 0.112903226.
-     * One quant step = scale ≈ 0.113; worst-case round-trip error = scale/2 ≈ 0.056;
-     * tolerance 0.12 is > one full step to cover HALF_AWAY rounding at the boundary. */
+void testConversionFloatToDeltaRoundTripsSymmetricQBitsEqalDeltabits() {
+    /* n=6, absMax=5.5 => scale = 5.5 / (2^(6-1) - 1) = 5.5/31 ≈ 0.17741935.
+     * One quant step = scale ≈ 0.178; worst-case for single round-trip error = scale/2 ≈ 0.089;
+     * single error tolerance 0.2 is > one full step to cover HALF_AWAY rounding at the boundary.
+     * the error can propagate */
     size_t n = 6;
+    size_t qBits = 6;
     size_t dims[] = {6};
     size_t orderOfDims[] = {0};
     shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = orderOfDims};
 
-    float floatData[] = {1.5f, -2.5f, 3.0f, -1.0f, 0.5f, -3.5f};
-    // delta Array [1.5f, -4.0f, 5.5f, -4.0f, 1.5f, -4.0f]
+    float floatData[] = {1.5f, -2.5f, 3.0f, -1.0f, 0.5f, -4.0f};
+    float expectedDeltaData[] = {1.5f, -4.0f, 5.5f, -4.0f, 1.5f, -4.5f};
     float absoluteMax = 5.5f;
     quantization_t floatQ;
     initFloat32Quantization(&floatQ);
@@ -1337,29 +1357,102 @@ void testConversionFloatToDeltaRoundTripsSymmetric() {
     setTensorValues(&floatTensor, (uint8_t *)floatData, &shape, &floatQ, NULL);
 
     symQDeltaConfig_t outQC;
-    initSymQDeltaConfig(6, HALF_AWAY, 6, &outQC);
+    size_t deltabits = 6;
+    initSymQDeltaConfig(qBits, HALF_AWAY, deltabits, &outQC);
     quantization_t outQ;
     initSymQDeltaQuantization(&outQC, &outQ);
     uint8_t deltaData[calcNumberOfBytesForData(&outQ, n)];
-    tensor_t symTensor;
-    setTensorValues(&symTensor, deltaData, &shape, &outQ, NULL);
+    tensor_t deltaTensor;
+    setTensorValues(&deltaTensor, deltaData, &shape, &outQ, NULL);
 
-    convertTensor(&floatTensor, &symTensor);
-    printf("absoluteMax/31.0f = %f\n", (absoluteMax / 31.0f));
+    convertTensor(&floatTensor, &deltaTensor);
+    //test: scale correct?
     TEST_ASSERT_FLOAT_WITHIN(1e-6f, absoluteMax / 31.0f, outQC.scale);
 
-    /*TEST_MESSAGE("hasnotfailedyet");
-    int32_t codes[6];
-    symTestUnpackSignExtend(symTensor.data, 6, codes, 6);
+    uint8_t expectedCompressedValues[] = {0b01001000, 0b11111010, 0b10100101, 0b11001000, 0b00001001};
+    TEST_ASSERT_EQUAL_INT8_ARRAY(expectedCompressedValues, deltaTensor.data, 5);
+    /* int32_t expectedClampedValues[] = {8, -23, 31,-23, 8, -25};
+    * {0b00001000, 0, 0, 0, //8 CLAMPED to 6 qBits -> int 8
+    * 0b00101001, 0, 0, 0, //-23 CLAMPED to 6 deltabits -> int 41
+    * 0b00011111, 0, 0, 0, // 31 CLAMPED to 6 deltabits -> int 31
+    * 0b00101001, 0, 0, 0, //-23 CLAMPED to 6 deltabits -> int 41
+    * 0b00001000, 0, 0, 0, //8 CLAMPED to 6 deltabits -> int 8
+    * 0b00100111, 0, 0, 0 } //-25 CLAMPED to 6 deltabits -> int 39
+    */
+    int32_t expectedSignedValues[] = {8, 41, 31, 41, 8, 39};
+    int32_t codes[n];
+    byteConversionWithOffsets((uint8_t *)deltaTensor.data, deltabits, qBits, (uint8_t *)codes, 32, 32, n, 1);
+
+    TEST_ASSERT_EQUAL_INT32_ARRAY(expectedSignedValues, ((int32_t*)codes), n);
+    symTestUnpackSignExtendForDeltas(qBits, deltabits, codes, n);
     for (size_t i = 0; i < n; i++) {
         float rec = (float)codes[i] * outQC.scale;
-        TEST_ASSERT_FLOAT_WITHIN(0.12f, floatData[i], rec);
+        printf("rec[%d] = %f\n", i, rec);
+        TEST_ASSERT_FLOAT_WITHIN(0.12f, expectedDeltaData[i], rec);
     }
 
     /* Prove symmetric range: the OLD buggy code clamped to [0, qMax-1] so
      * negative inputs became 0; a non-zero negative code proves correct range. */
-    //TEST_ASSERT_TRUE(codes[1] < 0); /* floatData[1] = -2.5 */
-    //TEST_ASSERT_TRUE(codes[5] < 0); /* floatData[5] = -3.5 */
+    TEST_ASSERT_TRUE(codes[1] < 0); /* expectedDeltaData[1] = -4.0f */
+    TEST_ASSERT_TRUE(codes[5] < 0); /* expectedDeltaData[5] = -4.0f */
+}
+
+void testConversionFloatToDeltaRoundTripsSymmetricQBits6Deltabits5() {
+    /* n=6, absMax=5.5 => scale = 5.5 / (2^(6-1) - 1) = 5.5/31 ≈ 0.17741935.
+     * One quant step = scale ≈ 0.178; worst-case for single round-trip error = scale/2 ≈ 0.089;
+     * single error tolerance 0.2 is > one full step to cover HALF_AWAY rounding at the boundary.
+     * the error can propagate */
+    size_t n = 6;
+    size_t qBits = 6;
+    size_t dims[] = {6};
+    size_t orderOfDims[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = orderOfDims};
+
+    float floatData[] = {1.5f, -2.5f, 3.0f, -1.0f, 0.5f, -4.0f};
+    float expectedDeltaData[] = {1.5f, -4.0f, 5.5f, -4.0f, 1.5f, -4.5f};
+    float absoluteMax = 5.5f;
+
+    quantization_t floatQ;
+    initFloat32Quantization(&floatQ);
+    tensor_t floatTensor;
+    setTensorValues(&floatTensor, (uint8_t *)floatData, &shape, &floatQ, NULL);
+
+    symQDeltaConfig_t outQC;
+    size_t deltabits = 5;
+    initSymQDeltaConfig(qBits, HALF_AWAY, deltabits, &outQC);
+    quantization_t outQ;
+    initSymQDeltaQuantization(&outQC, &outQ);
+    uint8_t deltaData[calcNumberOfBytesForData(&outQ, n)];
+    tensor_t deltaTensor;
+    setTensorValues(&deltaTensor, deltaData, &shape, &outQ, NULL);
+
+    convertTensor(&floatTensor, &deltaTensor);
+    //test: scale correct?
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, absoluteMax / 31.0f, outQC.scale);
+
+    uint8_t expectedCompressedValues[] = {0b00001000, 0b01111100, 0b00010000, 0b01000001};
+    TEST_ASSERT_EQUAL_INT8_ARRAY(expectedCompressedValues, deltaTensor.data, 4);
+
+    /* int32_t expectedClampedValues[] = {8, -16, 15,-16, 8, -16};
+    * {0b00001000, 0, 0, 0, //8 CLAMPED to 6 qBits -> int 8
+    * 0b00010000, 0, 0, 0, //-16 CLAMPED to 5 deltabits -> int 16
+    * 0b00001111, 0, 0, 0, // 15 CLAMPED to 5 deltabits -> int 15
+    * 0b00010000, 0, 0, 0, //-16 CLAMPED to 5 deltabits -> int 16
+    * 0b00001000, 0, 0, 0, //8 CLAMPED to 5 deltabits -> int 8
+    * 0b00010000, 0, 0, 0 } //-16 CLAMPED to 5 deltabits -> int 16
+    */
+    int32_t expectedSignedValues[] = {8, 16, 15, 16, 8, 16};
+    int32_t codes[n];
+    byteConversionWithOffsets((uint8_t *)deltaTensor.data, deltabits, qBits, (uint8_t *)codes, 32, 32, n, 1);
+
+    TEST_ASSERT_EQUAL_INT32_ARRAY(expectedSignedValues, ((int32_t*)codes), n);
+
+    symTestUnpackSignExtendForDeltas(qBits, deltabits, codes, n);
+
+    /* Prove symmetric range: the OLD buggy code clamped to [0, deltaMax-1] so
+     * negative inputs became 0; a non-zero negative code proves correct range. */
+    TEST_ASSERT_TRUE(codes[1] < 0); /* expectedDeltaData[1] = -4.0f */
+    TEST_ASSERT_TRUE(codes[5] < 0); /* expectedDeltaData[5] = -4.0f */
 }
 
 void testConversionInt32ToSymNoRescaleScale1() {
@@ -2789,12 +2882,848 @@ void testAccumulateTensorIntoSymRescaleRejectsSelfAliasedIncrement(void) {
     ASSERT_EXITS_WITH_FAILURE(accumulateTensorIntoSymRescale(&t, &t));
 }
 
+void testAccumulateSymFixedGridMatchesReferenceAtChunkBoundary(void) {
+    /* Pin (#296 Stage 2): n=517 straddles three ODT_CONVERSION_CHUNK_ELEMS=256
+     * chunks ([0,256), [256,512), [512,517)). Target starts fresh (all-zero),
+     * so BOTH chunked phase-A scans -- the all-zero check and the grid-
+     * deriving absmax-of-increment -- must see the WHOLE array: the dominant
+     * increment value is seeded at index 400, inside the SECOND chunk. A
+     * mutation that only scans chunk 0 for either scan would derive a
+     * far-too-small scale from a truncated absmax, blowing the exact-scale
+     * assertion below. Pinned GREEN on the old whole-tensor VLA implementation
+     * before the chunked rewrite; must stay GREEN after (bit-identical: one
+     * round per element, in element order). */
+    size_t n = 517;
+    uint8_t qBits = 8;
+    size_t dims[] = {n};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    symQConfig_t qc;
+    initSymQConfig(qBits, HALF_AWAY, &qc);
+    quantization_t q;
+    initSymQuantization(&qc, &q);
+    uint8_t *data = (uint8_t *)reserveMemory(calcNumberOfBytesForData(&q, n));
+    memset(data, 0, calcNumberOfBytesForData(&q, n)); /* fresh (post-initTensor) accumulator */
+    tensor_t target;
+    setTensorValues(&target, data, &shape, &q, NULL);
+
+    float *inc = (float *)reserveMemory(n * sizeof(float));
+    for (size_t i = 0; i < n; i++) {
+        inc[i] = ((float)((i * 2654435761u) % 100u) - 50.f) / 50.f; /* [-1, ~1) */
+    }
+    inc[400] = 500.f; /* dominant absmax; lands in the SECOND chunk */
+
+    accumulateFloatIntoSymTensorFixedGrid(&target, inc, n);
+
+    const float qMax = powf(2, (float)qBits - 1) - 1; /* 127 */
+    float expectedScale = 500.f / qMax;
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, expectedScale, qc.scale);
+
+    int32_t *codes = (int32_t *)reserveMemory(n * sizeof(int32_t));
+    symTestUnpackSignExtend(data, qBits, codes, n);
+    for (size_t i = 0; i < n; i++) {
+        float recon = (float)codes[i] * qc.scale;
+        TEST_ASSERT_FLOAT_WITHIN(qc.scale, inc[i], recon);
+    }
+
+    freeReservedMemory(codes);
+    freeReservedMemory(inc);
+    freeReservedMemory(data);
+}
+
+void testAccumulateSymRescaleMatchesReferenceAtChunkBoundary(void) {
+    /* Pin (#296 Stage 2): n=517 straddles three ODT_CONVERSION_CHUNK_ELEMS=256
+     * chunks. DYNAMIC semantics rederive the grid from the decoded-plus-
+     * increment values on EVERY call; the dominant contribution comes from
+     * the increment alone at index 400 (inside the SECOND chunk), so a
+     * phase-A mutation that only scans chunk 0 misses it and derives a
+     * far-too-small scale -- blowing the exact-scale assertion below. Pinned
+     * GREEN on the old whole-tensor VLA implementation before the chunked
+     * rewrite; must stay GREEN after. */
+    size_t n = 517;
+    uint8_t qBits = 8;
+    size_t dims[] = {n};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    symQConfig_t qc;
+    initSymQConfig(qBits, HALF_AWAY, &qc);
+    qc.scale = 0.01f;
+    quantization_t q;
+    initSymQuantization(&qc, &q);
+    uint8_t *data = (uint8_t *)reserveMemory(calcNumberOfBytesForData(&q, n));
+    int32_t *seedMant = (int32_t *)reserveMemory(n * sizeof(int32_t));
+    for (size_t i = 0; i < n; i++) {
+        seedMant[i] = (int32_t)((i * 2654435761u) % 5u) - 2; /* [-2, 2] */
+    }
+    byteConversion((uint8_t *)seedMant, 32, data, qBits, n);
+    tensor_t target;
+    setTensorValues(&target, data, &shape, &q, NULL);
+
+    float *inc = (float *)reserveMemory(n * sizeof(float));
+    for (size_t i = 0; i < n; i++) {
+        inc[i] = 0.f;
+    }
+    inc[400] = 500.f; /* dominant; forces the fresh absmax scan into the 2nd chunk */
+
+    float *reference = (float *)reserveMemory(n * sizeof(float));
+    for (size_t i = 0; i < n; i++) {
+        reference[i] = (float)seedMant[i] * 0.01f + inc[i];
+    }
+
+    accumulateFloatIntoSymTensorRescale(&target, inc, n);
+
+    float absMax = reference[0] < 0.f ? -reference[0] : reference[0];
+    for (size_t i = 1; i < n; i++) {
+        float av = reference[i] < 0.f ? -reference[i] : reference[i];
+        if (av > absMax) {
+            absMax = av;
+        }
+    }
+    const float qMax = powf(2, (float)qBits - 1) - 1;
+    float expectedScale = absMax / qMax;
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, expectedScale, qc.scale);
+
+    int32_t *codes = (int32_t *)reserveMemory(n * sizeof(int32_t));
+    symTestUnpackSignExtend(data, qBits, codes, n);
+    for (size_t i = 0; i < n; i++) {
+        float recon = (float)codes[i] * qc.scale;
+        TEST_ASSERT_FLOAT_WITHIN(qc.scale, reference[i], recon);
+    }
+
+    freeReservedMemory(codes);
+    freeReservedMemory(reference);
+    freeReservedMemory(inc);
+    freeReservedMemory(seedMant);
+    freeReservedMemory(data);
+}
+
+void testAccumulateTensorIntoSymRescaleStreamsIncrementAcrossChunks(void) {
+    /* Regression (#296 Stage 2 review): incSrcChunk's TENSOR branch
+     * (dequantChunkToFloat(src->tens, off, count, out)) has no test crossing a
+     * chunk boundary with a tensor-typed increment -- mutating its `off` arg
+     * to a hardcoded 0 survives the whole suite (every chunk re-dequantizes
+     * source elements [0, count) instead of [off, off+count)). Pin: target =
+     * zero-filled packed SYM (qBits 8), n=517 (three ODT_CONVERSION_CHUNK_ELEMS
+     * =256 chunks: [0,256), [256,512), [512,517)); increment = SYM_INT32
+     * tensor with a dominant element (100.0, vs. 0.05 elsewhere) at index 400
+     * -- inside the SECOND chunk. A hardcoded-offset-0 mutant reads chunk 0's
+     * dequantized values for chunk 1 and chunk 2 alike, so index 400's true
+     * value never reaches either the absmax scan or the accumulate: the
+     * derived scale and decoded codes are both wrong -> RED. */
+    size_t n = 517;
+    uint8_t qBits = 8;
+    size_t dims[] = {n};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    symQConfig_t qc;
+    initSymQConfig(qBits, HALF_AWAY, &qc);
+    quantization_t q;
+    initSymQuantization(&qc, &q);
+    uint8_t *data = (uint8_t *)reserveMemory(calcNumberOfBytesForData(&q, n));
+    memset(data, 0, calcNumberOfBytesForData(&q, n)); /* fresh (post-initTensor) accumulator */
+    tensor_t target;
+    setTensorValues(&target, data, &shape, &q, NULL);
+
+    symInt32QConfig_t incQC;
+    initSymInt32QConfigWithQMaxBits(HALF_AWAY, &incQC, 16);
+    incQC.scale = 0.001f;
+    quantization_t incQ;
+    initSymInt32Quantization(&incQC, &incQ);
+    int32_t *incData = (int32_t *)reserveMemory(n * sizeof(int32_t));
+    for (size_t i = 0; i < n; i++) {
+        incData[i] = 50; /* 50 * 0.001 = 0.05 */
+    }
+    incData[400] = 100000; /* 100000 * 0.001 = 100.0 -- dominant; SECOND chunk */
+    tensor_t incTensor;
+    setTensorValues(&incTensor, (uint8_t *)incData, &shape, &incQ, NULL);
+
+    accumulateTensorIntoSymRescale(&target, &incTensor);
+
+    const float qMax = powf(2, (float)qBits - 1) - 1; /* 127 */
+    float expectedScale = 100.f / qMax; /* target started zero, so absmax == the dominant value */
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, expectedScale, qc.scale);
+
+    int32_t *codes = (int32_t *)reserveMemory(n * sizeof(int32_t));
+    symTestUnpackSignExtend(data, qBits, codes, n);
+    float tol = qc.scale * 0.5f + 1e-4f;
+    size_t spotIdx[] = {0, 255, 256, 400, 516};
+    for (size_t s = 0; s < sizeof(spotIdx) / sizeof(spotIdx[0]); s++) {
+        size_t i = spotIdx[s];
+        float expectedVal = (float)incData[i] * incQC.scale;
+        float recon = (float)codes[i] * qc.scale;
+        TEST_ASSERT_FLOAT_WITHIN(tol, expectedVal, recon);
+    }
+
+    freeReservedMemory(codes);
+    freeReservedMemory(incData);
+    freeReservedMemory(data);
+}
+
+void testChunkedFloatToAsymMatchesReferenceAcrossChunkBoundaries(void) {
+    /* Characterization: FLOAT32 -> ASYM through convertTensor (quantizeFloatToAsym,
+     * now grid-derivation + ODT_CONVERSION_CHUNK_ELEMS=256 chunked emit, #296 Stage 2)
+     * must decode within one half quantization step at every chunk boundary shape --
+     * below/at/above the 256-element stride -- including sub-byte qBits=3 packing,
+     * where a wrong chunk byte offset would silently write into the wrong bit range
+     * and blow the tolerance below (this is the mutation guard for packedByteOffset). */
+    size_t sizes[] = {1, 8, 255, 256, 257, 517, 520};
+    uint8_t qBitsValues[] = {3, 8, 12};
+    for (size_t qi = 0; qi < sizeof(qBitsValues) / sizeof(qBitsValues[0]); qi++) {
+        uint8_t qBits = qBitsValues[qi];
+        for (size_t s = 0; s < sizeof(sizes) / sizeof(sizes[0]); s++) {
+            size_t n = sizes[s];
+            /* deterministic pseudo-random fill, seed fixed */
+            float *vals = (float *)reserveMemory(n * sizeof(float));
+            for (size_t i = 0; i < n; i++) {
+                vals[i] = ((float)((i * 2654435761u) % 1000) - 500.f) / 25.f;
+            }
+            size_t dims[] = {n};
+            size_t order[] = {0};
+            shape_t shape = {
+                .dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+            quantization_t floatInQ;
+            initFloat32Quantization(&floatInQ);
+            tensor_t floatIn;
+            setTensorValues(&floatIn, (uint8_t *)vals, &shape, &floatInQ, NULL);
+
+            asymQConfig_t asymQC;
+            initAsymQConfig(qBits, HALF_AWAY, &asymQC);
+            quantization_t asymQ;
+            initAsymQuantization(&asymQC, &asymQ);
+            uint8_t *asymData = (uint8_t *)reserveMemory(calcNumberOfBytesForData(&asymQ, n));
+            tensor_t asymOut;
+            setTensorValues(&asymOut, asymData, &shape, &asymQ, NULL);
+
+            convertTensor(&floatIn, &asymOut);
+
+            float *decoded = (float *)reserveMemory(n * sizeof(float));
+            quantization_t floatOutQ;
+            initFloat32Quantization(&floatOutQ);
+            tensor_t floatOut;
+            setTensorValues(&floatOut, (uint8_t *)decoded, &shape, &floatOutQ, NULL);
+            convertTensor(&asymOut, &floatOut);
+
+            float tol = asymQC.scale * 0.5f + 1e-3f;
+            for (size_t i = 0; i < n; i++) {
+                TEST_ASSERT_FLOAT_WITHIN(tol, vals[i], decoded[i]);
+            }
+
+            freeReservedMemory(vals);
+            freeReservedMemory(asymData);
+            freeReservedMemory(decoded);
+        }
+    }
+}
+
+void testChunkedSymInt32ToSymRoundTripsAtChunkBoundary(void) {
+    /* Characterization: SYM_INT32 -> SYM (convertSymInt32TensorToSymTensor) at n=517,
+     * qBits=6, straddling two ODT_CONVERSION_CHUNK_ELEMS=256 boundaries (chunks
+     * [0,256), [256,512), [512,517)). The dominant (absmax) element sits at index
+     * 400 -- inside the SECOND chunk -- so a pass-1 mutation that only scans the
+     * first chunk derives a far-too-small scale, which blows both the exact-scale
+     * assertion and the round-trip tolerance below (mutation guard, #296 Stage 2).
+     * Pinned GREEN on the old whole-tensor VLA before the chunked rewrite; must
+     * stay GREEN after. */
+    size_t n = 517;
+    uint8_t qBits = 6;
+    size_t dims[] = {n};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    symInt32QConfig_t inQC;
+    initSymInt32QConfigWithQMaxBits(HALF_AWAY, &inQC, 16);
+    inQC.scale = 0.05f;
+    quantization_t inQ;
+    initSymInt32Quantization(&inQC, &inQ);
+    int32_t *inData = (int32_t *)reserveMemory(n * sizeof(int32_t));
+    for (size_t i = 0; i < n; i++) {
+        inData[i] = (int32_t)((i * 2654435761u) % 1000u) - 500; /* [-500, 499] */
+    }
+    inData[400] = 100000; /* dominates absmax; lands in the second chunk */
+    tensor_t inTensor;
+    setTensorValues(&inTensor, (uint8_t *)inData, &shape, &inQ, NULL);
+
+    symQConfig_t outQC;
+    initSymQConfig(qBits, HALF_AWAY, &outQC);
+    quantization_t outQ;
+    initSymQuantization(&outQC, &outQ);
+    uint8_t *symData = (uint8_t *)reserveMemory(calcNumberOfBytesForData(&outQ, n));
+    tensor_t symOut;
+    setTensorValues(&symOut, symData, &shape, &outQ, NULL);
+
+    convertTensor(&inTensor, &symOut);
+
+    float expectedScale = (100000.f * inQC.scale) / 31.f; /* qMax = 2^(6-1) - 1 */
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, expectedScale, outQC.scale);
+
+    float *decoded = (float *)reserveMemory(n * sizeof(float));
+    quantization_t floatOutQ;
+    initFloat32Quantization(&floatOutQ);
+    tensor_t floatOut;
+    setTensorValues(&floatOut, (uint8_t *)decoded, &shape, &floatOutQ, NULL);
+    convertTensor(&symOut, &floatOut);
+
+    float tol = outQC.scale * 0.5f + 1e-3f;
+    for (size_t i = 0; i < n; i++) {
+        float expectedVal = (float)inData[i] * inQC.scale;
+        TEST_ASSERT_FLOAT_WITHIN(tol, expectedVal, decoded[i]);
+    }
+
+    freeReservedMemory(inData);
+    freeReservedMemory(symData);
+    freeReservedMemory(decoded);
+}
+
+void testChunkedAsymToSymRoundTripsAtChunkBoundary(void) {
+    /* Characterization: ASYM -> SYM (convertAsymTensorToSymTensor) at n=517, ASYM
+     * qBits=8 (byte-aligned so the fixture can write raw code bytes directly),
+     * straddling two ODT_CONVERSION_CHUNK_ELEMS=256 boundaries. The dominant
+     * (absmax) code sits at index 400 -- inside the second chunk [256,512) -- so a
+     * pass-1 mutation that only scans the first chunk misses it (mutation guard,
+     * #296 Stage 2). Pinned GREEN on the old whole-tensor VLA before the chunked
+     * rewrite; must stay GREEN after. */
+    size_t n = 517;
+    uint8_t qBits = 6; /* SYM output */
+    size_t dims[] = {n};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    asymQConfig_t inQC;
+    initAsymQConfig(8, HALF_AWAY, &inQC);
+    inQC.scale = 1.0f;
+    inQC.zeroPoint = -128;
+    quantization_t inQ;
+    initAsymQuantization(&inQC, &inQ);
+    uint8_t *asymData = (uint8_t *)reserveMemory(n);
+    for (size_t i = 0; i < n; i++) {
+        asymData[i] = (uint8_t)(118u + (i * 2654435761u) % 21u); /* codes [118,138] */
+    }
+    asymData[400] = 255; /* dequant = 255 - 128 = 127, dominates absmax */
+    tensor_t asymTensor;
+    setTensorValues(&asymTensor, asymData, &shape, &inQ, NULL);
+
+    symQConfig_t outQC;
+    initSymQConfig(qBits, HALF_AWAY, &outQC);
+    quantization_t outQ;
+    initSymQuantization(&outQC, &outQ);
+    uint8_t *symData = (uint8_t *)reserveMemory(calcNumberOfBytesForData(&outQ, n));
+    tensor_t symOut;
+    setTensorValues(&symOut, symData, &shape, &outQ, NULL);
+
+    convertTensor(&asymTensor, &symOut);
+
+    float expectedScale = 127.0f / 31.0f; /* qMax = 2^(6-1) - 1 */
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, expectedScale, outQC.scale);
+
+    float *decoded = (float *)reserveMemory(n * sizeof(float));
+    quantization_t floatOutQ;
+    initFloat32Quantization(&floatOutQ);
+    tensor_t floatOut;
+    setTensorValues(&floatOut, (uint8_t *)decoded, &shape, &floatOutQ, NULL);
+    convertTensor(&symOut, &floatOut);
+
+    float tol = outQC.scale * 0.5f + 1e-3f;
+    for (size_t i = 0; i < n; i++) {
+        float expectedVal = ((float)asymData[i] + (float)inQC.zeroPoint) * inQC.scale;
+        TEST_ASSERT_FLOAT_WITHIN(tol, expectedVal, decoded[i]);
+    }
+
+    freeReservedMemory(asymData);
+    freeReservedMemory(symData);
+    freeReservedMemory(decoded);
+}
+
+void testChunkedSymToAsymRoundTripsAtChunkBoundary(void) {
+    /* Characterization: SYM -> ASYM (convertSymTensorToAsymTensor) at n=517, SYM
+     * qBits=6 (sub-byte packed), straddling two ODT_CONVERSION_CHUNK_ELEMS=256
+     * boundaries. The extreme mantissa sits at index 400 -- inside the second
+     * chunk [256,512) -- so a pass-1 mutation that only scans the first chunk
+     * derives a too-narrow grid, clipping that element on encode and blowing the
+     * round-trip tolerance below (mutation guard, #296 Stage 2). Pinned GREEN on
+     * the old whole-tensor VLA before the chunked rewrite; must stay GREEN
+     * after. */
+    size_t n = 517;
+    uint8_t qBits = 6;
+    size_t dims[] = {n};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    symQConfig_t inQC;
+    initSymQConfig(qBits, HALF_AWAY, &inQC);
+    inQC.scale = 0.2f;
+    quantization_t inQ;
+    initSymQuantization(&inQC, &inQ);
+    int32_t *mant = (int32_t *)reserveMemory(n * sizeof(int32_t));
+    for (size_t i = 0; i < n; i++) {
+        mant[i] = (int32_t)((i * 2654435761u) % 20u) - 10; /* [-10, 9], well inside qBits=6 */
+    }
+    mant[400] = 31; /* max representable mantissa; dominates the grid */
+    uint8_t *symData = (uint8_t *)reserveMemory(calcNumberOfBytesForData(&inQ, n));
+    byteConversion((uint8_t *)mant, 32, symData, qBits, n);
+    tensor_t symTensor;
+    setTensorValues(&symTensor, symData, &shape, &inQ, NULL);
+
+    asymQConfig_t outQC;
+    initAsymQConfig(5, HALF_AWAY, &outQC);
+    quantization_t outQ;
+    initAsymQuantization(&outQC, &outQ);
+    uint8_t *asymData = (uint8_t *)reserveMemory(calcNumberOfBytesForData(&outQ, n));
+    tensor_t asymOut;
+    setTensorValues(&asymOut, asymData, &shape, &outQ, NULL);
+
+    convertTensor(&symTensor, &asymOut);
+
+    float *decoded = (float *)reserveMemory(n * sizeof(float));
+    quantization_t floatOutQ;
+    initFloat32Quantization(&floatOutQ);
+    tensor_t floatOut;
+    setTensorValues(&floatOut, (uint8_t *)decoded, &shape, &floatOutQ, NULL);
+    convertTensor(&asymOut, &floatOut);
+
+    float tol = outQC.scale * 0.5f + 1e-3f;
+    for (size_t i = 0; i < n; i++) {
+        float expectedVal = (float)mant[i] * inQC.scale;
+        TEST_ASSERT_FLOAT_WITHIN(tol, expectedVal, decoded[i]);
+    }
+
+    freeReservedMemory(mant);
+    freeReservedMemory(symData);
+    freeReservedMemory(asymData);
+    freeReservedMemory(decoded);
+}
+
+void testChunkedSymInt32ToAsymRoundTripsAtChunkBoundary(void) {
+    /* Characterization: SYM_INT32 -> ASYM (convertSymInt32TensorToAsymTensor) at
+     * n=517, straddling two ODT_CONVERSION_CHUNK_ELEMS=256 boundaries in the
+     * chunked emit pass. The extreme mantissa sits at index 400 (second chunk
+     * [256,512)) so any future chunking bug in the pass-1 min/max scan is caught
+     * here too. Pinned GREEN on the old whole-tensor VLA before the chunked
+     * rewrite; must stay GREEN after. */
+    size_t n = 517;
+    size_t dims[] = {n};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    symInt32QConfig_t inQC;
+    initSymInt32QConfigWithQMaxBits(HALF_AWAY, &inQC, 16);
+    inQC.scale = 0.2f;
+    quantization_t inQ;
+    initSymInt32Quantization(&inQC, &inQ);
+    int32_t *inData = (int32_t *)reserveMemory(n * sizeof(int32_t));
+    for (size_t i = 0; i < n; i++) {
+        inData[i] = (int32_t)((i * 2654435761u) % 20u) - 10;
+    }
+    inData[400] = 500; /* dominates min/max; lands in the second chunk */
+    tensor_t inTensor;
+    setTensorValues(&inTensor, (uint8_t *)inData, &shape, &inQ, NULL);
+
+    asymQConfig_t outQC;
+    initAsymQConfig(5, HALF_AWAY, &outQC);
+    quantization_t outQ;
+    initAsymQuantization(&outQC, &outQ);
+    uint8_t *asymData = (uint8_t *)reserveMemory(calcNumberOfBytesForData(&outQ, n));
+    tensor_t asymOut;
+    setTensorValues(&asymOut, asymData, &shape, &outQ, NULL);
+
+    convertTensor(&inTensor, &asymOut);
+
+    float *decoded = (float *)reserveMemory(n * sizeof(float));
+    quantization_t floatOutQ;
+    initFloat32Quantization(&floatOutQ);
+    tensor_t floatOut;
+    setTensorValues(&floatOut, (uint8_t *)decoded, &shape, &floatOutQ, NULL);
+    convertTensor(&asymOut, &floatOut);
+
+    float tol = outQC.scale * 0.5f + 1e-3f;
+    for (size_t i = 0; i < n; i++) {
+        float expectedVal = (float)inData[i] * inQC.scale;
+        TEST_ASSERT_FLOAT_WITHIN(tol, expectedVal, decoded[i]);
+    }
+
+    freeReservedMemory(inData);
+    freeReservedMemory(asymData);
+    freeReservedMemory(decoded);
+}
+
+void testChunkedSymToFloat32DequantizesAtChunkBoundary(void) {
+    /* Characterization: SYM -> FLOAT32 (convertSymTensorToFloat32Tensor) at n=517,
+     * qBits=3, straddling two ODT_CONVERSION_CHUNK_ELEMS=256 boundaries (chunks
+     * [0,256), [256,512), [512,517)). Unpack+dequant is exact (no rounding), so
+     * every element is asserted bit-for-bit -- a mutated output index (e.g.
+     * out[i] instead of out[off+i]) corrupts elements once off>0. Pinned GREEN
+     * on the old whole-tensor VLA before the #296 Stage 2 chunked rewrite; must
+     * stay GREEN after. */
+    size_t n = 517;
+    uint8_t qBits = 3;
+    size_t dims[] = {n};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    symQConfig_t inQC = {.scale = 0.5f, .qBits = qBits, .roundingMode = HALF_AWAY};
+    quantization_t inQ;
+    initSymQuantization(&inQC, &inQ);
+    int32_t *mant = (int32_t *)reserveMemory(n * sizeof(int32_t));
+    for (size_t i = 0; i < n; i++) {
+        mant[i] = (int32_t)(i % 8) - 4; /* spans [-4, 3]: exactly qBits=3 range */
+    }
+    uint8_t *packed = (uint8_t *)reserveMemory(calcNumberOfBytesForData(&inQ, n));
+    byteConversion((uint8_t *)mant, 32, packed, qBits, n);
+    tensor_t inTensor;
+    setTensorValues(&inTensor, packed, &shape, &inQ, NULL);
+
+    quantization_t outQ;
+    initFloat32Quantization(&outQ);
+    float *decoded = (float *)reserveMemory(n * sizeof(float));
+    tensor_t outTensor;
+    setTensorValues(&outTensor, (uint8_t *)decoded, &shape, &outQ, NULL);
+
+    convertTensor(&inTensor, &outTensor);
+
+    for (size_t i = 0; i < n; i++) {
+        float expected = (float)mant[i] * inQC.scale;
+        TEST_ASSERT_EQUAL_FLOAT(expected, decoded[i]);
+    }
+
+    freeReservedMemory(mant);
+    freeReservedMemory(packed);
+    freeReservedMemory(decoded);
+}
+
+void testChunkedAsymToFloat32DequantizesAtChunkBoundary(void) {
+    /* Characterization: ASYM -> FLOAT32 (convertAsymTensorToFloatTensor) at n=517,
+     * qBits=5, straddling two ODT_CONVERSION_CHUNK_ELEMS=256 boundaries. Unpack is
+     * zero-extend (ASYM codes are unsigned) + affine decode, exact (no rounding):
+     * every element asserted bit-for-bit. Pinned GREEN on the old whole-tensor VLA
+     * before the #296 Stage 2 chunked rewrite; must stay GREEN after. */
+    size_t n = 517;
+    size_t dims[] = {n};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    asymQConfig_t inQC;
+    initAsymQConfig(5, HALF_AWAY, &inQC);
+    inQC.scale = 0.25f;
+    inQC.zeroPoint = -4;
+    quantization_t inQ;
+    initAsymQuantization(&inQC, &inQ);
+    int32_t *codes = (int32_t *)reserveMemory(n * sizeof(int32_t));
+    for (size_t i = 0; i < n; i++) {
+        codes[i] = (int32_t)(i % 32); /* spans [0, 31]: exactly qBits=5 range */
+    }
+    uint8_t *packed = (uint8_t *)reserveMemory(calcNumberOfBytesForData(&inQ, n));
+    byteConversion((uint8_t *)codes, 32, packed, inQC.qBits, n);
+    tensor_t inTensor;
+    setTensorValues(&inTensor, packed, &shape, &inQ, NULL);
+
+    quantization_t outQ;
+    initFloat32Quantization(&outQ);
+    float *decoded = (float *)reserveMemory(n * sizeof(float));
+    tensor_t outTensor;
+    setTensorValues(&outTensor, (uint8_t *)decoded, &shape, &outQ, NULL);
+
+    convertTensor(&inTensor, &outTensor);
+
+    for (size_t i = 0; i < n; i++) {
+        float expected = ((float)codes[i] + (float)inQC.zeroPoint) * inQC.scale;
+        TEST_ASSERT_EQUAL_FLOAT(expected, decoded[i]);
+    }
+
+    freeReservedMemory(codes);
+    freeReservedMemory(packed);
+    freeReservedMemory(decoded);
+}
+
+void testDequantChunkToFloatFloat32MatchesSourceAtOffsets(void) {
+    /* dequantChunkToFloat direct test, FLOAT32 cell: plain memcpy at each offset. */
+    size_t n = 264; /* > ODT_CONVERSION_CHUNK_ELEMS + 8 so offset 256 has headroom */
+    size_t dims[] = {n};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    float *vals = (float *)reserveMemory(n * sizeof(float));
+    for (size_t i = 0; i < n; i++) {
+        vals[i] = (float)i * 0.5f - 10.f;
+    }
+    quantization_t q;
+    initFloat32Quantization(&q);
+    tensor_t t;
+    setTensorValues(&t, (uint8_t *)vals, &shape, &q, NULL);
+
+    size_t offsets[] = {0, 8, 256};
+    size_t count = 8;
+    for (size_t oi = 0; oi < sizeof(offsets) / sizeof(offsets[0]); oi++) {
+        size_t offset = offsets[oi];
+        float out[8];
+        dequantChunkToFloat(&t, offset, count, out);
+        TEST_ASSERT_EQUAL_FLOAT_ARRAY(vals + offset, out, count);
+    }
+    freeReservedMemory(vals);
+}
+
+void testDequantChunkToFloatSymInt32MatchesScaleAtOffsets(void) {
+    /* dequantChunkToFloat direct test, SYM_INT32 cell: mantissa*scale, no unpack. */
+    size_t n = 264;
+    size_t dims[] = {n};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    int32_t *mant = (int32_t *)reserveMemory(n * sizeof(int32_t));
+    for (size_t i = 0; i < n; i++) {
+        mant[i] = (int32_t)i - 100; /* spans negative/positive */
+    }
+    symInt32QConfig_t qc;
+    initSymInt32QConfigWithQMaxBits(HALF_AWAY, &qc, 16);
+    qc.scale = 0.25f;
+    quantization_t q;
+    initSymInt32Quantization(&qc, &q);
+    tensor_t t;
+    setTensorValues(&t, (uint8_t *)mant, &shape, &q, NULL);
+
+    size_t offsets[] = {0, 8, 256};
+    size_t count = 8;
+    for (size_t oi = 0; oi < sizeof(offsets) / sizeof(offsets[0]); oi++) {
+        size_t offset = offsets[oi];
+        float out[8];
+        dequantChunkToFloat(&t, offset, count, out);
+        for (size_t i = 0; i < count; i++) {
+            float expected = (float)mant[offset + i] * qc.scale;
+            TEST_ASSERT_EQUAL_FLOAT(expected, out[i]);
+        }
+    }
+    freeReservedMemory(mant);
+}
+
+void testDequantChunkToFloatSymUnpacksSignExtendedAtOffsets(void) {
+    /* dequantChunkToFloat direct test, SYM cell: sign-extend unpack via
+     * unpackSignExtendChunk, then mantissa*scale. Round-trips packed sub-byte
+     * data at offsets that straddle the ODT_CONVERSION_CHUNK_ELEMS boundary. */
+    size_t n = 264;
+    size_t dims[] = {n};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    int32_t *mant = (int32_t *)reserveMemory(n * sizeof(int32_t));
+    for (size_t i = 0; i < n; i++) {
+        mant[i] = (int32_t)(i % 64) - 32; /* spans [-32, 31]: exactly qBits=6 range */
+    }
+    symQConfig_t qc = {.scale = 0.5f, .qBits = 6, .roundingMode = HALF_AWAY};
+    quantization_t q;
+    initSymQuantization(&qc, &q);
+    uint8_t *packed = (uint8_t *)reserveMemory(calcNumberOfBytesForData(&q, n));
+    byteConversion((uint8_t *)mant, 32, packed, 6, n);
+    tensor_t t;
+    setTensorValues(&t, packed, &shape, &q, NULL);
+
+    size_t offsets[] = {0, 8, 256};
+    size_t count = 8;
+    for (size_t oi = 0; oi < sizeof(offsets) / sizeof(offsets[0]); oi++) {
+        size_t offset = offsets[oi];
+        float out[8];
+        dequantChunkToFloat(&t, offset, count, out);
+        for (size_t i = 0; i < count; i++) {
+            float expected = (float)mant[offset + i] * qc.scale;
+            TEST_ASSERT_EQUAL_FLOAT(expected, out[i]);
+        }
+    }
+    freeReservedMemory(mant);
+    freeReservedMemory(packed);
+}
+
+void testDequantChunkToFloatAsymUnpacksZeroExtendedAtOffsets(void) {
+    /* dequantChunkToFloat direct test, ASYM cell: zero-extend unpack via
+     * unpackZeroExtendChunk (byteConversion only, no sign bit), then
+     * (code+zeroPoint)*scale. */
+    size_t n = 264;
+    size_t dims[] = {n};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    int32_t *codes = (int32_t *)reserveMemory(n * sizeof(int32_t));
+    for (size_t i = 0; i < n; i++) {
+        codes[i] = (int32_t)(i % 32); /* spans [0, 31]: exactly qBits=5 range */
+    }
+    asymQConfig_t qc;
+    initAsymQConfig(5, HALF_AWAY, &qc);
+    qc.scale = 0.25f;
+    qc.zeroPoint = -4;
+    quantization_t q;
+    initAsymQuantization(&qc, &q);
+    uint8_t *packed = (uint8_t *)reserveMemory(calcNumberOfBytesForData(&q, n));
+    byteConversion((uint8_t *)codes, 32, packed, 5, n);
+    tensor_t t;
+    setTensorValues(&t, packed, &shape, &q, NULL);
+
+    size_t offsets[] = {0, 8, 256};
+    size_t count = 8;
+    for (size_t oi = 0; oi < sizeof(offsets) / sizeof(offsets[0]); oi++) {
+        size_t offset = offsets[oi];
+        float out[8];
+        dequantChunkToFloat(&t, offset, count, out);
+        for (size_t i = 0; i < count; i++) {
+            float expected = ((float)codes[offset + i] + (float)qc.zeroPoint) * qc.scale;
+            TEST_ASSERT_EQUAL_FLOAT(expected, out[i]);
+        }
+    }
+    freeReservedMemory(codes);
+    freeReservedMemory(packed);
+}
+
+void testDequantChunkToFloatRejectsCountAboveChunk(void) {
+    /* Fail-fast guard 1/2: count > ODT_CONVERSION_CHUNK_ELEMS must exit(1),
+     * never silently read past the fixed-size chunk buffers. */
+    size_t n = ODT_CONVERSION_CHUNK_ELEMS + 1;
+    size_t dims[] = {n};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    float *vals = (float *)reserveMemory(n * sizeof(float));
+    memset(vals, 0, n * sizeof(float));
+    quantization_t q;
+    initFloat32Quantization(&q);
+    tensor_t t;
+    setTensorValues(&t, (uint8_t *)vals, &shape, &q, NULL);
+
+    float out[ODT_CONVERSION_CHUNK_ELEMS + 1];
+    ASSERT_EXITS_WITH_FAILURE(dequantChunkToFloat(&t, 0, ODT_CONVERSION_CHUNK_ELEMS + 1, out));
+
+    freeReservedMemory(vals);
+}
+
+void testDequantChunkToFloatRejectsMisalignedOffset(void) {
+    /* Fail-fast guard 2/2: elemOffset % 8 != 0 must exit(1) -- the packed-width
+     * byte-alignment contract that lets packedByteOffset skip a byte-boundary
+     * check per call. */
+    size_t n = 16;
+    size_t dims[] = {n};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    float vals[16] = {0};
+    quantization_t q;
+    initFloat32Quantization(&q);
+    tensor_t t;
+    setTensorValues(&t, (uint8_t *)vals, &shape, &q, NULL);
+
+    float out[4];
+    ASSERT_EXITS_WITH_FAILURE(dequantChunkToFloat(&t, 3, 4, out));
+}
+
+void testDequantChunkToFloatRejectsOutOfRangeOffset(void) {
+    /* Fix 1 (release-review, PR #324): [elemOffset, elemOffset+count) must not
+     * exceed the source tensor's own element count. Before the fix, only
+     * count > ODT_CONVERSION_CHUNK_ELEMS and elemOffset % 8 != 0 were guarded --
+     * an offset that starts exactly AT the tensor's end (still 8-aligned, still
+     * <= chunk size) sailed through both and fell into an out-of-bounds
+     * FLOAT32 memcpy. Mutation guard: removing the new range guard lets the
+     * child run to completion (or crash outside the exit(1) path) -> RED
+     * either way. */
+    size_t n = 8;
+    size_t dims[] = {n};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    float vals[8] = {0.f, 1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f};
+    quantization_t q;
+    initFloat32Quantization(&q);
+    tensor_t t;
+    setTensorValues(&t, (uint8_t *)vals, &shape, &q, NULL);
+
+    float out[1];
+    ASSERT_EXITS_WITH_FAILURE(dequantChunkToFloat(&t, 8, 1, out));
+}
+
+void testQuantizeFloatToAsymNoOpOnEmptyTensor(void) {
+    /* Fix 2 (release-review, PR #324): n==0 must no-op, never read values[0].
+     * Before the fix, quantizeFloatToAsym's findMinFloat/findMaxFloat both
+     * unconditionally dereference values[0] regardless of n -- UB for an
+     * empty payload. Since both reads land on the same element, mn==mx
+     * unconditionally at n==0, so deriveAsymGridFromMinMax's degenerate
+     * branch fires and overwrites the output qConfig's scale/zeroPoint from
+     * whatever sits at values[0] -- even though there is nothing to
+     * quantize. Pin: pre-set sentinel scale/zeroPoint on the output qConfig
+     * and a deterministic non-zero value at the input's element 0; both must
+     * survive the n==0 call untouched.
+     * Mutation guard: dropping the n==0 guard lets deriveAsymGridFromMinMax's
+     * mn==mx branch overwrite scale with fabsf(42.f)=42.f and zeroPoint with
+     * round(42/42)=1, failing both asserts below -> RED. */
+    size_t dims[] = {0};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    quantization_t floatQ;
+    initFloat32Quantization(&floatQ);
+    float floatDummy = 42.f; /* n==0: logically unreachable, but real backing
+                              * storage so a would-be values[0] read stays
+                              * inside owned memory (well-defined RED). */
+    tensor_t floatTensor;
+    setTensorValues(&floatTensor, (uint8_t *)&floatDummy, &shape, &floatQ, NULL);
+
+    asymQConfig_t asymQC;
+    initAsymQConfig(5, HALF_AWAY, &asymQC);
+    asymQC.scale = 123.f; /* sentinel: must survive untouched */
+    asymQC.zeroPoint = 7;
+    quantization_t asymQ;
+    initAsymQuantization(&asymQC, &asymQ);
+    uint8_t asymDummy;
+    tensor_t asymTensor;
+    setTensorValues(&asymTensor, &asymDummy, &shape, &asymQ, NULL);
+
+    convertTensor(&floatTensor, &asymTensor);
+
+    TEST_ASSERT_EQUAL_FLOAT(123.f, asymQC.scale);
+    TEST_ASSERT_EQUAL_INT16(7, asymQC.zeroPoint);
+}
+
+void testAccumulateTensorIntoSymRescaleRejectsSelfAliasedIncrement(void) {
+    /* Fix 3 (release-review, PR #324): the rescale engine rewrites the
+     * target's qConfig scale between phase A (fresh-grid derivation, reads
+     * only) and phase B (chunked decode+requant+pack). If increment aliases
+     * target, phase B's incSrcChunk dequantizes the (not-yet-repacked) shared
+     * bytes using the ALREADY-overwritten fresh scale instead of the old one
+     * phase A used -- silently wrong output, no crash, no exit. The funnel
+     * epilogue always passes a distinct intermediate; this guards a caller
+     * that violates that contract directly.
+     * Mutation guard: removing the alias check lets the child run to
+     * completion and exit 0 (no death) -> RED. */
+    size_t n = 4;
+    size_t dims[] = {n};
+    size_t order[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = order};
+
+    symQConfig_t qc = {.scale = 0.1f, .qBits = 6, .roundingMode = HALF_AWAY};
+    quantization_t q;
+    initSymQuantization(&qc, &q);
+    uint8_t data[calcNumberOfBytesForData(&q, n)];
+    int32_t mant[] = {5, -2, 3, -4};
+    byteConversion((uint8_t *)mant, 32, data, 6, n);
+    tensor_t t;
+    setTensorValues(&t, data, &shape, &q, NULL);
+
+    ASSERT_EXITS_WITH_FAILURE(accumulateTensorIntoSymRescale(&t, &t));
+}
+
+void shouldShowSameBehavior(){
+    size_t n = 6;
+    size_t qBits = 6;
+    size_t deltabits = qBits;
+    int32_t codesDelta[n];
+    int32_t codesSym[n];
+    uint8_t deltaValues[] = {0b01001000, 0b11111010, 0b10100101, 0b11001000, 0b00001001};
+    byteConversionWithOffsets(deltaValues, deltabits, qBits, (uint8_t *)codesDelta, 32, 32, n, 1);
+    symTestUnpackSignExtendForDeltas(qBits, deltabits, codesDelta, n);
+    symTestUnpackSignExtend(deltaValues, 6, codesSym, 6);
+    TEST_ASSERT_EQUAL_INT32_ARRAY(codesDelta, codesSym, n);
+}
 void setUp() {}
 void tearDown() {}
 
 int main(void) {
     UNITY_BEGIN();
-/*
+
     RUN_TEST(testZeroTensorDataSymSubByteZeroesOnlyPackedBytes);
     RUN_TEST(testConversionIntFloat);
     RUN_TEST(testConversionIntSymInt32);
@@ -2834,9 +3763,10 @@ int main(void) {
     RUN_TEST(testConversionSymAsymRescaleRoundTrips);
     RUN_TEST(testConversionSymInt32ToSymRescaleRoundTrips);
     RUN_TEST(testRepackSymInt32ToSymNoRescaleFittingCarriesScale);
-    RUN_TEST(testRepackSymInt32ToSymNoRescaleRejectsOverflow); */
+    RUN_TEST(testRepackSymInt32ToSymNoRescaleRejectsOverflow);
     RUN_TEST(testConversionFloatToSymRoundTripsSymmetric);
-    RUN_TEST(testConversionFloatToDeltaRoundTripsSymmetric);
+    RUN_TEST(testConversionFloatToDeltaRoundTripsSymmetricQBitsEqalDeltabits);
+    RUN_TEST(testConversionFloatToDeltaRoundTripsSymmetricQBits6Deltabits5);
     RUN_TEST(testConversionInt32ToSymNoRescaleScale1);
     RUN_TEST(testConversionInt32ToSymRejectsOutOfRange);
     RUN_TEST(testChunkedFloatToSymRoundTripsAtChunkBoundary);
@@ -2871,6 +3801,9 @@ int main(void) {
     RUN_TEST(testDequantChunkToFloatRejectsOutOfRangeOffset);
     RUN_TEST(testQuantizeFloatToAsymNoOpOnEmptyTensor);
     RUN_TEST(testAccumulateTensorIntoSymRescaleRejectsSelfAliasedIncrement);
+
+    /*for debugging purposes*/
+    //RUN_TEST(shouldShowSameBehavior);
 
     return UNITY_END();
 }
