@@ -789,6 +789,97 @@ void testTrainingRun_CallsCallbackEachEpochWithStats() {
     TEST_ASSERT_EQUAL_FLOAT(capturedFinalEvalAccuracy, capturedCbLastStatsAccuracy);
 }
 
+/* Build a fresh 2-D SYM_INT32 (int12, HALF_AWAY) tensor quantized from a
+ * float buffer — for hand-wired SYM layers (#206 acceptance path). */
+static tensor_t *buildSymTensor2D(size_t d0, size_t d1, const float *src, size_t count) {
+    size_t *dims = reserveMemory(2 * sizeof(size_t));
+    dims[0] = d0;
+    dims[1] = d1;
+    size_t *order = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, 2, order);
+    tensor_t *t = initTensor(shape, quantizationInitSymInt32(HALF_AWAY), NULL);
+    tensorFillFromFloatBuffer(t, src, count);
+    return t;
+}
+
+/* Single-sample dataset with NEGATIVE features: on a SYM output wire the
+ * mantissas are negative, and reading them as float* reinterprets the int32
+ * codes as NaN bit patterns (sign+all-ones-exponent), freezing a naive float
+ * argmax at index 0. True argmax is index 1 (-0.5 > -1.0). */
+static tensor_t *symMetricsItem;
+static tensor_t *symMetricsLabel;
+static bool symMetricsDatasetInit = false;
+
+static void initSymMetricsDataset() {
+    if (symMetricsDatasetInit) {
+        return;
+    }
+    symMetricsItem = buildFloatTensor2D(1, 2, (float[]){-1.f, -0.5f}, 2);
+    symMetricsLabel = buildFloatTensor2D(1, 2, (float[]){0.f, 1.f}, 2);
+    symMetricsDatasetInit = true;
+}
+
+static void freeSymMetricsDataset() {
+    if (!symMetricsDatasetInit) {
+        return;
+    }
+    freeTensor(symMetricsItem);
+    freeTensor(symMetricsLabel);
+    symMetricsDatasetInit = false;
+}
+
+static sample_t *getSymMetricsSample(size_t id) {
+    (void)id;
+    sample_t *s = reserveMemory(sizeof(sample_t));
+    s->item = symMetricsItem;
+    s->label = symMetricsLabel;
+    return s;
+}
+
+static size_t getSymMetricsDatasetSize() {
+    return 1;
+}
+
+/* #206 acceptance prerequisite: with a SYM_INT32 output wire (full-SYM
+ * classifier head), the metrics argmax must read int32 mantissas — mantissa
+ * order IS value order (scale > 0), while a float* cast garbles it. Identity
+ * SYM linear reproduces the (negative) input on the wire; the label points at
+ * class 1, so a correct argmax yields accuracy 1.0. */
+void testEvaluationEpochWithMetrics_SymOutputWire() {
+    initSymMetricsDataset();
+
+    tensor_t *wParam = buildSymTensor2D(2, 2, (float[]){1.f, 0.f, 0.f, 1.f}, 4);
+    tensor_t *wGrad = gradInitFloat(wParam, NULL);
+    parameter_t *w = parameterInit(wParam, wGrad);
+
+    tensor_t *bParam = buildSymTensor2D(1, 2, (float[]){0.f, 0.f}, 2);
+    tensor_t *bGrad = gradInitFloat(bParam, NULL);
+    parameter_t *b = parameterInit(bParam, bGrad);
+
+    quantization_t *symQ = quantizationInitSymInt32(HALF_AWAY);
+    layer_t *linear = buildBorrowedLinearLayer(w, b, symQ);
+    layer_t *model[] = {linear};
+
+    dataLoader_t *dl = dataLoaderInit(getSymMetricsSample, getSymMetricsDatasetSize, 1, NULL, NULL,
+                                      false, 0, true);
+
+    epochStats_t stats =
+        evaluationEpochWithMetrics(model, 1, MSE, dl, inferenceWithLoss, REDUCTION_MEAN);
+
+    float capturedAccuracy = stats.accuracy;
+
+    freeDataLoader(dl);
+    freeLinearLayerShellOnly(linear);
+    freeParameter(b);
+    freeParameter(w);
+    freeQuantization(symQ);
+    freeSymMetricsDataset();
+
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, capturedAccuracy);
+}
+
 void testEvaluationEpochWithMetrics_AllCorrect() {
     initEpochDataset();
 
@@ -1719,6 +1810,7 @@ int main(void) {
     RUN_TEST(testTrainingEpochDefault_MeanForwardSumBackward_MixedCombination);
     RUN_TEST(testTrainingRun_ReturnsResult);
     RUN_TEST(testEvaluationEpochWithMetrics_AllCorrect);
+    RUN_TEST(testEvaluationEpochWithMetrics_SymOutputWire);
     RUN_TEST(testEvaluationEpochWithMetrics_PartiallyCorrect);
     RUN_TEST(testEvaluationEpochWithMetrics_HandlesZeroPredictionClass);
     RUN_TEST(testEvaluationEpochWithReport_ReturnsConfusionMatrix);

@@ -54,6 +54,9 @@ CONFIGS: dict[str, tuple[str, dict[str, str]]] = {
     "sym12": ("train_c_har_classifier_sym", {"SYM_BITS": "12"}),
     "sym10": ("train_c_har_classifier_sym", {"SYM_BITS": "10"}),
     "sym8": ("train_c_har_classifier_sym", {"SYM_BITS": "8"}),
+    # Full-SYM wires (#206 acceptance): SYM_INT32 activation + dx wires, SYM
+    # dx compute, SYM softmax output -> fake-quant CE + SYM metrics argmax.
+    "sym8w": ("train_c_har_classifier_sym", {"SYM_BITS": "8", "SYM_WIRES": "1"}),
     "sym6": ("train_c_har_classifier_sym", {"SYM_BITS": "6"}),
     "sym4": ("train_c_har_classifier_sym", {"SYM_BITS": "4"}),
     "sym8cos": ("train_c_har_classifier_sym", {"SYM_BITS": "8", "LR_SCHEDULE": "cosine"}),

@@ -110,6 +110,7 @@ static int g_epochs = 50;
 static unsigned g_seed = 1;
 static unsigned g_shuffleSeed = 1;
 static int g_symBits = 12;
+static int g_symWires = 0;          /* SYM_WIRES=1 -> full-SYM wires (#206 acceptance) */
 static int g_useCosine = 0;         /* LR_SCHEDULE=cosine */
 static float g_lrMin = 0.0f;        /* LR_MIN (cosine floor) */
 static optimizer_t *g_optim = NULL; /* for per-epoch LR logging in epochCallback */
@@ -236,23 +237,30 @@ static size_t getTestSize(void) {
 
 /* Shared quantization templates (borrowed by every layer for the whole run). */
 typedef struct symQuant {
-    quantization_t *floatQ; /* FLOAT32 wire + temp weight/bias init storage */
-    quantization_t *symQ;   /* packed SYM@SYM_BITS — post-init weight+bias storage */
+    quantization_t *floatQ;   /* FLOAT32 wire + temp weight/bias init storage */
+    quantization_t *symQ;     /* packed SYM@SYM_BITS — post-init weight+bias storage */
+    quantization_t *symWireQ; /* SYM_INT32 int12 wires (SYM_WIRES=1, #206) */
 } symQuant_t;
 
-/* SYM layerQuant for conv/linear: SYM_INT32 forward compute, FLOAT32 wires,
- * FLOAT32 grad math, FLOAT32 grad storage (weightGradStorage/biasGradStorage
- * NULL => per-layer FLOAT32 default). weightStorage/biasStorage are FLOAT32
- * during construction (factory only inits FLOAT32-native param storage, #270);
- * main() requantizes them to packed SYM@SYM_BITS post-build. */
+/* SYM layerQuant for conv/linear: SYM_INT32 forward compute, FLOAT32 grad
+ * math, FLOAT32 grad storage (weightGradStorage/biasGradStorage NULL =>
+ * per-layer FLOAT32 default). Wires are FLOAT32 by default; SYM_WIRES=1
+ * (#206 acceptance) switches the activation + dx wires to SYM_INT32 and the
+ * dx COMPUTE to the native SYM arms — param grads stay FLOAT32 either way
+ * (#261). weightStorage/biasStorage are FLOAT32 during construction (factory
+ * only inits FLOAT32-native param storage, #270); main() requantizes them to
+ * packed SYM@SYM_BITS post-build. */
 static layerQuant_t symLayerQuant(symQuant_t *sq) {
+    quantization_t *wireQ = g_symWires ? sq->symWireQ : sq->floatQ;
+    arithmetic_t dxMath = g_symWires ? (arithmetic_t){ARITH_SYM_INT32, HALF_AWAY}
+                                     : (arithmetic_t){ARITH_FLOAT32, HALF_AWAY};
     return (layerQuant_t){
         .forwardMath = (arithmetic_t){ARITH_SYM_INT32, HALF_AWAY},
         .weightGradMath = (arithmetic_t){ARITH_FLOAT32, HALF_AWAY},
         .biasGradMath = (arithmetic_t){ARITH_FLOAT32, HALF_AWAY},
-        .propLossMath = (arithmetic_t){ARITH_FLOAT32, HALF_AWAY},
-        .outputQ = sq->floatQ,
-        .propLossQ = sq->floatQ,
+        .propLossMath = dxMath,
+        .outputQ = wireQ,
+        .propLossQ = wireQ,
         .weightStorage = sq->floatQ, /* temp; requantized to SYM@SYM_BITS post-build */
         .biasStorage = sq->floatQ,   /* temp; requantized to SYM@SYM_BITS post-build */
         .weightGradStorage = NULL,   /* FLOAT32 grad default */
@@ -265,7 +273,7 @@ static layerQuant_t symLayerQuant(symQuant_t *sq) {
     };
 }
 
-static void buildModel(layer_t **model, symQuant_t *sq, layerQuant_t *lqFloat) {
+static void buildModel(layer_t **model, symQuant_t *sq, layerQuant_t *lqNontrain) {
     layerQuant_t lqSym = symLayerQuant(sq);
 
     /* Block 1: Conv1d(9->16, K=7, SAME), ReLU, MaxPool(K=2, S=2). */
@@ -273,37 +281,37 @@ static void buildModel(layer_t **model, symQuant_t *sq, layerQuant_t *lqFloat) {
         &(conv1dInit_t){
             .inChannels = IN_CHANNELS, .outChannels = C1_OUT, .kernelSize = C1_K, .padding = SAME},
         &lqSym);
-    model[1] = reluLayerInit(lqFloat);
+    model[1] = reluLayerInit(lqNontrain);
     model[2] = maxPool1dLayerInit(
         &(maxPool1dInit_t){
             .kernelSize = 2, .stride = 2, .inputChannels = C1_OUT, .inputLength = LEN_INPUT},
-        lqFloat);
+        lqNontrain);
 
     /* Block 2 */
     model[3] = conv1dLayerInit(
         &(conv1dInit_t){
             .inChannels = C1_OUT, .outChannels = C2_OUT, .kernelSize = C2_K, .padding = SAME},
         &lqSym);
-    model[4] = reluLayerInit(lqFloat);
+    model[4] = reluLayerInit(lqNontrain);
     model[5] = maxPool1dLayerInit(
         &(maxPool1dInit_t){
             .kernelSize = 2, .stride = 2, .inputChannels = C2_OUT, .inputLength = LEN_INPUT / 2},
-        lqFloat);
+        lqNontrain);
 
     /* Block 3 */
     model[6] = conv1dLayerInit(
         &(conv1dInit_t){
             .inChannels = C2_OUT, .outChannels = C3_OUT, .kernelSize = C3_K, .padding = SAME},
         &lqSym);
-    model[7] = reluLayerInit(lqFloat);
+    model[7] = reluLayerInit(lqNontrain);
     model[8] = avgPool1dLayerInit(
-        &(avgPool1dInit_t){.kernelSize = LEN_INPUT / 4, .stride = LEN_INPUT / 4}, lqFloat);
+        &(avgPool1dInit_t){.kernelSize = LEN_INPUT / 4, .stride = LEN_INPUT / 4}, lqNontrain);
 
     /* Head */
     model[9] = flattenLayerInit();
     model[10] =
         linearLayerInit(&(linearInit_t){.inFeatures = C3_OUT, .outFeatures = NUM_CLASSES}, &lqSym);
-    model[11] = softmaxLayerInit(lqFloat);
+    model[11] = softmaxLayerInit(lqNontrain);
 }
 
 /* Requantize weights + bias -> packed SYM@SYM_BITS for the 4 trainable layers.
@@ -456,6 +464,7 @@ static void epochCallback(size_t epoch, float trainLoss, epochStats_t evalStats)
 
 int main(void) {
     g_symBits = envInt("SYM_BITS", g_symBits);
+    g_symWires = envInt("SYM_WIRES", g_symWires);
     g_lr = envFloat("LR", g_lr);
     g_momentum = envFloat("MOMENTUM", g_momentum);
     g_epochs = envInt("EPOCHS", g_epochs);
@@ -520,17 +529,22 @@ int main(void) {
     symQuant_t sq = {
         .floatQ = quantizationInitFloat(),
         .symQ = quantizationInitSym((uint8_t)g_symBits, HALF_AWAY),
+        .symWireQ = quantizationInitSymInt32(HALF_AWAY),
     };
 
-    layerQuant_t lqFloat;
-    layerQuantInitUniform(&lqFloat, quantizationInitFloat());
+    /* Non-trainable layers (ReLU/pools/Softmax): FLOAT32 wires by default;
+     * under SYM_WIRES=1 the uniform lq carries the SYM wire config, so their
+     * forward/propLoss dispatch selects the native SYM arms (#205) and Softmax
+     * runs its funnel dequant->stable-float->requant path. */
+    layerQuant_t lqNontrain;
+    layerQuantInitUniform(&lqNontrain, g_symWires ? sq.symWireQ : quantizationInitFloat());
 
     layer_t *model[MODEL_SIZE];
     rngSetSeed(g_seed);
 #ifdef ODT_MEM_PROFILE
     size_t markBeforeModel = memProfileMark();
 #endif
-    buildModel(model, &sq, &lqFloat);
+    buildModel(model, &sq, &lqNontrain);
     requantizeParamsToSym(model, &sq);
 #ifdef ODT_MEM_PROFILE
     size_t markAfterModel = memProfileMark(); /* params_grads_b = delta */

@@ -151,6 +151,33 @@ identity holds: 31 920 B stack peak for both the SGD and AdamW binaries —
 which is also why the AdamW binary shares the `float` watermark budget
 bucket rather than getting its own key.
 
+### Full-SYM wires — the #206 acceptance run
+
+`SYM_WIRES=1` switches `train_c_sym.c` from FLOAT32 activation/dx wires to the
+full-SYM configuration: SYM_INT32 (int12) activation **and** dx wires, native
+SYM dx compute on every layer (conv/linear/pools/ReLU), the softmax funnel
+requantizing its output to SYM, the fake-quant CrossEntropy arms (#206)
+consuming the SYM head, and the SYM-aware metrics argmax. Trainable-param
+storage stays packed SYM@`SYM_BITS`, param **gradients stay FLOAT32** (#261);
+write-back rounding is the ratified seeded-SR default (#279).
+
+Sweep result (10 seeds, 40 epochs, `run_matrix.py --configs sym8w`,
+`logs_206_fullsym/`; the float twin reuses the #279-sweep runs — the FLOAT32
+path is numerically unchanged since, guarded by the bit-parity CI gate):
+
+| config | test_acc (mean±sd) | min    | max    | n  |
+|--------|---------------------|--------|--------|----|
+| float  | 0.9065 ± 0.0111     | 0.8799 | 0.9203 | 10 |
+| sym8w  | 0.9076 ± 0.0104     | 0.8901 | 0.9270 | 10 |
+
+**Measured degradation: none** (Δmean = +0.0011, well within 1 sd of either
+arm). The #206 acceptance criterion braced for a drop citing Deutel et al.
+(arXiv:2407.10734) — but the paper's reported degradation is tied to 8-bit
+**gradient** range, and this configuration deliberately keeps gradients
+FLOAT32, so parity here is consistent with the paper rather than contradicting
+it. Quantizing the gradient path is the open research axis (#218, Jan's
+#137–#142 ladder), not this run.
+
 ### Build with memory profiling
 
 Memory instrumentation is compiled in only under the `examples_memprofile` preset
