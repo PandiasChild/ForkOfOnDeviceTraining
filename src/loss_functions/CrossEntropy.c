@@ -36,53 +36,14 @@ float crossEntropyForwardFloat(tensor_t *softmaxOutput, tensor_t *distribution,
     return loss;
 }
 
-float crossEntropyForward(tensor_t *softmaxOutput, tensor_t *distribution, reduction_t reduction) {
-    switch (softmaxOutput->quantization->type) {
-    case FLOAT32:
-        return crossEntropyForwardFloat(softmaxOutput, distribution, reduction);
-    default:
-        PRINT_ERROR("CrossEntropy forward only implemented for FLOAT32!");
-        exit(1);
-    }
-}
-
-/*float crossEntropyForwardFloat(tensor_t *softmaxOutput, tensor_t *distribution) {
-    size_t numberOfValues = calcNumberOfElementsByTensor(softmaxOutput);
-
-    float *softmaxOutputFloat = (float *)softmaxOutput->data;
-    float *distributionFloat = (float *)distribution->data;
-
-
-    float loss = 0.f;
-    for (size_t i = 0; i < numberOfValues; i++) {
-        if(softmaxOutputFloat[i] == 0) {
-            // Question aks Leo if == 1 or small value
-            softmaxOutputFloat[i] = 0.00000000001f;
-        }
-
-        printf("%f\n", softmaxOutputFloat[i]);
-
-        loss += distributionFloat[i] * -logFloat(softmaxOutputFloat[i]);
-    }
-
-    return loss;
-}*/
-
-static void crossEntropySoftmaxBackwardFloat(tensor_t *softmaxOutput, tensor_t *distribution,
-                                             tensor_t *loss) {
-    size_t totalInputSize = calcNumberOfElementsByTensor(softmaxOutput);
-
-    float *softmaxOutputFloat = (float *)softmaxOutput->data;
-    float *distributionFloat = (float *)distribution->data;
-    float *lossFloat = (float *)loss->data;
-
-    for (size_t i = 0; i < totalInputSize; i++) {
-        lossFloat[i] = softmaxOutputFloat[i] - distributionFloat[i];
-    }
-}
-
-static void crossEntropySoftmaxBackwardAsym(tensor_t *softmaxOutput, tensor_t *distribution,
-                                            tensor_t *loss) {
+/* Fake-quant forward (#206, M5 — the MSE idiom): dequantize both operands
+ * into FLOAT32 stack scratch (convertTensor handles any source dtype; a
+ * FLOAT32 label passes through as a copy) and run the float core on the
+ * scratch views. The scratch tensors share softmaxOutput's shape/sparsity
+ * pointers, so the core's microbatch MEAN branch sees the real
+ * dimensions[0]. */
+static float crossEntropyForwardFakeQuant(tensor_t *softmaxOutput, tensor_t *distribution,
+                                          reduction_t reduction) {
     size_t inputSize = calcNumberOfElementsByTensor(softmaxOutput);
 
     tensor_t softmaxOutputFloat;
@@ -101,12 +62,67 @@ static void crossEntropySoftmaxBackwardAsym(tensor_t *softmaxOutput, tensor_t *d
                                  &distributionFloat);
     convertTensor(distribution, &distributionFloat);
 
+    return crossEntropyForwardFloat(&softmaxOutputFloat, &distributionFloat, reduction);
+}
+
+float crossEntropyForward(tensor_t *softmaxOutput, tensor_t *distribution, reduction_t reduction) {
+    switch (softmaxOutput->quantization->type) {
+    case FLOAT32:
+        return crossEntropyForwardFloat(softmaxOutput, distribution, reduction);
+    case SYM_INT32:
+        return crossEntropyForwardFakeQuant(softmaxOutput, distribution, reduction);
+    default:
+        PRINT_ERROR("CrossEntropy forward only implemented for FLOAT32 and SYM_INT32!");
+        exit(1);
+    }
+}
+
+static void crossEntropySoftmaxBackwardFloat(tensor_t *softmaxOutput, tensor_t *distribution,
+                                             tensor_t *loss) {
+    size_t totalInputSize = calcNumberOfElementsByTensor(softmaxOutput);
+
+    float *softmaxOutputFloat = (float *)softmaxOutput->data;
+    float *distributionFloat = (float *)distribution->data;
+    float *lossFloat = (float *)loss->data;
+
+    for (size_t i = 0; i < totalInputSize; i++) {
+        lossFloat[i] = softmaxOutputFloat[i] - distributionFloat[i];
+    }
+}
+
+/* Fake-quant backward — dtype-generic: every operand goes through
+ * convertTensor, so the same body serves ASYM (its original home) and
+ * SYM_INT32 (#206). The final convertTensor requantizes the raw (p-y) into
+ * the result's own quantized config (fresh absmax scale for SYM — dynamic
+ * activation scaling, like every quantized wire producer). */
+static void crossEntropySoftmaxBackwardFakeQuant(tensor_t *softmaxOutput, tensor_t *distribution,
+                                                 tensor_t *loss) {
+    size_t inputSize = calcNumberOfElementsByTensor(softmaxOutput);
+
+    tensor_t softmaxOutputFloat;
+    quantization_t softmaxOutputFloatQ;
+    initFloat32Quantization(&softmaxOutputFloatQ);
+    uint8_t softmaxOutputFloatData[inputSize * sizeof(float)];
+    setTensorValuesForConversion(softmaxOutputFloatData, &softmaxOutputFloatQ, softmaxOutput,
+                                 &softmaxOutputFloat);
+    convertTensor(softmaxOutput, &softmaxOutputFloat);
+
+    tensor_t distributionFloat;
+    quantization_t distributionFloatQ;
+    initFloat32Quantization(&distributionFloatQ);
+    uint8_t distributionFloatData[inputSize * sizeof(float)];
+    setTensorValuesForConversion(distributionFloatData, &distributionFloatQ, distribution,
+                                 &distributionFloat);
+    convertTensor(distribution, &distributionFloat);
+
+    /* Write-only scratch: the loop below overwrites every element, so the
+     * pre-call contents of `loss` are never dequantized (MSE.c precedent —
+     * mseLossBackwardSymInt32 skips the same wasted convert). */
     tensor_t lossFloat;
     quantization_t lossFloatQ;
     initFloat32Quantization(&lossFloatQ);
     uint8_t lossFloatData[inputSize * sizeof(float)];
     setTensorValuesForConversion(lossFloatData, &lossFloatQ, loss, &lossFloat);
-    convertTensor(loss, &lossFloat);
 
     float *softmaxOutputFloatArr = (float *)softmaxOutputFloat.data;
     float *distributionFloatArr = (float *)distributionFloat.data;
@@ -125,8 +141,9 @@ void crossEntropySoftmaxBackward(tensor_t *softmaxOutput, tensor_t *distribution
     case FLOAT32:
         crossEntropySoftmaxBackwardFloat(softmaxOutput, distribution, loss);
         break;
+    case SYM_INT32:
     case ASYM:
-        crossEntropySoftmaxBackwardAsym(softmaxOutput, distribution, loss);
+        crossEntropySoftmaxBackwardFakeQuant(softmaxOutput, distribution, loss);
         break;
     default:
         PRINT_ERROR("Unknown QType!");

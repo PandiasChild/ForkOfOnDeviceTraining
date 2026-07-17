@@ -192,7 +192,8 @@ checkpointing, limitations, literature).
 ## Other subsystems
 
 - **Loss functions** — `MSE` (FLOAT32 + SYM_INT32, fwd+bwd) and `CROSS_ENTROPY`
-  (fwd FLOAT32-only; bwd FLOAT32 + ASYM). CE backward is the **fused softmax+CE
+  (fwd FLOAT32 + SYM_INT32; bwd FLOAT32 + SYM_INT32 + ASYM — the quantized arms
+  are fake-quant, #206: dequant, float core, requant). CE backward is the **fused softmax+CE
   gradient** (`softmaxOutput − target`), and the training loop skips the Softmax layer
   in backprop. Backward emits **raw per-element grads**; the mean divisor is deferred to
   the optimizer via `computeMeanScale` × `scaleOptimizerGradients`.
@@ -253,7 +254,7 @@ checkpointing, limitations, literature).
 - Native SYM_INT32 params blocked for Linear/Conv by the `requireFloat32` gate (#270).
 - No SYM/ASYM native param storage anywhere; no per-parameter optimizer dtype.
 - Optimizer has no integer update kernel (SYM_INT32 = dequant→float→requant).
-- CrossEntropy forward is FLOAT32-only; `classWeights` field is allocated but unused.
+- CrossEntropy `classWeights` field is allocated but unused.
 - Serialization: sparsity stub, non-portable wire format, no I/O error handling.
 - `sparsityType_t` is scaffolding only (propagated but no kernel exploits it).
 - Continual-learning (PPCA replay, #326) arithmetic is `ARITH_FLOAT32` only;

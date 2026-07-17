@@ -271,6 +271,113 @@ void unitTestSoftmaxBackwardSymInt32() {
     }
 }
 
+/* Large-logit regression fixture (#201 closure residual, folded into #206):
+ * pins the shared funnel kernel's max-subtraction. UnitTestSoftmax's other
+ * fixtures keep logits in [-6, 5], where deleting the stabilization still
+ * passes every assertion; at logits ~90 an unstabilized expf(90) overflows to
+ * inf and the outputs collapse to NaN — the WITHIN asserts below fail on NaN.
+ * Analytic reference: max=90 -> exps [1, e^-1, e^-89], p = [0.73106, 0.26894,
+ * ~1.6e-39]. */
+void testSoftmaxForwardLargeLogitsStaysFinite(void) {
+    size_t *inputDims = reserveMemory(2 * sizeof(size_t));
+    inputDims[0] = 1;
+    inputDims[1] = 3;
+    size_t *inputOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, inputOrder);
+    shape_t *inputShape = reserveMemory(sizeof(shape_t));
+    setShape(inputShape, inputDims, 2, inputOrder);
+    tensor_t *input = initTensor(inputShape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(input, (float[]){90.f, 89.f, 1.f}, 3);
+
+    size_t *outputDims = reserveMemory(2 * sizeof(size_t));
+    outputDims[0] = 1;
+    outputDims[1] = 3;
+    size_t *outputOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, outputOrder);
+    shape_t *outputShape = reserveMemory(sizeof(shape_t));
+    setShape(outputShape, outputDims, 2, outputOrder);
+    tensor_t *output = initTensor(outputShape, quantizationInitFloat(), NULL);
+
+    quantization_t *floatQ = quantizationInitFloat();
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, floatQ);
+    layer_t *softmaxLayer = softmaxLayerInit(&lq);
+    layerFunctions[SOFTMAX].forward(softmaxLayer, input, output);
+
+    float captured[3];
+    for (size_t i = 0; i < 3; i++) {
+        captured[i] = ((float *)output->data)[i];
+    }
+
+    freeSoftmaxLayer(softmaxLayer);
+    freeTensor(output);
+    freeTensor(input);
+    freeQuantization(floatQ);
+
+    float expected[] = {0.73106f, 0.26894f, 0.0f};
+    for (size_t i = 0; i < 3; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(1e-4f, expected[i], captured[i]);
+    }
+}
+
+/* SYM_INT32 twin: the int12 scale (90/2047 ~ 0.044) accommodates the logit;
+ * the funnel prologue dequantizes, the stabilized kernel runs, the epilogue
+ * requantizes. Tolerance 0.02 covers the input-quantization shift of the
+ * logit gap (<= ~0.009 on p0) — an unstabilized kernel still lands at
+ * NaN/garbage, far outside it. */
+void testSoftmaxForwardSymLargeLogitsStaysFinite(void) {
+    size_t *inputDims = reserveMemory(2 * sizeof(size_t));
+    inputDims[0] = 1;
+    inputDims[1] = 3;
+    size_t *inputOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, inputOrder);
+    shape_t *inputShape = reserveMemory(sizeof(shape_t));
+    setShape(inputShape, inputDims, 2, inputOrder);
+    tensor_t *input = initTensor(inputShape, quantizationInitSymInt32(HALF_AWAY), NULL);
+    tensorFillFromFloatBuffer(input, (float[]){90.f, 89.f, 1.f}, 3);
+
+    size_t *outputDims = reserveMemory(2 * sizeof(size_t));
+    outputDims[0] = 1;
+    outputDims[1] = 3;
+    size_t *outputOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, outputOrder);
+    shape_t *outputShape = reserveMemory(sizeof(shape_t));
+    setShape(outputShape, outputDims, 2, outputOrder);
+    tensor_t *output = initTensor(outputShape, quantizationInitSymInt32(HALF_AWAY), NULL);
+
+    quantization_t *symIntQ = quantizationInitSymInt32(HALF_AWAY);
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, symIntQ);
+    layer_t *softmaxLayer = softmaxLayerInit(&lq);
+    layerFunctions[SOFTMAX].forward(softmaxLayer, input, output);
+
+    size_t *outFloatDims = reserveMemory(2 * sizeof(size_t));
+    outFloatDims[0] = 1;
+    outFloatDims[1] = 3;
+    size_t *outFloatOrder = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, outFloatOrder);
+    shape_t *outFloatShape = reserveMemory(sizeof(shape_t));
+    setShape(outFloatShape, outFloatDims, 2, outFloatOrder);
+    tensor_t *outputFloat = initTensor(outFloatShape, quantizationInitFloat(), NULL);
+    convertTensor(output, outputFloat);
+
+    float captured[3];
+    for (size_t i = 0; i < 3; i++) {
+        captured[i] = ((float *)outputFloat->data)[i];
+    }
+
+    freeTensor(outputFloat);
+    freeSoftmaxLayer(softmaxLayer);
+    freeTensor(output);
+    freeTensor(input);
+    freeQuantization(symIntQ);
+
+    float expected[] = {0.73106f, 0.26894f, 0.0f};
+    for (size_t i = 0; i < 3; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(0.02f, expected[i], captured[i]);
+    }
+}
+
 void testSoftmaxLayerInitAndFreeRoundTrip(void) {
     /* Roundtrip: softmaxLayerInit allocates layer + outer layerConfig +
      * inner softmaxConfig (3 reserveMemory calls). freeSoftmaxLayer must
@@ -359,6 +466,8 @@ int main() {
     RUN_TEST(unitTestSoftmaxBackwardFloat);
     RUN_TEST(unitTestSoftmaxBackwardSymInt32);
 
+    RUN_TEST(testSoftmaxForwardLargeLogitsStaysFinite);
+    RUN_TEST(testSoftmaxForwardSymLargeLogitsStaysFinite);
     RUN_TEST(testSoftmaxLayerInitAndFreeRoundTrip);
     RUN_TEST(testSoftmaxLayerInitBorrowingStoresLqPointers);
     RUN_TEST(testSoftmaxLayerInitOwningDeepCopiesLqPointers);
