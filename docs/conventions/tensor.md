@@ -47,7 +47,10 @@ widen, so a packed signed mantissa (e.g. `−3` at qBits=6 = `0b111101`) would r
 back as `61`. Every `SYM →` cell routes through the shared
 `unpackSignExtend(src, srcBits, dst, n)` helper, which widens then sign-extends the
 two's-complement payload from `srcBits` (`(v ^ signBit) − signBit`). ASYM codes are
-non-negative, so the ASYM **pack** path does not sign-extend.
+non-negative, so the ASYM **pack** path does not sign-extend. The same contract
+applies to `byteConversionAppend` (the bit-offset entry point for mixed-width
+streams, e.g. delta compression): zero-fill on widen, low-bit truncation on pack —
+signed read-back needs the `unpackSignExtend` idiom there too.
 
 **`int_repr` vs `dequantize` (deliberate, documented asymmetry).** A conversion
 whose destination is `INT32` emits the integer **codes** and drops the scale

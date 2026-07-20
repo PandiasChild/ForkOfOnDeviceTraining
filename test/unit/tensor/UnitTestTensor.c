@@ -198,6 +198,127 @@ void testByteConversion_NarrowingInt32ToSubByte_DoesNotOverreadOutputBuffer() {
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, captured, numBytesDataOut);
 }
 
+/* writeByte fully defines the [startbit, endbit) range: stale 1-bits inside
+ * the mask are cleared, not OR-merged; bits outside the mask are preserved.
+ * byteConversion pre-zeroes via memset, so this is behavior-identical there;
+ * it makes bit-offset appends robust on previously written buffers. */
+void testWriteByte_ClearsStaleInMaskBits() {
+    uint8_t existing_data = 0xFF;
+    uint8_t data = 0b00000010;
+    uint8_t newData = writeByte(existing_data, data, 1, 4);
+    uint8_t expected = 0b11110101;
+    TEST_ASSERT_EQUAL_UINT8(expected, newData);
+}
+
+/* A packed mixed-width stream stops mid-byte (3 x 5 bits = 15 bits) and a
+ * later call continues in that same byte. byteConversion cannot express this
+ * (out cursor pinned to bit 0, leading memset clobbers the shared byte);
+ * byteConversionAppend seeds the out cursor from dstStartBit instead. */
+void testByteConversionAppend_ContinuesMidByteAtBitOffset() {
+    int32_t seg1[3] = {0x1F, 0x15, 0x0A};
+    int32_t seg2[3] = {0x11, 0x1E, 0x03};
+    size_t numBytesDataOut = (6 * 5 - 1) / 8 + 1; /* 30 bits -> 4 bytes */
+    uint8_t *dataOut = reserveMemory(numBytesDataOut);
+
+    byteConversionAppend((uint8_t *)seg1, 32, dataOut, 5, 3, 0);
+    byteConversionAppend((uint8_t *)seg2, 32, dataOut, 5, 3, 15);
+
+    /* CAPTURE before free. */
+    uint8_t captured[numBytesDataOut];
+    memcpy(captured, dataOut, numBytesDataOut);
+    freeReservedMemory(dataOut);
+
+    uint8_t expectedBytes[] = {0xBF, 0xAA, 0xE8, 0x07};
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, captured, numBytesDataOut);
+}
+
+/* Delta-compression layout: 16-bit base + 5 x 3-bit deltas per group, two
+ * groups back to back (62 bits) — the second group's base starts mid-byte
+ * at bit 31 and spans three bytes. */
+void testByteConversionAppend_MixedWidthDeltaLayout() {
+    int32_t base0[1] = {0x1234};
+    int32_t deltas0[5] = {5, 2, 7, 0, 3};
+    int32_t base1[1] = {0xBEEF};
+    int32_t deltas1[5] = {1, 6, 4, 2, 5};
+    size_t numBytesDataOut = (62 - 1) / 8 + 1; /* = 8 */
+    uint8_t *dataOut = reserveMemory(numBytesDataOut);
+
+    byteConversionAppend((uint8_t *)base0, 32, dataOut, 16, 1, 0);
+    byteConversionAppend((uint8_t *)deltas0, 32, dataOut, 3, 5, 16);
+    byteConversionAppend((uint8_t *)base1, 32, dataOut, 16, 1, 31);
+    byteConversionAppend((uint8_t *)deltas1, 32, dataOut, 3, 5, 47);
+
+    /* CAPTURE before free. */
+    uint8_t captured[numBytesDataOut];
+    memcpy(captured, dataOut, numBytesDataOut);
+    freeReservedMemory(dataOut);
+
+    uint8_t expectedBytes[] = {0x34, 0x12, 0xD5, 0xB1, 0x77, 0xDF, 0x98, 0x2A};
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, captured, numBytesDataOut);
+}
+
+/* Bits outside [dstStartBit, dstStartBit + numValues*dataOutBits) are
+ * preserved and stale in-range bits are cleared: 2 x 4 bits at bit 4 into an
+ * all-ones buffer leaves both nibble neighbors intact. */
+void testByteConversionAppend_DefinesRangePreservesOutside() {
+    int32_t vals[2] = {0x5, 0xA};
+    uint8_t dataOut[3] = {0xFF, 0xFF, 0xFF};
+    byteConversionAppend((uint8_t *)vals, 32, dataOut, 4, 2, 4);
+    uint8_t expectedBytes[] = {0x5F, 0xFA, 0xFF};
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, dataOut, 3);
+}
+
+/* At dstStartBit == 0 append is bit-identical to byteConversion on a zeroed
+ * buffer (same fixture as testByteFlattening4: packed 5-bit input widened
+ * to 8-bit output — covers sub-byte packed INPUT through the append path). */
+void testByteConversionAppend_OffsetZeroMatchesByteConversion() {
+    uint8_t dataIn[] = {0b11010000, 0b11101110, 0b01101111, 0b00000000};
+    uint8_t dataOut[6] = {0};
+    byteConversionAppend(dataIn, 5, dataOut, 8, 6, 0);
+    uint8_t expectedBytes[] = {16, 22, 27, 31, 6, 0};
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, dataOut, 6);
+}
+
+/* numValues == 0 is a no-op. (byteConversion's memset-size expression
+ * (numValues*dataOutBits-1)/8+1 underflows for 0; append has no memset and
+ * must not touch the buffer at all.) */
+void testByteConversionAppend_ZeroValuesIsNoOp() {
+    int32_t vals[1] = {0x7};
+    uint8_t dataOut[2] = {0xAB, 0xCD};
+    byteConversionAppend((uint8_t *)vals, 32, dataOut, 12, 0, 3);
+    uint8_t expectedBytes[] = {0xAB, 0xCD};
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, dataOut, 2);
+}
+
+/* Widening (3 -> 6 bits) from a PACKED sub-byte input stream at a mid-byte
+ * dstStartBit into a stale all-ones buffer: the zero-extended upper half of
+ * each widened value must CLEAR stale bits (header contract: stale in-range
+ * bits are overwritten), and both cursors run mid-byte simultaneously.
+ * Input {5,2,7,1} packed LSB-first at 3 bits -> dataIn {0xD5, 0x03}.
+ * Output 4 x 6 bits at bits 5..28:
+ *   byte 0: bits 0-4 stale 1s preserved; bits 5-7 = v0 low bits 1,0,1 -> 0xBF
+ *   byte 1: bits 8-10 v0 fill 0s; bits 11-15 v1 = 0,1,0,0,0 -> 0x10
+ *   byte 2: bit 16 v1 fill; bits 17-19 v2 = 1,1,1; bits 20-22 v2 fill;
+ *           bit 23 v3.b0 = 1 -> 0x8E
+ *   byte 3: bits 24-28 v3 rest+fill = 0; bits 29-31 stale 1s -> 0xE0 */
+void testByteConversionAppend_WidensPackedSubByteInputAtBitOffsetClearsFill() {
+    uint8_t dataIn[] = {0xD5, 0x03};
+    uint8_t dataOut[4] = {0xFF, 0xFF, 0xFF, 0xFF};
+    byteConversionAppend(dataIn, 3, dataOut, 6, 4, 5);
+    uint8_t expectedBytes[] = {0xBF, 0x10, 0x8E, 0xE0};
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, dataOut, 4);
+}
+
+/* Packing is pure low-bit truncation: -3 at 6 bits stores 0b111101. Sign
+ * restoration on read-back is unpackSignExtend's job, not the packer's. */
+void testByteConversionAppend_NegativeCodeStoresLowBits() {
+    int32_t vals[1] = {-3};
+    uint8_t dataOut[2] = {0, 0};
+    byteConversionAppend((uint8_t *)vals, 32, dataOut, 6, 1, 5);
+    uint8_t expectedBytes[] = {0xA0, 0x07};
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, dataOut, 2);
+}
+
 void testCopyTensor() {
     size_t numberOfValues = 3;
     tensor_t src;
@@ -442,10 +563,19 @@ int main(void) {
     RUN_TEST(testByteConversion_NarrowingInt32ToSubByte_DoesNotOverreadOutputBuffer);
     RUN_TEST(testByteConversion_NarrowingInt32ToByte_DoesNotOverreadOutputBuffer);
 
+    RUN_TEST(testByteConversionAppend_ContinuesMidByteAtBitOffset);
+    RUN_TEST(testByteConversionAppend_MixedWidthDeltaLayout);
+    RUN_TEST(testByteConversionAppend_DefinesRangePreservesOutside);
+    RUN_TEST(testByteConversionAppend_OffsetZeroMatchesByteConversion);
+    RUN_TEST(testByteConversionAppend_ZeroValuesIsNoOp);
+    RUN_TEST(testByteConversionAppend_WidensPackedSubByteInputAtBitOffsetClearsFill);
+    RUN_TEST(testByteConversionAppend_NegativeCodeStoresLowBits);
+
     RUN_TEST(testGetBitmask);
     RUN_TEST(testGetBitmask2);
     RUN_TEST(testWriteByte);
     RUN_TEST(testWriteByte2);
+    RUN_TEST(testWriteByte_ClearsStaleInMaskBits);
     RUN_TEST(testReadByte);
 
     RUN_TEST(testCopyTensor);

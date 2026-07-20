@@ -46,6 +46,15 @@ uint8_t readByte(uint8_t data, uint8_t startbit, uint8_t endbit);
 void byteConversion(uint8_t *dataIn, size_t dataInBits, uint8_t *dataOut, size_t dataOutBits,
                     size_t numValues);
 
+/* Like byteConversion, but writes into dataOut starting at BIT position
+ * dstStartBit and performs no leading memset: bits outside the written range
+ * [dstStartBit, dstStartBit + numValues*dataOutBits) are preserved, stale
+ * in-range bits are overwritten. Enables appending mixed-width segments
+ * (e.g. delta compression: wide base values + narrow deltas) back to back
+ * at non-byte-aligned boundaries. */
+void byteConversionAppend(uint8_t *dataIn, size_t dataInBits, uint8_t *dataOut, size_t dataOutBits,
+                          size_t numValues, size_t dstStartBit);
+
 bool tensorBoolGet(tensor_t const *tensor, size_t flatIndex);
 void tensorBoolSet(tensor_t *tensor, size_t flatIndex, bool value);
 

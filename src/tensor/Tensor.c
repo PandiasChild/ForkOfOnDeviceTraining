@@ -172,12 +172,11 @@ uint8_t writeByte(uint8_t existingData, uint8_t data, uint8_t startbit, uint8_t 
     uint8_t endbitInternal = endbit - (startbit / 8) * 8;
     uint8_t bitmask = getBitmask(startbitInternal, endbitInternal);
     data <<= startbitInternal;
-    // print_binary_uint8(data);
     uint8_t intermediate = data & bitmask;
-    // print_binary_uint8(bitmask);
-    // print_binary_uint8(intermediate);
-    existingData = intermediate | existingData;
-    // print_binary_uint8(existingData);
+    /* Clear-then-set: the [startbit, endbit) range is fully defined by this
+     * write, so callers may target buffers with stale in-range bits (bit-
+     * offset appends); bits outside the mask are preserved. */
+    existingData = (existingData & (uint8_t)~bitmask) | intermediate;
     return existingData;
 }
 
@@ -191,22 +190,26 @@ int min(int a, int b) {
 
 void byteConversion(uint8_t *dataIn, size_t dataInBits, uint8_t *dataOut, size_t dataOutBits,
                     size_t numValues) {
+    /* memset also zeroes the trailing pad bits of the last byte, which the
+     * append loop leaves untouched. */
     memset(dataOut, 0, (numValues * dataOutBits - 1) / 8 + 1);
-    size_t dataOutIndex = 0;
+    byteConversionAppend(dataIn, dataInBits, dataOut, dataOutBits, numValues, 0);
+}
+
+void byteConversionAppend(uint8_t *dataIn, size_t dataInBits, uint8_t *dataOut, size_t dataOutBits,
+                          size_t numValues, size_t dstStartBit) {
+    size_t dataOutIndex = dstStartBit / 8;
     size_t dataInIndex = 0;
-    int dataOutStartbit = 0;
+    int dataOutStartbit = (int)(dstStartBit % 8);
     int dataInStartbit = 0;
     int dataInEndbit = (int)dataInBits;
-    int dataOutEndbit = (int)dataOutBits;
+    int dataOutEndbit = dataOutStartbit + (int)dataOutBits;
     for (size_t i = 0; i < numValues; i++) {
-        /*
-        printf("\n");
-        printf("\n");
-        printf("Value %i\n", i);*/
         while ((dataInStartbit < dataInEndbit) | (dataOutStartbit < dataOutEndbit)) {
             /* Guard each side: input may exhaust before output (widening) or
-             * output may fill before input (narrowing); skipping the out-of-range
-             * access avoids OOB while preserving zero-fill semantics. */
+             * output may fill before input (narrowing); skipping the
+             * out-of-range access avoids OOB while preserving zero-fill
+             * semantics. */
             uint8_t data = 0;
             if (dataInStartbit < dataInEndbit) {
                 data = readByte(dataIn[dataInIndex], dataInStartbit, dataInEndbit);
@@ -216,33 +219,15 @@ void byteConversion(uint8_t *dataIn, size_t dataInBits, uint8_t *dataOut, size_t
                     writeByte(dataOut[dataOutIndex], data, dataOutStartbit, dataOutEndbit);
             }
 
-            /*
-            printf("dataInStartbit %d\n", dataInStartbit);
-            printf("dataInEndbit %d\n", dataInEndbit);
-            printf("dataOutStartbit %d\n", dataOutStartbit);
-            printf("dataOutEndbit %d\n", dataOutEndbit);
-            printf("dataInIndex %d\n", dataInIndex);
-            printf("dataOutIndex %d\n", dataOutIndex);
-            printf("data");
-            print_binary_uint8(data);
-            printf("dataOut[dataOutIndex]");
-            print_binary_uint8(dataOut[dataOutIndex]);
-            */
             int valuesRead = min(dataInEndbit - dataInStartbit, 8 - dataInStartbit % 8);
             int valuesWritten = min(dataOutEndbit - dataOutStartbit, 8 - dataOutStartbit % 8);
             int minValue = min(valuesRead, valuesWritten);
-
-            /*
-            printf("valuesRead %d\n", valuesRead);
-            printf("valuesWritten %d\n", valuesWritten);
-            printf("minValue %d\n", minValue);*/
 
             uint8_t deltaIn = minValue;
             uint8_t deltaOut = minValue;
             if (dataInStartbit == dataInEndbit) {
                 dataOutStartbit += valuesWritten;
                 deltaOut = valuesWritten;
-
             } else {
                 dataOutStartbit += minValue;
             }
@@ -259,12 +244,11 @@ void byteConversion(uint8_t *dataIn, size_t dataInBits, uint8_t *dataOut, size_t
             if (dataOutStartbit / 8 > (dataOutStartbit - deltaOut) / 8) {
                 dataOutIndex += 1;
             }
-            // printf("\n");
         }
         dataInStartbit = dataInEndbit % 8;
-        dataInEndbit = dataInStartbit + dataInBits;
+        dataInEndbit = dataInStartbit + (int)dataInBits;
         dataOutStartbit = dataOutEndbit % 8;
-        dataOutEndbit = dataOutStartbit + dataOutBits;
+        dataOutEndbit = dataOutStartbit + (int)dataOutBits;
     }
 }
 
