@@ -83,9 +83,14 @@ tensor_t *gradInitInt32(tensor_t *param, sparsity_t *sparsity);
  * \returns Pointer to initialized gradient tensor
  */
 tensor_t *gradInitFloat(tensor_t *param, sparsity_t *sparsity);
-/*! Initializes symInt32 gradient tensor to match given param tensor.
+/*! Initializes a SYM_INT32 gradient tensor to match the given param tensor,
+ *  at the fixed grad-accumulation width ODT_SYM_GRAD_QMAXBITS (16 — an
+ *  accumulate-soundness ceiling, not a memory saving: SYM_INT32 stays 4
+ *  B/element, #261). Test/research helper — production grad storage defaults
+ *  to FLOAT32 via the weightGradStorage/biasGradStorage knob path (gradInit).
  *
  * \param param: Pointer to param tensor
+ * \param roundingMode: Rounding mode for the grad's qConfig
  * \param sparsity: sparsity_t of tensor
  *
  * \returns Pointer to initialized gradient tensor
