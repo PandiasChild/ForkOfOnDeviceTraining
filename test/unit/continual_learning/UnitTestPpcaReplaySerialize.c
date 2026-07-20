@@ -153,7 +153,7 @@ void testRoundTripPacked(void) {
     TEST_ASSERT_EQUAL_FLOAT(
         ((asymQConfig_t *)serial->generators[0]->mean->quantization->qConfig)->scale,
         ((asymQConfig_t *)deserial->generators[0]->mean->quantization->qConfig)->scale);
-    TEST_ASSERT_EQUAL_INT16(
+    TEST_ASSERT_EQUAL_INT32(
         ((asymQConfig_t *)serial->generators[0]->mean->quantization->qConfig)->zeroPoint,
         ((asymQConfig_t *)deserial->generators[0]->mean->quantization->qConfig)->zeroPoint);
     freePpcaReplaySet(deserial);

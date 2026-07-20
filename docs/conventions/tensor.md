@@ -76,6 +76,17 @@ unreachable. New asym-producing converters MUST call this helper and never re-de
 grid inline: hand-rolled copies are exactly how the four `*→ASYM` converters drifted
 before #243. The float→SYM pack sibling is `packFloatBufferAsSym`.
 
+**ASYM width/zeroPoint contract (#246).** `zeroPoint` is `int32_t`: it reaches
+`−(2^qBits − 1)` for negative bands and overshoots that by `min/(min − max)` for
+all-negative ones, so `int16` already wraps at `qBits = 16`. ASYM `qBits` is capped
+at **[1, 30]** — at 31 the unsigned code ceiling `(int32_t)(powf(2, qBits) − 1)`
+rounds to `2^31` and the cast is UB (the unsigned twin of the #202 SYM_INT32
+ceiling at 31); enforced in `initAsymQConfig` and re-checked in the
+`deriveAsymGridFromMinMax` funnel, which also fail-fasts when `round(min/scale)`
+itself would leave int32 (a narrow band far from zero does that at any `qBits`).
+On the ODTS wire, zeroPoint rides as 4 bytes (int32) — the format break is owned
+by the serialization v2 bump (#370).
+
 **Grad-accumulate primitives (PR3, #261).** `accumulateFloatIntoSymTensorFixedGrid` /
 `accumulateFloatIntoSymTensorRescale` / `accumulateFloatIntoAsymTensorRescale`
 (`src/tensor/TensorConversion.c`) are the packed-grad accumulate primitives that back

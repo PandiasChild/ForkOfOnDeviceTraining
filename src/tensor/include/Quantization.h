@@ -42,7 +42,10 @@ typedef struct symQConfig {
 
 typedef struct asymQConfig {
     float scale;
-    int16_t zeroPoint;
+    /* int32: zeroPoint = round(min/scale) reaches -(2^qBits - 1) for negative
+     * bands and exceeds it by min/(min - max) for all-negative ones -- far
+     * outside int16 already at qBits=16 (#246). */
+    int32_t zeroPoint;
     uint8_t qBits;
     roundingMode_t roundingMode;
 } asymQConfig_t;

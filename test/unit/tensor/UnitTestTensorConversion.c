@@ -268,6 +268,98 @@ void testConversionFloatAsym() {
     TEST_ASSERT_EQUAL_FLOAT(expectedScale, asymQConfig.scale);
 }
 
+void testConversionFloatAsymQBits16NegativeBandWideZeroPoint() {
+    /* #246: an all-negative band at qBits=16 puts zeroPoint far outside int16.
+     * min=-10, max=-1 -> scale = 9/65535, zeroPoint = round(-10*65535/9)
+     * = -72817; the old int16 field wrapped that to -7281, corrupting every
+     * (code + zeroPoint)*scale dequantization.
+     * Mutation guard: re-narrowing asymQConfig_t.zeroPoint (or the cast in
+     * deriveAsymGridFromMinMax) to int16 wraps zeroPoint -> both the exact
+     * assert and the round-trip go RED. */
+    size_t numValues = 6;
+    size_t dims[] = {numValues};
+    size_t orderOfDims[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = orderOfDims};
+
+    float floatData[] = {-10.f, -1.f, -5.5f, -2.5f, -9.25f, -3.75f};
+
+    quantization_t floatQ;
+    initFloat32Quantization(&floatQ);
+    tensor_t floatTensor;
+    setTensorValues(&floatTensor, (uint8_t *)floatData, &shape, &floatQ, NULL);
+
+    asymQConfig_t asymQConfig;
+    initAsymQConfig(16, HALF_AWAY, &asymQConfig);
+    quantization_t asymQ;
+    initAsymQuantization(&asymQConfig, &asymQ);
+    uint8_t asymData[numValues * 2];
+    tensor_t asymTensor;
+    setTensorValues(&asymTensor, asymData, &shape, &asymQ, NULL);
+
+    convertTensor(&floatTensor, &asymTensor);
+
+    TEST_ASSERT_EQUAL_INT32(-72817, asymQConfig.zeroPoint);
+    TEST_ASSERT_EQUAL_FLOAT(9.f / 65535.f, asymQConfig.scale);
+
+    /* min/max land on codes 0 / 65535 on the affine grid. */
+    int32_t codes[6];
+    byteConversion(asymTensor.data, 16, (uint8_t *)codes, 32, numValues);
+    TEST_ASSERT_EQUAL_INT32(0, codes[0]);
+    TEST_ASSERT_EQUAL_INT32(65535, codes[1]);
+
+    float decoded[6];
+    quantization_t floatOutQ;
+    initFloat32Quantization(&floatOutQ);
+    tensor_t floatOut;
+    setTensorValues(&floatOut, (uint8_t *)decoded, &shape, &floatOutQ, NULL);
+    convertTensor(&asymTensor, &floatOut);
+
+    float tol = asymQConfig.scale * 0.5f + 1e-4f;
+    for (size_t i = 0; i < numValues; i++) {
+        TEST_ASSERT_FLOAT_WITHIN(tol, floatData[i], decoded[i]);
+    }
+}
+
+void testInitAsymQConfigRejectsQBitsAbove30(void) {
+    /* #246 ceiling: at qBits=31 the unsigned code ceiling powf(2,31)-1 rounds
+     * to 2^31 in float, so emitAsymChunk's (int32_t) cast is out of range (the
+     * unsigned twin of the #202 SYM_INT32 ceiling at 31).
+     * Mutation guard: removing the initAsymQConfig guard lets the child exit
+     * 0 -> RED. */
+    asymQConfig_t qc;
+    ASSERT_EXITS_WITH_FAILURE(initAsymQConfig(31, HALF_AWAY, &qc));
+}
+
+void testConversionFloatAsymZeroPointBeyondInt32Dies(void) {
+    /* #246: qBits alone does not bound zeroPoint -- a tight all-negative band
+     * far from zero pushes round(min/scale) past int32 even at qBits=8:
+     * min=-5e6, max=-4999999.5 -> scale = 0.5/255, zeroPoint ~= -2.55e9 <
+     * INT32_MIN. The derive funnel must fail fast instead of letting
+     * roundByMode's float->int32 cast go out of range (UB).
+     * Mutation guard: removing the range check lets the child exit 0 -> RED. */
+    size_t numValues = 2;
+    size_t dims[] = {numValues};
+    size_t orderOfDims[] = {0};
+    shape_t shape = {.dimensions = dims, .numberOfDimensions = 1, .orderOfDimensions = orderOfDims};
+
+    float floatData[] = {-5000000.f, -4999999.5f};
+
+    quantization_t floatQ;
+    initFloat32Quantization(&floatQ);
+    tensor_t floatTensor;
+    setTensorValues(&floatTensor, (uint8_t *)floatData, &shape, &floatQ, NULL);
+
+    asymQConfig_t asymQConfig;
+    initAsymQConfig(8, HALF_AWAY, &asymQConfig);
+    quantization_t asymQ;
+    initAsymQuantization(&asymQConfig, &asymQ);
+    uint8_t asymData[2];
+    tensor_t asymTensor;
+    setTensorValues(&asymTensor, asymData, &shape, &asymQ, NULL);
+
+    ASSERT_EXITS_WITH_FAILURE(convertTensor(&floatTensor, &asymTensor));
+}
+
 void testConversionSymInt32Int() {
     size_t numValues = 6;
 
@@ -377,11 +469,11 @@ void testConversionSymInt32Asym() {
     byteConversion(asymTensor.data, asymQConfig.qBits, (uint8_t *)output, 32, numValues);
 
     float expectedScale = 0.193548f;
-    int16_t expectedZeroPoint = -10;
+    int32_t expectedZeroPoint = -10;
     uint32_t expectedValues[] = {15, 20, 26, 31, 5, 0};
 
     TEST_ASSERT_EQUAL_FLOAT(expectedScale, asymQConfig.scale);
-    TEST_ASSERT_EQUAL_INT16(expectedZeroPoint, asymQConfig.zeroPoint);
+    TEST_ASSERT_EQUAL_INT32(expectedZeroPoint, asymQConfig.zeroPoint);
     TEST_ASSERT_EQUAL_UINT32_ARRAY(expectedValues, output, numValues);
 }
 
@@ -1863,7 +1955,7 @@ void testAccumulateAsymRescaleMatchesFloatReference(void) {
     accumulateFloatIntoAsymTensorRescale(&target, inc, n);
 
     TEST_ASSERT_EQUAL_FLOAT(3.5f / 31.0f, qc.scale);
-    TEST_ASSERT_EQUAL_INT16(22, qc.zeroPoint);
+    TEST_ASSERT_EQUAL_INT32(22, qc.zeroPoint);
 
     int32_t codes[4];
     byteConversion(data, 5, (uint8_t *)codes, 32, n); /* asym codes: non-negative, no sign-extend */
@@ -1917,7 +2009,7 @@ void testAccumulateAsymValueZeroAfterConfigReset(void) {
     convertTensor(&floatTensor, &refTensor);
 
     TEST_ASSERT_EQUAL_FLOAT(refQC.scale, qc.scale);
-    TEST_ASSERT_EQUAL_INT16(refQC.zeroPoint, qc.zeroPoint);
+    TEST_ASSERT_EQUAL_INT32(refQC.zeroPoint, qc.zeroPoint);
     TEST_ASSERT_EQUAL_UINT8_ARRAY(refData, data, calcNumberOfBytesForData(&refQ, n));
 }
 
@@ -2714,7 +2806,7 @@ void testQuantizeFloatToAsymNoOpOnEmptyTensor(void) {
     convertTensor(&floatTensor, &asymTensor);
 
     TEST_ASSERT_EQUAL_FLOAT(123.f, asymQC.scale);
-    TEST_ASSERT_EQUAL_INT16(7, asymQC.zeroPoint);
+    TEST_ASSERT_EQUAL_INT32(7, asymQC.zeroPoint);
 }
 
 void testAccumulateTensorIntoSymRescaleRejectsSelfAliasedIncrement(void) {
@@ -2759,6 +2851,9 @@ int main(void) {
     RUN_TEST(testConversionFloatInt);
     RUN_TEST(testConversionFloatSymInt32);
     RUN_TEST(testConversionFloatAsym);
+    RUN_TEST(testConversionFloatAsymQBits16NegativeBandWideZeroPoint);
+    RUN_TEST(testInitAsymQConfigRejectsQBitsAbove30);
+    RUN_TEST(testConversionFloatAsymZeroPointBeyondInt32Dies);
 
     RUN_TEST(testConversionSymInt32Int);
     RUN_TEST(testConversionSymInt32Float);

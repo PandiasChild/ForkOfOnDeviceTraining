@@ -392,7 +392,7 @@ void testCopyTensorAsymCarriesConfigAndPackedBytes() {
 
     TEST_ASSERT_EQUAL_INT(ASYM, dst.quantization->type);
     TEST_ASSERT_EQUAL_FLOAT(0.5f, dstQC.scale);
-    TEST_ASSERT_EQUAL_INT16(-7, dstQC.zeroPoint);
+    TEST_ASSERT_EQUAL_INT32(-7, dstQC.zeroPoint);
     TEST_ASSERT_EQUAL_UINT8(5, dstQC.qBits);
     TEST_ASSERT_EQUAL_INT(HALF_AWAY, dstQC.roundingMode);
     TEST_ASSERT_EQUAL_UINT8_ARRAY(srcData, dstData, 3);

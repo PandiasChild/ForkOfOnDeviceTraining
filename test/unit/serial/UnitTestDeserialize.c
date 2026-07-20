@@ -341,13 +341,13 @@ static tensor_t *makeAsymTensor1D(size_t d0) {
     return initTensor(shape, quantizationInitAsym(8, HALF_AWAY), NULL);
 }
 
-/* #370: ASYM zeroPoint travels as i32 LE and must round-trip losslessly through
- * the (still int16, until #246) in-memory field. */
+/* #370/#246: ASYM zeroPoint travels as i32 LE and must round-trip losslessly;
+ * -72817 is the qBits=16 worst case that used to wrap in the int16 field. */
 static void testDeserializeTensorRoundTripsAsymZeroPoint(void) {
     tensor_t *src = makeAsymTensor1D(4);
     asymQConfig_t *srcQc = src->quantization->qConfig;
     srcQc->scale = 0.5f;
-    srcQc->zeroPoint = -3;
+    srcQc->zeroPoint = -72817;
 
     FILE *f = fopen(FILE_PATH, "wb");
     serializeTensor(src, f);
@@ -360,19 +360,17 @@ static void testDeserializeTensorRoundTripsAsymZeroPoint(void) {
 
     asymQConfig_t *dstQc = dst->quantization->qConfig;
     float capturedScale = dstQc->scale;
-    int16_t capturedZeroPoint = dstQc->zeroPoint;
+    int32_t capturedZeroPoint = dstQc->zeroPoint;
     freeTensor(dst);
     freeTensor(src);
 
     TEST_ASSERT_EQUAL_FLOAT(0.5f, capturedScale);
-    TEST_ASSERT_EQUAL_INT16(-3, capturedZeroPoint);
+    TEST_ASSERT_EQUAL_INT32(-72817, capturedZeroPoint);
 }
 
-/* #370: the wire carries zeroPoint as i32, the in-memory field is int16 until
- * #246 widens it — a file value outside int16 range must fail fast instead of
- * being silently narrowed. Hand-crafted record: 1 x [4] ASYM@8 with zeroPoint
- * 40000. Guard removal turns this into silent corruption. */
-static void testDeserializeQConfigRejectsOversizeZeroPoint(void) {
+/* #370/#246: hand-crafted record pins the i32 LE zeroPoint wire slot — a value
+ * outside the old int16 range must arrive intact in the widened field. */
+static void testDeserializeQConfigAcceptsWideZeroPoint(void) {
     FILE *f = fopen(FILE_PATH, "wb");
     writeU32LE(f, 1); /* numberOfDimensions */
     writeU32LE(f, 4); /* dimensions[0] */
@@ -392,10 +390,14 @@ static void testDeserializeQConfigRejectsOversizeZeroPoint(void) {
 
     tensor_t *skeleton = makeAsymTensor1D(4);
     f = fopen(FILE_PATH, "rb");
-    ASSERT_EXITS_WITH_FAILURE(deserializeTensor(skeleton, f));
+    deserializeTensor(skeleton, f);
     fclose(f);
 
+    asymQConfig_t *skelQc = skeleton->quantization->qConfig;
+    int32_t capturedZeroPoint = skelQc->zeroPoint;
     freeTensor(skeleton);
+
+    TEST_ASSERT_EQUAL_INT32(40000, capturedZeroPoint);
 }
 
 void setUp() {}
@@ -415,6 +417,6 @@ int main(void) {
     RUN_TEST(testDeserializeTensorFailsFastOnTruncatedPayload);
     RUN_TEST(testDeserializeTensorRejectsRankMismatch);
     RUN_TEST(testDeserializeTensorRoundTripsAsymZeroPoint);
-    RUN_TEST(testDeserializeQConfigRejectsOversizeZeroPoint);
+    RUN_TEST(testDeserializeQConfigAcceptsWideZeroPoint);
     return UNITY_END();
 }

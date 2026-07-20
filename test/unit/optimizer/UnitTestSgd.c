@@ -738,7 +738,7 @@ void testSgdZeroGradAsymSubByteZeroesAllPackedBytes(void) {
     uint8_t b2 = g->data[2];
     uint8_t b3 = g->data[3];
     float scaleAfter = gAsymQ->scale;
-    int16_t zeroPointAfter = gAsymQ->zeroPoint;
+    int32_t zeroPointAfter = gAsymQ->zeroPoint;
     freeParameter(param);
 
     TEST_ASSERT_EQUAL_UINT8(0, b0);
@@ -749,7 +749,7 @@ void testSgdZeroGradAsymSubByteZeroesAllPackedBytes(void) {
      * exactly 0.0f, which requires zeroPoint==0 (scale is irrelevant to that
      * particular identity, but reset for hygiene/consistency with SYM/SYM_INT32). */
     TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.0f, scaleAfter);
-    TEST_ASSERT_EQUAL_INT16(0, zeroPointAfter);
+    TEST_ASSERT_EQUAL_INT32(0, zeroPointAfter);
 }
 
 void testSgdZeroGradSymSubByteZeroesAllPackedBytesAndResetsScale(void) {

@@ -618,8 +618,8 @@ void testScaleOptimizerGradients_Asym_ScalesScaleOnly(void) {
     asymQConfig_t *bQ = b->grad->quantization->qConfig;
     float wScaleBefore = wQ->scale;
     float bScaleBefore = bQ->scale;
-    int16_t wZeroPointBefore = wQ->zeroPoint;
-    int16_t bZeroPointBefore = bQ->zeroPoint;
+    int32_t wZeroPointBefore = wQ->zeroPoint;
+    int32_t bZeroPointBefore = bQ->zeroPoint;
 
     scaleOptimizerGradients(sgd, factor);
 
@@ -630,8 +630,8 @@ void testScaleOptimizerGradients_Asym_ScalesScaleOnly(void) {
     memcpy(bBytesAfter, b->grad->data, bBytes);
     float wScaleAfter = wQ->scale;
     float bScaleAfter = bQ->scale;
-    int16_t wZeroPointAfter = wQ->zeroPoint;
-    int16_t bZeroPointAfter = bQ->zeroPoint;
+    int32_t wZeroPointAfter = wQ->zeroPoint;
+    int32_t bZeroPointAfter = bQ->zeroPoint;
 
     freeOptim(sgd);
     freeLinearLayerShellOnly(model[0]);
@@ -643,8 +643,8 @@ void testScaleOptimizerGradients_Asym_ScalesScaleOnly(void) {
      * additive offset on the code axis, not part of the multiplicative fold). */
     TEST_ASSERT_FLOAT_WITHIN(1e-7f, wScaleBefore * factor, wScaleAfter);
     TEST_ASSERT_FLOAT_WITHIN(1e-7f, bScaleBefore * factor, bScaleAfter);
-    TEST_ASSERT_EQUAL_INT16(wZeroPointBefore, wZeroPointAfter);
-    TEST_ASSERT_EQUAL_INT16(bZeroPointBefore, bZeroPointAfter);
+    TEST_ASSERT_EQUAL_INT32(wZeroPointBefore, wZeroPointAfter);
+    TEST_ASSERT_EQUAL_INT32(bZeroPointBefore, bZeroPointAfter);
 }
 
 void testScaleOptimizerGradients_Asym_DequantEquivalence(void) {

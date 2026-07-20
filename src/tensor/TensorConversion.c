@@ -153,6 +153,13 @@ void dequantChunkToFloat(const tensor_t *src, size_t elemOffset, size_t count, f
 }
 
 static void deriveAsymGridFromMinMax(float mn, float mx, asymQConfig_t *outQC) {
+    if (outQC->qBits == 0 || outQC->qBits > 30) {
+        /* Funnel re-check of the initAsymQConfig ceiling for field-assigned
+         * configs (#246): 31+ breaks the (int32_t)qMax cast in emitAsymChunk. */
+        PRINT_ERROR("deriveAsymGridFromMinMax: qBits (%u) outside the ASYM range [1, 30] (#246)",
+                    (unsigned)outQC->qBits);
+        exit(1);
+    }
     const float qMax = powf(2, (float)outQC->qBits) - 1;
     float scale;
     if (mn == mx) {
@@ -160,9 +167,19 @@ static void deriveAsymGridFromMinMax(float mn, float mx, asymQConfig_t *outQC) {
     } else {
         scale = (mx - mn) / qMax;
     }
-    int16_t zeroPoint = (int16_t)roundByMode(mn / scale, outQC->roundingMode);
+    float zpReal = mn / scale;
+    /* qBits bounds only the mn < 0 < mx case; a narrow band far from zero pushes
+     * min/scale = min*qMax/(max-min) arbitrarily far past int32, where
+     * roundByMode's float->int32 cast is UB (#246). !(in-range) also catches NaN.
+     * The bounds are asymmetric because -2^31 (INT32_MIN) is representable and
+     * cast-safe while +2^31 is not. */
+    if (!(zpReal >= -2147483648.f && zpReal < 2147483648.f)) {
+        PRINT_ERROR("deriveAsymGridFromMinMax: zeroPoint round(%g) overflows int32 (#246)",
+                    (double)zpReal);
+        exit(1);
+    }
     outQC->scale = scale;
-    outQC->zeroPoint = zeroPoint;
+    outQC->zeroPoint = roundByMode(zpReal, outQC->roundingMode);
 }
 
 static void emitAsymChunk(const float *vals, size_t count, const asymQConfig_t *qc,
@@ -883,7 +900,7 @@ static void accumulateIntoAsymRescaleEngine(tensor_t *target, const incSrc_t *in
 
     /* latch the OLD grid before deriveAsymGridFromMinMax overwrites it below. */
     float oldScale = qc->scale;
-    int16_t oldZeroPoint = qc->zeroPoint;
+    int32_t oldZeroPoint = qc->zeroPoint;
 
     /* phase A: chunked min/max of the decoded-plus-increment values (no
      * rounding, no writes) -- fresh affine grid every call (D4: no

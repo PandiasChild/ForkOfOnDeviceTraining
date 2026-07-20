@@ -28,8 +28,8 @@
  * one Record per layer (u8 tag + payload). Every count/dim/kernel field is u32
  * little-endian and every scalar goes through the checked SerialWire
  * primitives, so a model written on a 64-bit host loads bit-identically on
- * 32-bit MCU targets. ASYM zeroPoint is i32 LE on the wire (the in-memory
- * int16 widens separately via #246, keeping the format break to one bump). */
+ * 32-bit MCU targets. ASYM zeroPoint is i32 LE on the wire, matching the
+ * int32 in-memory field (#246). */
 #define SERIALIZE_MAGIC "ODTS"
 #define SERIALIZE_FORMAT_VERSION 2u
 
@@ -118,9 +118,7 @@ static void serializeQConfig(quantization_t *q, FILE *f) {
         serialWriteF32LE(asymQC->scale, f);
         serialWriteU8(asymQC->qBits, f);
         serialWriteU8((uint8_t)asymQC->roundingMode, f);
-        /* i32 on the wire although the field is (still) int16_t — #246 widens
-         * the in-memory side losslessly without another format break. */
-        serialWriteI32LE((int32_t)asymQC->zeroPoint, f);
+        serialWriteI32LE(asymQC->zeroPoint, f);
         break;
     }
     default:

@@ -37,10 +37,19 @@ void initSymQConfig(uint8_t qBits, roundingMode_t roundingMode, symQConfig_t *sy
 }
 
 void initAsymQConfig(uint8_t qBits, roundingMode_t roundingMode, asymQConfig_t *asymQConfig) {
+    /* #246: qBits > 30 makes the unsigned code ceiling powf(2, qBits) - 1 round
+     * to 2^31 in float, so the (int32_t) cast in the ASYM emit path is out of
+     * range (UB) -- the unsigned twin of the #202 SYM_INT32 ceiling at 31. 0
+     * would underflow the sub-byte packer. deriveAsymGridFromMinMax re-checks
+     * for configs built without this init. */
+    if (qBits == 0 || qBits > 30) {
+        PRINT_ERROR("qBits (%u) outside the ASYM range [1, 30] (#246)", (unsigned)qBits);
+        exit(1);
+    }
     asymQConfig->qBits = qBits;
     asymQConfig->roundingMode = roundingMode;
     asymQConfig->scale = 1.f;
-    asymQConfig->zeroPoint = (uint16_t)0;
+    asymQConfig->zeroPoint = 0;
 }
 
 void initInt32Quantization(quantization_t *quantization) {

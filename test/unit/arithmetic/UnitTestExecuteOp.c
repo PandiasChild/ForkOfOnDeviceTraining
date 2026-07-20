@@ -87,7 +87,7 @@ static tensor_t *buildPackedSym(size_t n, const int32_t *mantissas, uint8_t qBit
 /* Packed ASYM tensor (PR3 targets); codes are non-negative, no sign-extend
  * needed on the seeding side (byteConversion narrows verbatim). */
 static tensor_t *buildAsymPacked(size_t n, const int32_t *codes, uint8_t qBits, float scale,
-                                 int16_t zeroPoint) {
+                                 int32_t zeroPoint) {
     size_t *dims = reserveMemory(sizeof(size_t));
     dims[0] = n;
     size_t *order = reserveMemory(sizeof(size_t));
@@ -743,14 +743,14 @@ void testAccDynamicAsymPackedMatchesRescalePrimitive(void) {
     byteConversion(ref->data, 5, (uint8_t *)want, 32, n);
     float gotScale = ((asymQConfig_t *)target->quantization->qConfig)->scale;
     float wantScale = ((asymQConfig_t *)ref->quantization->qConfig)->scale;
-    int16_t gotZp = ((asymQConfig_t *)target->quantization->qConfig)->zeroPoint;
-    int16_t wantZp = ((asymQConfig_t *)ref->quantization->qConfig)->zeroPoint;
+    int32_t gotZp = ((asymQConfig_t *)target->quantization->qConfig)->zeroPoint;
+    int32_t wantZp = ((asymQConfig_t *)ref->quantization->qConfig)->zeroPoint;
     freeTensor(inc);
     freeTensor(ref);
     freeTensor(target);
     TEST_ASSERT_EQUAL_INT32_ARRAY(want, got, n);
     TEST_ASSERT_EQUAL_FLOAT(wantScale, gotScale);
-    TEST_ASSERT_EQUAL_INT16(wantZp, gotZp);
+    TEST_ASSERT_EQUAL_INT32(wantZp, gotZp);
 }
 
 /* SYM_INT32 intermediate bridging analog of the SYM DYNAMIC_RESCALE bridge
@@ -801,15 +801,15 @@ void testAccDynamicAsymPackedAcceptsSymInt32IntermediateBitIdenticalToFloatBridg
     byteConversion(targetViaSymInt32->data, 5, (uint8_t *)gotSymInt32, 32, n);
     float scaleFloat = ((asymQConfig_t *)targetViaFloat->quantization->qConfig)->scale;
     float scaleSymInt32 = ((asymQConfig_t *)targetViaSymInt32->quantization->qConfig)->scale;
-    int16_t zpFloat = ((asymQConfig_t *)targetViaFloat->quantization->qConfig)->zeroPoint;
-    int16_t zpSymInt32 = ((asymQConfig_t *)targetViaSymInt32->quantization->qConfig)->zeroPoint;
+    int32_t zpFloat = ((asymQConfig_t *)targetViaFloat->quantization->qConfig)->zeroPoint;
+    int32_t zpSymInt32 = ((asymQConfig_t *)targetViaSymInt32->quantization->qConfig)->zeroPoint;
     freeTensor(incSymInt32);
     freeTensor(incFloat);
     freeTensor(targetViaSymInt32);
     freeTensor(targetViaFloat);
     TEST_ASSERT_EQUAL_INT32_ARRAY(gotFloat, gotSymInt32, n);
     TEST_ASSERT_EQUAL_FLOAT(scaleFloat, scaleSymInt32);
-    TEST_ASSERT_EQUAL_INT16(zpFloat, zpSymInt32);
+    TEST_ASSERT_EQUAL_INT32(zpFloat, zpSymInt32);
 }
 
 /* Grad-width contract moved from layerNormValidateSymGrad: SYM targets wider

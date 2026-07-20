@@ -1357,8 +1357,8 @@ static void testRoundTripQuantizationLayer(void) {
     uint8_t capturedDeserialPropLossQBits = deserialPropLossCfg->qBits;
     roundingMode_t capturedSerialPropLossRM = serialPropLossCfg->roundingMode;
     roundingMode_t capturedDeserialPropLossRM = deserialPropLossCfg->roundingMode;
-    int16_t capturedSerialPropLossZP = serialPropLossCfg->zeroPoint;
-    int16_t capturedDeserialPropLossZP = deserialPropLossCfg->zeroPoint;
+    int32_t capturedSerialPropLossZP = serialPropLossCfg->zeroPoint;
+    int32_t capturedDeserialPropLossZP = deserialPropLossCfg->zeroPoint;
 
     freeQuantLayer(deserialLayer);
     freeQuantLayer(serialLayer);
@@ -1562,7 +1562,7 @@ static void testGoldenBytesTensorFloat32V2(void) {
 /*! GOLDEN BYTES (#370, wire format v2): full-model header (magic + version 2 +
  *  layerCount, all u32 LE) plus a RELU record whose outputQ/propLossQ pin the
  *  SYM_INT32 and ASYM qConfig payload encodings — ASYM zeroPoint is i32 LE on
- *  the wire (the in-memory int16 widens separately via #246). */
+ *  the wire, matching the int32 in-memory field (#246). */
 static void testGoldenBytesModelReluV2(void) {
     quantization_t *floatQ = quantizationInitFloat();
     quantization_t *symIntOutputQ = quantizationInitSymInt32WithBits(SR_HALF_AWAY, 12);

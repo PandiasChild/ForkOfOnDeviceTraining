@@ -174,17 +174,7 @@ static void deserializeQConfig(quantization_t *q, FILE *f) {
         asymQC->scale = serialReadF32LE(f);
         asymQC->qBits = serialReadU8(f);
         asymQC->roundingMode = (roundingMode_t)serialReadU8(f);
-        /* The wire pins zeroPoint as i32 (#370); the in-memory field is still
-         * int16_t — reject what the narrowing would corrupt. This guard drops
-         * when #246 widens the field. */
-        int32_t zeroPoint = serialReadI32LE(f);
-        if (zeroPoint < INT16_MIN || zeroPoint > INT16_MAX) {
-            PRINT_ERROR("deserializeQConfig: ASYM zeroPoint %d exceeds the int16 in-memory "
-                        "range",
-                        zeroPoint);
-            exit(1);
-        }
-        asymQC->zeroPoint = (int16_t)zeroPoint;
+        asymQC->zeroPoint = serialReadI32LE(f);
         break;
     }
     default:
