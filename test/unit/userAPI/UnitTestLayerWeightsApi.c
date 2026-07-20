@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include "BorrowedLayer.h"
 #include "Conv1d.h"
 #include "Conv1dApi.h"
 #include "Conv1dTransposed.h"
@@ -77,13 +78,13 @@ void testLayerLoadWeightsLinearNoBiasAcceptsNullBiasData(void) {
 
 void testLayerLoadWeightsLinearQuantizesForSymStorage(void) {
     /* linearLayerInit's KAIMING/uniform init requires FLOAT32-native weight
-     * storage (LayerCommon.c requireFloat32), so a SYM_INT32-native Linear
-     * layer must be hand-wired directly (Task-9 report pattern, mirroring
-     * buildBorrowedLinearLayer in UnitTestLinear.c) rather than built through
-     * the factory. This exercises the LINEAR arm of layerLoadWeights on
-     * non-FLOAT32 storage — only the LAYERNORM arm had an equivalent
-     * SYM-storage test (above); the Task-9 memcpy -> tensorFillFromFloatBuffer
-     * fix was otherwise untested here. */
+     * storage (LayerCommon.c requireFloat32, by design — #270), so the
+     * SYM_INT32-native Linear layer is built via the shared
+     * buildBorrowedLinearLayer helper rather than through the factory. This
+     * exercises the LINEAR arm of layerLoadWeights on non-FLOAT32 storage —
+     * only the LAYERNORM arm had an equivalent SYM-storage test (above); the
+     * Task-9 memcpy -> tensorFillFromFloatBuffer fix was otherwise untested
+     * here. */
     size_t *weightDims = reserveMemory(2 * sizeof(size_t));
     weightDims[0] = 2;
     weightDims[1] = 3;
@@ -103,13 +104,7 @@ void testLayerLoadWeightsLinearQuantizesForSymStorage(void) {
     tensor_t *biasParam = initTensor(biasShape, quantizationInitSymInt32(HALF_AWAY), NULL);
     parameter_t *bias = parameterInit(biasParam, NULL);
 
-    linearConfig_t *cfg = reserveMemory(sizeof(linearConfig_t));
-    cfg->weights = weights;
-    cfg->bias = bias;
-    layerConfig_t *layerCfg = reserveMemory(sizeof(layerConfig_t));
-    layerCfg->linear = cfg;
-    layer_t *layer = reserveMemory(sizeof(layer_t));
-    initLayer(layer, LINEAR, layerCfg);
+    layer_t *layer = buildBorrowedLinearLayer(weights, bias, weightParam->quantization);
 
     float weightData[6] = {-1.f, 2.f, -3.f, 4.f, 5.f, -6.f};
     float biasData[2] = {-1.f, 3.f};
@@ -149,9 +144,7 @@ void testLayerLoadWeightsLinearQuantizesForSymStorage(void) {
 
     freeParameter(weights);
     freeParameter(bias);
-    freeReservedMemory(cfg);
-    freeReservedMemory(layerCfg);
-    freeReservedMemory(layer);
+    freeLinearLayerShellOnly(layer);
     freeTensor(weightGold);
     freeTensor(biasGold);
 

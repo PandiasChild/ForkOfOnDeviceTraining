@@ -14,6 +14,7 @@ add_elastic_ai_unit_test(
         ArithmeticType
         RNG
         odt_test_death
+        odt_test_layer_builders
 )
 
 set(GEN_LR_SCHEDULER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/expected_lr_scheduler.h)
@@ -74,6 +75,7 @@ add_elastic_ai_unit_test(
         Common
         m
         odt_test_death
+        odt_test_layer_builders
         AdamWApi
         OptimizerApi
         ExecuteOp

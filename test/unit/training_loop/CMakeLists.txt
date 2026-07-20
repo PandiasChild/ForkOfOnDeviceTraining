@@ -26,4 +26,5 @@ add_elastic_ai_unit_test(
         CrossEntropy
         Distributions
         RNG
+        odt_test_layer_builders
 )

@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "ArithmeticType.h"
+#include "BorrowedLayer.h"
 #include "CalculateGradsSequential.h"
 #include "Common.h"
 #include "Layer.h"
@@ -203,13 +204,13 @@ static void agradCaptureSink(void *ctx, size_t layerIdx, layerType_t type, const
     }
 }
 
-/*! Borrows already-built weight/bias parameter_t; forwardMath/weightGradMath/
- *  biasGradMath/outputQ derive from mathQ, propLossMath/propLossQ derive from
- *  the (possibly divergent) propLossQ — replicates the deleted
- *  linearLayerInitLegacy(weights, bias, mathQ, mathQ, mathQ, propLossQ)
- *  shape. Needed because the weight/bias tensors here are SYM_INT32-native
- *  (makeSymParam), which the factory's KAIMING init cannot allocate
- *  (LayerCommon.c requireFloat32). */
+/*! Two-Q variant of buildBorrowedLinearLayer (BorrowedLayer.h): forwardMath/
+ *  weightGradMath/biasGradMath/outputQ derive from mathQ, propLossMath/
+ *  propLossQ derive from the (possibly divergent) propLossQ — replicates the
+ *  deleted linearLayerInitLegacy(weights, bias, mathQ, mathQ, mathQ,
+ *  propLossQ) shape. Needed because the weight/bias tensors here are
+ *  SYM_INT32-native (makeSymParam), which the factory does not allocate
+ *  (LayerCommon.c requireFloat32, by design — #270). */
 static layer_t *buildSymLinearLayer(parameter_t *weights, parameter_t *bias, quantization_t *mathQ,
                                     quantization_t *propLossQ) {
     linearConfig_t *cfg = reserveMemory(sizeof(linearConfig_t));
@@ -232,15 +233,6 @@ static layer_t *buildSymLinearLayer(parameter_t *weights, parameter_t *bias, qua
     layer_t *layer = reserveMemory(sizeof(layer_t));
     initLayer(layer, LINEAR, layerCfg);
     return layer;
-}
-
-/*! Frees only the layer_t + layerConfig_t + linearConfig_t shells — NOT the
- *  weight/bias parameters (caller-managed here, matches the deleted
- *  freeLinearLayerLegacy's wrapper-only teardown contract). */
-static void freeLinearLayerShellOnly(layer_t *layer) {
-    freeReservedMemory(layer->config->linear);
-    freeReservedMemory(layer->config);
-    freeReservedMemory(layer);
 }
 
 /* Create a SYM_INT32 parameter (param tensor + optional grad tensor) from float values.

@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "ArithmeticType.h"
+#include "BorrowedLayer.h"
 #include "DeathTest.h"
 #include "Layer.h"
 #include "LayerNorm.h"
@@ -49,43 +50,6 @@ _Static_assert(_Generic(&freeOptim, void (*)(optimizer_t *): 1, default: 0),
 
 void setUp() {}
 void tearDown() {}
-
-/*! Borrows already-built weight/bias parameter_t and a single quantization
- *  for forward + all backward math — replicates the deleted
- *  linearLayerInitLegacy(weights, bias, q, q, q, q) uniform-Q shape.
- *
- *  This file's tests register parameters directly with sgdMCreateOptim and
- *  need weight/bias shapes the factory can't express (arbitrary, decoupled
- *  from any real inFeatures/outFeatures pairing) or grad quantizations the
- *  factory's grad-storage knob rejects (e.g. sub-byte SYM) — so the layer
- *  is wired by hand instead of going through linearLayerInit. */
-static layer_t *buildBorrowedLinearLayer(parameter_t *weights, parameter_t *bias,
-                                         quantization_t *q) {
-    linearConfig_t *cfg = reserveMemory(sizeof(linearConfig_t));
-    cfg->weights = weights;
-    cfg->bias = bias;
-    cfg->forwardMath = arithmeticFromQuantization(q);
-    cfg->weightGradMath = arithmeticFromQuantization(q);
-    cfg->biasGradMath = arithmeticFromQuantization(q);
-    cfg->propLossMath = arithmeticFromQuantization(q);
-    cfg->outputQ = q;
-    cfg->propLossQ = q;
-    cfg->ownsQuantizations = false;
-    layerConfig_t *layerCfg = reserveMemory(sizeof(layerConfig_t));
-    layerCfg->linear = cfg;
-    layer_t *layer = reserveMemory(sizeof(layer_t));
-    initLayer(layer, LINEAR, layerCfg);
-    return layer;
-}
-
-/*! Frees only the layer_t + layerConfig_t + linearConfig_t shells — NOT the
- *  weight/bias parameters. Needed after freeOptim, which already frees
- *  every parameter it registered (freeLinearLayer would double-free them). */
-static void freeLinearLayerShellOnly(layer_t *layer) {
-    freeReservedMemory(layer->config->linear);
-    freeReservedMemory(layer->config);
-    freeReservedMemory(layer);
-}
 
 void testSgdMCreateOptim() {
     /* Shared layer-config quantization (caller-owned). */

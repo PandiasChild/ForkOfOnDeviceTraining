@@ -3,6 +3,7 @@
 #include <stddef.h>
 
 #include "ArithmeticType.h"
+#include "BorrowedLayer.h"
 #include "CalculateGradsSequential.h"
 #include "DataLoaderApi.h"
 #include "Dataset.h"
@@ -36,46 +37,6 @@ _Static_assert(_Generic(&trainingRun,
                    default: 0),
                "#327: trainingRun must be (model, modelSize, lossConfig, trainDl, evalDl, "
                "optimizer, scheduler, numberOfEpochs, calculateGradsFn, inferenceFn, callback)");
-
-/*! Borrows already-built weight/bias parameter_t and a single quantization
- *  for forward + all backward math — replicates the deleted
- *  linearLayerInitLegacy(weights, bias, q, q, q, q) uniform-Q shape. These
- *  tests need exact hand-seeded weight values (regression fixtures) and/or
- *  register the parameters with an SGD optimizer directly, so the layer is
- *  wired by hand instead of going through the factory. */
-static layer_t *buildBorrowedLinearLayer(parameter_t *weights, parameter_t *bias,
-                                         quantization_t *q) {
-    linearConfig_t *cfg = reserveMemory(sizeof(linearConfig_t));
-    cfg->weights = weights;
-    cfg->bias = bias;
-    cfg->forwardMath = arithmeticFromQuantization(q);
-    cfg->weightGradMath = arithmeticFromQuantization(q);
-    cfg->biasGradMath = arithmeticFromQuantization(q);
-    cfg->propLossMath = arithmeticFromQuantization(q);
-    cfg->outputQ = q;
-    cfg->propLossQ = q;
-    /* PR3 spec D1: today's per-callsite hardcodes (linearBackward); hand-wired
-     * here since this helper builds the config directly instead of going
-     * through linearInitConfig/a layerQuant_t factory. */
-    cfg->weightGradAccMode = OUT_ACC_DYNAMIC_RESCALE;
-    cfg->biasGradAccMode = OUT_ACC_FIXED_SCALE;
-    cfg->ownsQuantizations = false;
-    layerConfig_t *layerCfg = reserveMemory(sizeof(layerConfig_t));
-    layerCfg->linear = cfg;
-    layer_t *layer = reserveMemory(sizeof(layer_t));
-    initLayer(layer, LINEAR, layerCfg);
-    return layer;
-}
-
-/*! Frees only the layer_t + layerConfig_t + linearConfig_t shells — NOT the
- *  weight/bias parameters (caller-owned, either freed explicitly or via
- *  freeOptim's cascade — matches the deleted freeLinearLayerLegacy's
- *  wrapper-only teardown contract). */
-static void freeLinearLayerShellOnly(layer_t *layer) {
-    freeReservedMemory(layer->config->linear);
-    freeReservedMemory(layer->config);
-    freeReservedMemory(layer);
-}
 
 /* Build a fresh 2-D float tensor from a literal float buffer. Encapsulates the
  * post-#106 chain so each test stays readable. */

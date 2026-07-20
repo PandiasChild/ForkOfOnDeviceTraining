@@ -16,6 +16,10 @@
 #define INIT_KAIMING_DEFAULT_GAIN 1.41421356237f /* sqrt(2), He */
 #define INIT_XAVIER_DEFAULT_GAIN 1.0f
 
+/* By design (#270): random init is defined on floats, so the factories only
+ * allocate FLOAT32 params. SYM_INT32-native params are reached via FLOAT32
+ * init + an in-place requantize (see examples/mixed_width_mlp) or via the
+ * LayerNorm/GroupNorm constant-fill factories — not via a factory knob. */
 static void requireFloat32(const tensor_t *t, const char *what) {
     if (t->quantization->type != FLOAT32) {
         PRINT_ERROR("%s: tensor init currently requires FLOAT32 storage (got type %d)", what,

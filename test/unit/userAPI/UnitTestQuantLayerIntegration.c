@@ -6,6 +6,7 @@
 #include <stdlib.h>
 
 #include "ArithmeticType.h"
+#include "BorrowedLayer.h"
 #include "CalculateGradsSequential.h"
 #include "Conv1dTransposed.h"
 #include "InferenceApi.h"
@@ -96,11 +97,11 @@ static parameter_t *buildConvTSymParam(size_t numDims, const size_t *dimsIn, con
     return parameterInit(p, g);
 }
 
-/* Trainable Linear with manually built parameters: the new-factory KAIMING
- * init requires FLOAT32 weight storage (LinearApi.c guard), so SYM Linear
- * layers wire a linearConfig_t by hand around explicit parameter_t
- * (UnitTestLinear SYM precedent), extended with grad tensors for
- * sgdMCreateOptim / sgdStepM. */
+/* Trainable Linear with manually built parameters: the factory's KAIMING
+ * init requires FLOAT32 weight storage (LayerCommon.c requireFloat32, by
+ * design — #270), so SYM Linear layers go through the shared
+ * buildBorrowedLinearLayer around explicit parameter_t, extended with grad
+ * tensors for sgdMCreateOptim / sgdStepM. */
 static layer_t *buildTrainableLinear(size_t inF, size_t outF, const float *w, const float *b,
                                      quantization_t *mathQ, bool sym) {
     size_t *wDims = reserveMemory(2 * sizeof(size_t));
@@ -126,26 +127,7 @@ static layer_t *buildTrainableLinear(size_t inF, size_t outF, const float *w, co
     tensorFillFromFloatBuffer(bParam, (float *)b, outF);
     parameter_t *bias = parameterInit(bParam, gradInit(bParam, mathQ, NULL));
 
-    linearConfig_t *cfg = reserveMemory(sizeof(linearConfig_t));
-    cfg->weights = weights;
-    cfg->bias = bias;
-    cfg->forwardMath = arithmeticFromQuantization(mathQ);
-    cfg->weightGradMath = arithmeticFromQuantization(mathQ);
-    cfg->biasGradMath = arithmeticFromQuantization(mathQ);
-    cfg->propLossMath = arithmeticFromQuantization(mathQ);
-    cfg->outputQ = mathQ;
-    cfg->propLossQ = mathQ;
-    /* PR3 spec D1: today's per-callsite hardcodes (linearBackward); hand-wired
-     * here since this helper builds the config directly instead of going
-     * through linearInitConfig/a layerQuant_t factory. */
-    cfg->weightGradAccMode = OUT_ACC_DYNAMIC_RESCALE;
-    cfg->biasGradAccMode = OUT_ACC_FIXED_SCALE;
-    cfg->ownsQuantizations = false;
-    layerConfig_t *lc = reserveMemory(sizeof(layerConfig_t));
-    lc->linear = cfg;
-    layer_t *layer = reserveMemory(sizeof(layer_t));
-    initLayer(layer, LINEAR, lc);
-    return layer;
+    return buildBorrowedLinearLayer(weights, bias, mathQ);
 }
 
 /* Manual Quant-layer builder: documents the quantizationConfig_t contract
@@ -170,13 +152,8 @@ static void freeQuantLayerShell(layer_t *layer) {
 
 /* freeOptim cascades into freeParameter for every registered parameter_t —
  * the SAME objects the layers reference; layers are torn down shell-only
- * afterwards (UnitTestLayerNormIntegration pattern). */
-static void freeLinearLayerShell(layer_t *layer) {
-    freeReservedMemory(layer->config->linear);
-    freeReservedMemory(layer->config);
-    freeReservedMemory(layer);
-}
-
+ * afterwards (UnitTestLayerNormIntegration pattern). Linear shells go
+ * through the shared freeLinearLayerShellOnly (BorrowedLayer.h). */
 static void freeLayerNormLayerShell(layer_t *layer) {
     freeReservedMemory(layer->config->layerNorm->normalizedShape);
     freeReservedMemory(layer->config->layerNorm);
@@ -198,7 +175,7 @@ void testSgdMCreateOptimSkipsQuantizationLayer(void) {
 
     freeOptim(optim); /* frees the Linear weights/bias parameter_t */
     freeQuantLayerShell(quant);
-    freeLinearLayerShell(linear);
+    freeLinearLayerShellOnly(linear);
     freeQuantization(momentumQ);
     freeQuantization(symQ);
 
@@ -236,7 +213,7 @@ void testTrainingStepLinearSymThenQuantRequantsOutputAndFiniteLoss(void) {
     freeParameter(linear->config->linear->weights); /* no optimizer in this test */
     freeParameter(linear->config->linear->bias);
     freeQuantLayerShell(quant);
-    freeLinearLayerShell(linear);
+    freeLinearLayerShellOnly(linear);
     freeQuantization(symQ);
 
     TEST_ASSERT_TRUE(statsNotNull);
@@ -276,7 +253,7 @@ void testInferenceLinearSymThenQuantOutputsInt16RangeMantissas(void) {
     freeParameter(linear->config->linear->weights);
     freeParameter(linear->config->linear->bias);
     freeQuantLayerShell(quant);
-    freeLinearLayerShell(linear);
+    freeLinearLayerShellOnly(linear);
     freeQuantization(symQ);
 
     TEST_ASSERT_TRUE(predictedNotNull);
@@ -408,14 +385,14 @@ void testFullSymChainTrainingStepMatchesFloatTwin(void) {
     freeTensor(inS);
     freeOptim(optimF); /* frees w0F/b0F, gammaF/betaF, w1F/b1F parameter_t */
     freeOptim(optimS);
-    freeLinearLayerShell(lin1F);
+    freeLinearLayerShellOnly(lin1F);
     freeLayerNormLayerShell(lnF);
-    freeLinearLayerShell(lin0F);
-    freeLinearLayerShell(lin1S);
+    freeLinearLayerShellOnly(lin0F);
+    freeLinearLayerShellOnly(lin1S);
     freeQuantLayer(quant2);
     freeLayerNormLayerShell(lnS);
     freeQuantLayer(quant1);
-    freeLinearLayerShell(lin0S);
+    freeLinearLayerShellOnly(lin0S);
     freeQuantization(momentumQF);
     freeQuantization(momentumQS);
     freeQuantization(fQ);
@@ -545,11 +522,11 @@ void testValidatorAcceptsChainWithoutQuantLayers(void) {
 
     freeParameter(lin1->config->linear->weights);
     freeParameter(lin1->config->linear->bias);
-    freeLinearLayerShell(lin1);
+    freeLinearLayerShellOnly(lin1);
     freeLayerNormLayer(ln); /* factory free: gamma/beta not registered with any optimizer */
     freeParameter(lin0->config->linear->weights);
     freeParameter(lin0->config->linear->bias);
-    freeLinearLayerShell(lin0);
+    freeLinearLayerShellOnly(lin0);
     freeQuantization(symQ);
 
     TEST_ASSERT_TRUE_MESSAGE(valid, "a SYM-producer chain without Quant layers between "

@@ -199,14 +199,14 @@ static void buildModel(layer_t **model, mixedWidthQuant_t *mq) {
      * intermediate before PR3 (both bridges pre-date this change) and stay
      * FLOAT32 per the pinned config.
      *
-     * weightStorage/biasStorage are TEMPORARILY mq->floatInitQ: the factory's
+     * weightStorage/biasStorage are mq->floatInitQ: the factory's
      * PyTorch-parity init (initWeightTensor/initBiasTensor, LayerCommon.c
-     * requireFloat32) only supports FLOAT32-native weight storage — a
-     * pre-existing gap (see test/unit/layer/UnitTestLinear.c's
-     * buildBorrowedLinearLayer comment, lines 24-32). Construction below uses
-     * FLOAT32 storage so the Kaiming/PyTorch init succeeds with real values;
-     * main() then requantizes weights/bias into the pinned SYM_INT32 widths
-     * via requantizeTensorInPlace() before the first forward pass. Grad
+     * requireFloat32) requires FLOAT32-native param storage by design
+     * (#270) — FLOAT32 init followed by requantizeTensorInPlace() is the
+     * documented public-API path to SYM_INT32-native params. Construction
+     * below uses FLOAT32 storage so the Kaiming/PyTorch init succeeds with
+     * real values; main() then requantizes weights/bias into the pinned
+     * SYM_INT32 widths before the first forward pass. Grad
      * tensors are unaffected: gradInit derives their dtype from
      * weightGradStorage/biasGradStorage (mq->gradQ) independent of the
      * param's own storage, so they are already correctly packed SYM@GRAD_QBITS
@@ -378,9 +378,10 @@ int main(void) {
                     * patches this integer per run (spec §8) */
     buildModel(model, &mq);
 
-    /* Fix up Linear0/Linear1's weight/bias PARAM tensors to the pinned
-     * SYM_INT32 widths now that PyTorch-parity init has already run against
-     * the temporary FLOAT32 storage (see buildModel's comment). */
+    /* Requantize Linear0/Linear1's weight/bias PARAM tensors to the pinned
+     * SYM_INT32 widths now that PyTorch-parity init has run against the
+     * FLOAT32 init storage — the documented path to SYM_INT32-native params
+     * (#270, see buildModel's comment). */
     const size_t linearIdx[2] = {LINEAR0_IDX, LINEAR1_IDX};
     for (size_t k = 0; k < 2; k++) {
         linearConfig_t *cfg = model[linearIdx[k]]->config->linear;

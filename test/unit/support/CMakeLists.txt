@@ -6,3 +6,10 @@
 # any per-target include plumbing.
 add_library(odt_test_death INTERFACE)
 target_include_directories(odt_test_death INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+# Borrowed-parameter layer builders (BorrowedLayer.h). Consumers must already
+# link the layer/arithmetic/StorageApi targets the header's includes and the
+# emitted calls need — every current consumer does, since the builders were
+# previously inlined in those test files.
+add_library(odt_test_layer_builders INTERFACE)
+target_include_directories(odt_test_layer_builders INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)

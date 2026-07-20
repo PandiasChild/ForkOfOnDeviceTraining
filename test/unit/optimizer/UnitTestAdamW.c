@@ -7,6 +7,7 @@
 #include "AdamW.h"
 #include "AdamWApi.h"
 #include "ArithmeticType.h"
+#include "BorrowedLayer.h"
 #include "DeathTest.h"
 #include "ExecuteOp.h"
 #include "Linear.h"
@@ -324,37 +325,6 @@ void testAdamWWithCosineSchedulerMatchesGold(void) {
     }
     tensor_t pT = {.data = (uint8_t *)pOut};
     assertBitsEqualAt(adamw_sched_cosine_p_final, &pT, 32, "sched p final");
-}
-
-/*! Borrows already-built weight/bias parameter_t and a single quantization
- *  for forward + all backward math (UnitTestSgd.c precedent, copied
- *  file-locally: the 3+-file cross-file-helper threshold is not met). */
-static layer_t *buildBorrowedLinearLayer(parameter_t *weights, parameter_t *bias,
-                                         quantization_t *q) {
-    linearConfig_t *cfg = reserveMemory(sizeof(linearConfig_t));
-    cfg->weights = weights;
-    cfg->bias = bias;
-    cfg->forwardMath = arithmeticFromQuantization(q);
-    cfg->weightGradMath = arithmeticFromQuantization(q);
-    cfg->biasGradMath = arithmeticFromQuantization(q);
-    cfg->propLossMath = arithmeticFromQuantization(q);
-    cfg->outputQ = q;
-    cfg->propLossQ = q;
-    cfg->ownsQuantizations = false;
-    layerConfig_t *layerCfg = reserveMemory(sizeof(layerConfig_t));
-    layerCfg->linear = cfg;
-    layer_t *layer = reserveMemory(sizeof(layer_t));
-    initLayer(layer, LINEAR, layerCfg);
-    return layer;
-}
-
-/*! Frees only the layer_t + layerConfig_t + linearConfig_t shells — NOT the
- *  weight/bias parameters. Needed after freeOptim, which already frees
- *  every parameter it registered (freeLinearLayer would double-free them). */
-static void freeLinearLayerShellOnly(layer_t *layer) {
-    freeReservedMemory(layer->config->linear);
-    freeReservedMemory(layer->config);
-    freeReservedMemory(layer);
 }
 
 void testAdamWCreateOptimAllocatesTwoZeroMomentBuffersPerParameter(void) {

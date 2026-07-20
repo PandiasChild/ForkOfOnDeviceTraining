@@ -6,6 +6,7 @@
 
 #include "unity.h"
 
+#include "BorrowedLayer.h"
 #include "CalculateGradsSequential.h"
 #include "DataLoaderApi.h"
 #include "Dataset.h"
@@ -25,15 +26,6 @@
 
 void setUp() {}
 void tearDown() {}
-
-/*! Frees only the layer_t + layerConfig_t + linearConfig_t shells — NOT the
- *  weight/bias parameters. Needed after freeOptim, which already frees
- *  every parameter it registered (freeLinearLayer would double-free them). */
-static void freeLinearLayerShellOnly(layer_t *layer) {
-    freeReservedMemory(layer->config->linear);
-    freeReservedMemory(layer->config);
-    freeReservedMemory(layer);
-}
 
 #define INPUT_DIM 4
 #define HIDDEN_DIM 8

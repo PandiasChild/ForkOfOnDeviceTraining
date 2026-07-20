@@ -2,6 +2,7 @@
 #include <stdint.h>
 
 #include "ArithmeticType.h"
+#include "BorrowedLayer.h"
 #include "InferenceApi.h"
 #include "Layer.h"
 #include "LayerNormApi.h"
@@ -17,31 +18,6 @@
 #include "TensorApi.h"
 #include "TensorConversion.h"
 #include "unity.h"
-
-/*! Borrows already-built weight/bias parameter_t and a single quantization
- *  for forward + all backward math — replicates the deleted
- *  linearLayerInitLegacy(weights, bias, q, q, q, q) uniform-Q shape. Needed
- *  for weight/bias tensors whose STORAGE itself is SYM_INT32: the factory's
- *  KAIMING init (initWeightTensor, LayerCommon.c requireFloat32) only
- *  supports FLOAT32-native weight storage. */
-static layer_t *buildBorrowedLinearLayer(parameter_t *weights, parameter_t *bias,
-                                         quantization_t *q) {
-    linearConfig_t *cfg = reserveMemory(sizeof(linearConfig_t));
-    cfg->weights = weights;
-    cfg->bias = bias;
-    cfg->forwardMath = arithmeticFromQuantization(q);
-    cfg->weightGradMath = arithmeticFromQuantization(q);
-    cfg->biasGradMath = arithmeticFromQuantization(q);
-    cfg->propLossMath = arithmeticFromQuantization(q);
-    cfg->outputQ = q;
-    cfg->propLossQ = q;
-    cfg->ownsQuantizations = false;
-    layerConfig_t *layerCfg = reserveMemory(sizeof(layerConfig_t));
-    layerCfg->linear = cfg;
-    layer_t *layer = reserveMemory(sizeof(layer_t));
-    initLayer(layer, LINEAR, layerCfg);
-    return layer;
-}
 
 void testInferenceLinearReluFloat() {
     /* 1. Build heap-allocated quantization (shared across both layers). */

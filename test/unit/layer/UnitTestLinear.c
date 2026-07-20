@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include "ArithmeticType.h"
+#include "BorrowedLayer.h"
 #include "DTypes.h"
 #include "DeathTest.h"
 #include "Layer.h"
@@ -21,39 +22,6 @@
 #include "TensorApi.h"
 #include "TensorConversion.h"
 #include "unity.h"
-
-/*! Borrows already-built weight/bias parameter_t and a single quantization
- *  for forward + all backward math — replicates the deleted
- *  linearLayerInitLegacy(weights, bias, q, q, q, q) uniform-Q shape.
- *
- *  Needed for weight/bias tensors whose STORAGE itself is SYM_INT32: the
- *  factory's KAIMING/Xavier init (initWeightTensor/initBiasTensor,
- *  LayerCommon.c requireFloat32) only supports FLOAT32-native weight
- *  storage, so linearLayerInit cannot allocate a SYM_INT32 weight tensor —
- *  the caller must build it directly and borrow it in here instead. */
-static layer_t *buildBorrowedLinearLayer(parameter_t *weights, parameter_t *bias,
-                                         quantization_t *q) {
-    linearConfig_t *cfg = reserveMemory(sizeof(linearConfig_t));
-    cfg->weights = weights;
-    cfg->bias = bias;
-    cfg->forwardMath = arithmeticFromQuantization(q);
-    cfg->weightGradMath = arithmeticFromQuantization(q);
-    cfg->biasGradMath = arithmeticFromQuantization(q);
-    cfg->propLossMath = arithmeticFromQuantization(q);
-    cfg->outputQ = q;
-    cfg->propLossQ = q;
-    /* PR3 spec D1: today's per-callsite hardcodes (linearBackward); hand-wired
-     * here since this helper builds the config directly instead of going
-     * through linearInitConfig/a layerQuant_t factory. */
-    cfg->weightGradAccMode = OUT_ACC_DYNAMIC_RESCALE;
-    cfg->biasGradAccMode = OUT_ACC_FIXED_SCALE;
-    cfg->ownsQuantizations = false;
-    layerConfig_t *layerCfg = reserveMemory(sizeof(layerConfig_t));
-    layerCfg->linear = cfg;
-    layer_t *layer = reserveMemory(sizeof(layer_t));
-    initLayer(layer, LINEAR, layerCfg);
-    return layer;
-}
 
 void testLinearForwardFloatRank1BiasRank2Output() {
     size_t *inputDims = reserveMemory(2 * sizeof(size_t));

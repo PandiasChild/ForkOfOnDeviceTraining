@@ -18,9 +18,9 @@ FLOAT32 and SYM_INT32; SYM/ASYM/BOOL are partial.
 
 | Layer | Trainable | FLOAT32 arith | SYM_INT32 arith | Quant params | Quant grads | (De)serialize |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|
-| `LINEAR` | ✓ | ✓ | ✓ native (all 4 ops) | ✗ (#270 gate) | ✓ SYM/ASYM | ✓ |
-| `CONV1D` | ✓ | ✓ | ✓ native (all 4 ops) | ✗ (#270 gate) | ✓ SYM/ASYM | ✓ |
-| `CONV1D_TRANSPOSED` | ✓ | ✓ | ✓ native (all 4 ops) | ✗ (#270 gate) | ✓ SYM/ASYM | ✓ |
+| `LINEAR` | ✓ | ✓ | ✓ native (all 4 ops) | ~ requantize path (#270) | ✓ SYM/ASYM | ✓ |
+| `CONV1D` | ✓ | ✓ | ✓ native (all 4 ops) | ~ requantize path (#270) | ✓ SYM/ASYM | ✓ |
+| `CONV1D_TRANSPOSED` | ✓ | ✓ | ✓ native (all 4 ops) | ~ requantize path (#270) | ✓ SYM/ASYM | ✓ |
 | `LAYERNORM` | ✓ | ✓ | ✓ native (fwd+bwd) | ~ SYM_INT32 only | ~ SYM path only | ✓ |
 | `GROUPNORM` | ✓ | ✓ | ✓ native (fwd+bwd) | ~ SYM_INT32 only | ~ SYM path only | ✓ |
 | `RELU` | – | ✓ | ✓ native (fwd+bwd) | n/a | n/a | ✓ |
@@ -46,12 +46,16 @@ Notes on the qualified cells:
   unchanged scale — mechanics in `docs/conventions/arithmetic-sym.md`.
 - **`QUANTIZATION`** is a pure storage-to-storage conversion node (`executeConvert`,
   conversionMatrix), not an arithmetic layer — it deliberately changes dtype/scale.
-- **Quant params** — trainable weight/bias storage. Linear/Conv are hard-gated to
-  FLOAT32 by the `requireFloat32` init gate (#270); `getQLike` can clone SYM_INT32/
-  SYM/ASYM but `initWeightTensor`/`initBiasTensor` fail fast. **LayerNorm and GroupNorm
-  are the exceptions**: gamma/beta may be stored SYM_INT32 (no requireFloat32 gate), but
-  SYM/ASYM are rejected by factory validation — hence "partial". No layer supports SYM/
-  ASYM native param storage.
+- **Quant params** — trainable weight/bias storage. The Linear/Conv factories allocate
+  FLOAT32 params only (`requireFloat32` init gate, by design — #270): random init is
+  defined on floats, so SYM_INT32-native params are reached by FLOAT32 init followed by
+  an in-place requantize (`requantizeTensorInPlace()`, see `examples/mixed_width_mlp`) —
+  the layers' forward/backward SYM kernels then run on the native storage. **LayerNorm
+  and GroupNorm** take the constant-fill route instead: gamma/beta may be allocated
+  SYM_INT32 directly (no requireFloat32 gate), but SYM/ASYM are rejected by factory
+  validation — hence "partial". No layer supports SYM/ASYM native param storage. Tests
+  that need fixture-built SYM_INT32-native params use the shared `BorrowedLayer.h`
+  builders (`test/unit/support/`).
 - **Quant grads** — the `weightGradStorage`/`biasGradStorage` knobs in `layerQuant_t`
   (plus `weightGradAccMode`/`biasGradAccMode`). Default is FLOAT32 everywhere; SYM and
   ASYM packed grad storage work for the four trainable layers via `gradInit`→`getQLike`
@@ -254,7 +258,9 @@ checkpointing, limitations, literature).
 
 ## Known gaps / partial features
 
-- Native SYM_INT32 params blocked for Linear/Conv by the `requireFloat32` gate (#270).
+- Linear/Conv factories allocate FLOAT32 params only — settled as by-design (#270);
+  SYM_INT32-native params via post-init `requantizeTensorInPlace()` (mixed_width_mlp
+  pattern) or LayerNorm/GroupNorm constant-fill.
 - No SYM/ASYM native param storage anywhere; no per-parameter optimizer dtype.
 - Optimizer has no integer update kernel (SYM_INT32 = dequant→float→requant).
 - CrossEntropy `classWeights` field is allocated but unused.

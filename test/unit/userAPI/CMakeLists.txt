@@ -40,6 +40,7 @@ add_elastic_ai_unit_test(
         Kernel
         Tensor
         TensorApi
+        odt_test_layer_builders
 )
 
 
@@ -82,6 +83,7 @@ add_elastic_ai_unit_test(
         QuantizationApi
         LossFunction
         DataLoader
+        odt_test_layer_builders
 )
 
 
@@ -109,6 +111,7 @@ add_elastic_ai_unit_test(
         Sgd
         Optimizer
         odt_test_death
+        odt_test_layer_builders
 )
 
 add_elastic_ai_unit_test(
@@ -310,6 +313,7 @@ target_link_libraries(UnitTestMultiLayerTraining PRIVATE
         DataLoader
         DataLoaderApi
         StorageApi
+        odt_test_layer_builders
 )
 __register_target_as_unit_test(UnitTestMultiLayerTraining)
 
@@ -334,6 +338,7 @@ target_link_libraries(UnitTestMnistSmoke PRIVATE
         DataLoader
         DataLoaderApi
         StorageApi
+        odt_test_layer_builders
 )
 __register_target_as_unit_test(UnitTestMnistSmoke)
 
@@ -402,6 +407,7 @@ target_link_libraries(UnitTestOptimizerScaling PRIVATE
         TensorApi
         QuantizationApi
         StorageApi
+        odt_test_layer_builders
 )
 __register_target_as_unit_test(UnitTestOptimizerScaling)
 
@@ -443,6 +449,7 @@ target_link_libraries(UnitTestQuantLayerIntegration PRIVATE
         Conv1dKernel
         ConvTranspose1dKernel
         Kernel
+        odt_test_layer_builders
 )
 __register_target_as_unit_test(UnitTestQuantLayerIntegration)
 

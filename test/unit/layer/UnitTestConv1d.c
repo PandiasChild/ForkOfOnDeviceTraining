@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "BorrowedLayer.h"
 #include "Conv1d.h"
 #include "Conv1dApi.h"
 #include "ConvTranspose1dKernel.h"
@@ -137,24 +138,6 @@ static parameter_t *buildSymParam(size_t numDims, const size_t *dimsIn, const fl
 
 static float symScaleOf(tensor_t *t) {
     return ((symInt32QConfig_t *)t->quantization->qConfig)->scale;
-}
-
-/*! Borrows already-built weights/bias/kernel and a single quantization for
- *  forward + all backward math (groups=1) — replicates the deleted
- *  conv1dLayerInitLegacy(weights, bias, kernel, q, q, q, q) shape. The
- *  UserAPI factory (conv1dLayerInit) always allocates its own weights
- *  (KAIMING init requires FLOAT32 storage), so it cannot express a directly
- *  SYM_INT32-native weight tensor built by the test fixture; this goes
- *  straight through initConv1dConfigWithWeightsAndBias instead. */
-static layer_t *buildBorrowedConv1dLayer(parameter_t *weights, parameter_t *bias, kernel_t *kernel,
-                                         quantization_t *q) {
-    conv1dConfig_t *cfg = reserveMemory(sizeof(conv1dConfig_t));
-    initConv1dConfigWithWeightsAndBias(cfg, kernel, weights, bias, 1u, q, q, q, q);
-    layerConfig_t *layerCfg = reserveMemory(sizeof(layerConfig_t));
-    layerCfg->conv1d = cfg;
-    layer_t *layer = reserveMemory(sizeof(layer_t));
-    initLayer(layer, CONV1D, layerCfg);
-    return layer;
 }
 
 void testConv1dForwardMultiChannelWithBias() {

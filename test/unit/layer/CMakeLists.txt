@@ -65,6 +65,7 @@ add_elastic_ai_unit_test(
         Kernel
         StorageApi
         odt_test_death
+        odt_test_layer_builders
 )
 add_dependencies(UnitTestConv1d generate_expected_conv1d)
 target_include_directories(UnitTestConv1d PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
@@ -90,6 +91,7 @@ add_elastic_ai_unit_test(
         Sgd
         Optimizer
         odt_test_death
+        odt_test_layer_builders
 )
 
 add_elastic_ai_unit_test(

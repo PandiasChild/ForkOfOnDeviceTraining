@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "ArithmeticType.h"
+#include "BorrowedLayer.h"
 #include "Layer.h"
 #include "Linear.h"
 #include "LinearApi.h"
@@ -22,40 +23,6 @@
 
 void setUp() {}
 void tearDown() {}
-
-/*! Borrows already-built weight/bias parameter_t and a single quantization
- *  for forward + all backward math — replicates the deleted
- *  linearLayerInitLegacy(weights, bias, q, q, q, q) uniform-Q shape. These
- *  tests need exact hand-seeded grad values/quantization types the factory
- *  can't express (it always allocates its own FLOAT32-native weights), so
- *  the layer is wired by hand instead. */
-static layer_t *buildBorrowedLinearLayer(parameter_t *weights, parameter_t *bias,
-                                         quantization_t *q) {
-    linearConfig_t *cfg = reserveMemory(sizeof(linearConfig_t));
-    cfg->weights = weights;
-    cfg->bias = bias;
-    cfg->forwardMath = arithmeticFromQuantization(q);
-    cfg->weightGradMath = arithmeticFromQuantization(q);
-    cfg->biasGradMath = arithmeticFromQuantization(q);
-    cfg->propLossMath = arithmeticFromQuantization(q);
-    cfg->outputQ = q;
-    cfg->propLossQ = q;
-    cfg->ownsQuantizations = false;
-    layerConfig_t *layerCfg = reserveMemory(sizeof(layerConfig_t));
-    layerCfg->linear = cfg;
-    layer_t *layer = reserveMemory(sizeof(layer_t));
-    initLayer(layer, LINEAR, layerCfg);
-    return layer;
-}
-
-/*! Frees only the layer_t + layerConfig_t + linearConfig_t shells — NOT the
- *  weight/bias parameters. Needed after freeOptim, which already frees
- *  every parameter it registered (freeLinearLayer would double-free them). */
-static void freeLinearLayerShellOnly(layer_t *layer) {
-    freeReservedMemory(layer->config->linear);
-    freeReservedMemory(layer->config);
-    freeReservedMemory(layer);
-}
 
 /* Build a one-layer Linear model with grads pre-filled to known values, so
  * scaleOptimizerGradients's effect on the optimizer's parameter list is
