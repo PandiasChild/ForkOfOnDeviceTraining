@@ -257,9 +257,9 @@ void testDeserializeRejectsBadMagicAndTruncation(void) {
 
 void testDeserializeRejectsPayloadTruncation(void) {
     /* Cut INSIDE the last tensor's payload region (full-2 bytes): every
-     * header/scalar readOrDie and the peek still succeed, and the public
-     * deserializeTensor's payload fread is UNCHECKED — only the post-read
-     * record-length check can catch this. */
+     * header/scalar read and the peek still succeed; since #370 the payload
+     * read itself fails fast (the post-read record-length check remains as
+     * the wire-drift alarm). */
     ppcaReplayConfig_t cfg = floatConfig(6, 2, 8);
     ppcaReplaySet_t *skeleton = ppcaReplaySetCreate(1, &cfg);
     ppcaReplaySet_t *serial = ppcaReplaySetCreate(1, &cfg);

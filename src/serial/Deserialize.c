@@ -20,12 +20,15 @@
 #include "QuantizationLayer.h"
 #include "Relu.h"
 #include "Rounding.h"
+#include "SerialWire.h"
 #include "Softmax.h"
 #include "Tensor.h"
 
-/* Mirrors Serialize.c's locked format v1 constants. */
+/* Mirrors Serialize.c's locked format v2 constants (#370): fixed-width
+ * little-endian scalars via the checked SerialWire primitives; no v1
+ * back-compat shim — v1 files were host-local artifacts. */
 #define SERIALIZE_MAGIC "ODTS"
-#define SERIALIZE_FORMAT_VERSION 1u
+#define SERIALIZE_FORMAT_VERSION 2u
 
 void deserializeTensor(tensor_t *tensor, FILE *f) {
     /* #316: capture the skeleton's expected payload size BEFORE the shape /
@@ -50,7 +53,7 @@ void deserializeTensor(tensor_t *tensor, FILE *f) {
         exit(1);
     }
 
-    deserializeData(tensor->data, dataBytes, 1, f);
+    serialReadBytes(tensor->data, dataBytes, f);
     deserializeSparsity();
 }
 
@@ -61,22 +64,20 @@ void deserializeParameter(parameter_t *parameter, FILE *f) {
 
 void deserializeModel(layer_t **model, size_t sizeModel, FILE *f) {
     char magic[4];
-    deserialize(magic, 4, sizeof(char), f);
+    serialReadBytes(magic, 4, f);
     if (memcmp(magic, SERIALIZE_MAGIC, 4) != 0) {
         PRINT_ERROR("deserializeModel: bad magic bytes (expected \"ODTS\")");
         exit(1);
     }
 
-    uint32_t version;
-    deserialize(&version, 1, sizeof(uint32_t), f);
+    uint32_t version = serialReadU32LE(f);
     if (version != SERIALIZE_FORMAT_VERSION) {
         PRINT_ERROR("deserializeModel: unsupported format version %u (expected %u)",
                     (unsigned)version, (unsigned)SERIALIZE_FORMAT_VERSION);
         exit(1);
     }
 
-    uint32_t layerCount;
-    deserialize(&layerCount, 1, sizeof(uint32_t), f);
+    uint32_t layerCount = serialReadU32LE(f);
     if (layerCount != (uint32_t)sizeModel) {
         PRINT_ERROR("deserializeModel: layerCount mismatch (file has %u, caller expects %zu)",
                     (unsigned)layerCount, sizeModel);
@@ -86,8 +87,7 @@ void deserializeModel(layer_t **model, size_t sizeModel, FILE *f) {
     for (size_t i = 0; i < sizeModel; i++) {
         /* Tag byte = layerType_t enum position (append-only wire contract; see
          * Layer.h and the pins in test/unit/serial/UnitTestSerialize.c). */
-        uint8_t tag;
-        deserialize(&tag, 1, sizeof(uint8_t), f);
+        uint8_t tag = serialReadU8(f);
         if (tag != (uint8_t)model[i]->type) {
             PRINT_ERROR("deserializeModel: record tag %u does not match expected layer type "
                         "%u at index %zu",
@@ -100,19 +100,27 @@ void deserializeModel(layer_t **model, size_t sizeModel, FILE *f) {
 
 // Helper Functions
 
-static void deserialize(void *values, size_t numberOfElements, size_t sizeOfElement, FILE *f) {
-    fread(values, numberOfElements, sizeOfElement, f);
-}
-
 static void deserializeShape(shape_t *shape, FILE *f) {
-    deserialize(&shape->numberOfDimensions, 1, sizeof(size_t), f);
-    deserialize(shape->dimensions, shape->numberOfDimensions, sizeof(size_t), f);
-    deserialize(shape->orderOfDimensions, shape->numberOfDimensions, sizeof(size_t), f);
+    uint32_t fileRank = serialReadU32LE(f);
+    /* The skeleton's dimensions/orderOfDimensions arrays were sized by the
+     * build-time rank; a mismatched record would otherwise write file dims
+     * past them (and an equal-element-count rank change would slip past the
+     * #316 payload-size check below). */
+    if ((size_t)fileRank != shape->numberOfDimensions) {
+        PRINT_ERROR("deserializeShape: file rank %u does not match the skeleton rank %zu",
+                    (unsigned)fileRank, shape->numberOfDimensions);
+        exit(1);
+    }
+    for (size_t d = 0; d < shape->numberOfDimensions; d++) {
+        shape->dimensions[d] = (size_t)serialReadU32LE(f);
+    }
+    for (size_t d = 0; d < shape->numberOfDimensions; d++) {
+        shape->orderOfDimensions[d] = (size_t)serialReadU32LE(f);
+    }
 }
 
 static void deserializeQuantization(quantization_t *q, FILE *f) {
-    uint8_t type;
-    deserialize(&type, 1, sizeof(uint8_t), f);
+    uint8_t type = serialReadU8(f);
     /* #316: the skeleton was built with a fixed dtype whose qConfig struct (or
      * NULL, for FLOAT32/INT32/BOOL) is fixed. A file record claiming a different
      * dtype would make deserializeQConfig write scale/qBits/... through a
@@ -129,26 +137,16 @@ static void deserializeQuantization(quantization_t *q, FILE *f) {
 }
 
 static void deserializeArithmetic(arithmetic_t *arithmetic, FILE *f) {
-    uint8_t type;
-    uint8_t roundingMode;
-    deserialize(&type, 1, sizeof(uint8_t), f);
-    deserialize(&roundingMode, 1, sizeof(uint8_t), f);
-    arithmetic->type = (arithmeticType_t)type;
-    arithmetic->roundingMode = (roundingMode_t)roundingMode;
-}
-
-static void deserializeData(uint8_t *data, size_t numberOfValues, size_t bytesPerValue, FILE *f) {
-    deserialize(data, numberOfValues, bytesPerValue, f);
+    arithmetic->type = (arithmeticType_t)serialReadU8(f);
+    arithmetic->roundingMode = (roundingMode_t)serialReadU8(f);
 }
 
 static void deserializeKernel(kernel_t *kernel, FILE *f) {
-    deserialize(&kernel->size, 1, sizeof(size_t), f);
-    uint8_t paddingType;
-    deserialize(&paddingType, 1, sizeof(uint8_t), f);
-    kernel->paddingType = (paddingType_t)paddingType;
-    deserialize(&kernel->stride, 1, sizeof(size_t), f);
-    deserialize(&kernel->dilation, 1, sizeof(size_t), f);
-    deserialize(&kernel->padding, 1, sizeof(size_t), f);
+    kernel->size = (size_t)serialReadU32LE(f);
+    kernel->paddingType = (paddingType_t)serialReadU8(f);
+    kernel->stride = (size_t)serialReadU32LE(f);
+    kernel->dilation = (size_t)serialReadU32LE(f);
+    kernel->padding = (size_t)serialReadU32LE(f);
 }
 
 static void deserializeQConfig(quantization_t *q, FILE *f) {
@@ -159,24 +157,34 @@ static void deserializeQConfig(quantization_t *q, FILE *f) {
         break;
     case SYM_INT32: {
         symInt32QConfig_t *symIntQC = q->qConfig;
-        deserialize(&symIntQC->scale, 1, sizeof(float), f);
-        deserialize(&symIntQC->roundingMode, 1, sizeof(roundingMode_t), f);
-        deserialize(&symIntQC->qMaxBits, 1, sizeof(uint8_t), f);
+        symIntQC->scale = serialReadF32LE(f);
+        symIntQC->roundingMode = (roundingMode_t)serialReadU8(f);
+        symIntQC->qMaxBits = serialReadU8(f);
         break;
     }
     case SYM: {
         symQConfig_t *symQC = q->qConfig;
-        deserialize(&symQC->scale, 1, sizeof(float), f);
-        deserialize(&symQC->qBits, 1, sizeof(uint8_t), f);
-        deserialize(&symQC->roundingMode, 1, sizeof(roundingMode_t), f);
+        symQC->scale = serialReadF32LE(f);
+        symQC->qBits = serialReadU8(f);
+        symQC->roundingMode = (roundingMode_t)serialReadU8(f);
         break;
     }
     case ASYM: {
         asymQConfig_t *asymQC = q->qConfig;
-        deserialize(&asymQC->scale, 1, sizeof(float), f);
-        deserialize(&asymQC->qBits, 1, sizeof(uint8_t), f);
-        deserialize(&asymQC->roundingMode, 1, sizeof(roundingMode_t), f);
-        deserialize(&asymQC->zeroPoint, 1, sizeof(int16_t), f);
+        asymQC->scale = serialReadF32LE(f);
+        asymQC->qBits = serialReadU8(f);
+        asymQC->roundingMode = (roundingMode_t)serialReadU8(f);
+        /* The wire pins zeroPoint as i32 (#370); the in-memory field is still
+         * int16_t — reject what the narrowing would corrupt. This guard drops
+         * when #246 widens the field. */
+        int32_t zeroPoint = serialReadI32LE(f);
+        if (zeroPoint < INT16_MIN || zeroPoint > INT16_MAX) {
+            PRINT_ERROR("deserializeQConfig: ASYM zeroPoint %d exceeds the int16 in-memory "
+                        "range",
+                        zeroPoint);
+            exit(1);
+        }
+        asymQC->zeroPoint = (int16_t)zeroPoint;
         break;
     }
     default:
@@ -213,12 +221,9 @@ static void deserializeLayer(layer_t *layer, FILE *f) {
     case CONV1D: {
         conv1dConfig_t *conv1dConfig = layer->config->conv1d;
         deserializeKernel(conv1dConfig->kernel, f);
-        uint32_t conv1dGroups;
-        deserialize(&conv1dGroups, 1, sizeof(uint32_t), f);
-        conv1dConfig->groups = (size_t)conv1dGroups;
+        conv1dConfig->groups = (size_t)serialReadU32LE(f);
         deserializeParameter(conv1dConfig->weights, f);
-        uint8_t conv1dHasBias;
-        deserialize(&conv1dHasBias, 1, sizeof(uint8_t), f);
+        uint8_t conv1dHasBias = serialReadU8(f);
         if (conv1dHasBias) {
             deserializeParameter(conv1dConfig->bias, f);
         }
@@ -233,15 +238,10 @@ static void deserializeLayer(layer_t *layer, FILE *f) {
     case CONV1D_TRANSPOSED: {
         conv1dTransposedConfig_t *conv1dTransposedConfig = layer->config->conv1dTransposed;
         deserializeKernel(conv1dTransposedConfig->kernel, f);
-        uint32_t conv1dTransposedGroups;
-        deserialize(&conv1dTransposedGroups, 1, sizeof(uint32_t), f);
-        conv1dTransposedConfig->groups = (size_t)conv1dTransposedGroups;
-        uint32_t conv1dTransposedOutputPadding;
-        deserialize(&conv1dTransposedOutputPadding, 1, sizeof(uint32_t), f);
-        conv1dTransposedConfig->outputPadding = (size_t)conv1dTransposedOutputPadding;
+        conv1dTransposedConfig->groups = (size_t)serialReadU32LE(f);
+        conv1dTransposedConfig->outputPadding = (size_t)serialReadU32LE(f);
         deserializeParameter(conv1dTransposedConfig->weights, f);
-        uint8_t conv1dTransposedHasBias;
-        deserialize(&conv1dTransposedHasBias, 1, sizeof(uint8_t), f);
+        uint8_t conv1dTransposedHasBias = serialReadU8(f);
         if (conv1dTransposedHasBias) {
             deserializeParameter(conv1dTransposedConfig->bias, f);
         }
@@ -290,9 +290,7 @@ static void deserializeLayer(layer_t *layer, FILE *f) {
     }
     case ADAPTIVE_AVGPOOL1D: {
         adaptiveAvgPool1dConfig_t *adaptiveAvgPool1dConfig = layer->config->adaptiveAvgPool1d;
-        uint32_t adaptiveAvgPool1dOutputSize;
-        deserialize(&adaptiveAvgPool1dOutputSize, 1, sizeof(uint32_t), f);
-        adaptiveAvgPool1dConfig->outputSize = (size_t)adaptiveAvgPool1dOutputSize;
+        adaptiveAvgPool1dConfig->outputSize = (size_t)serialReadU32LE(f);
         deserializeArithmetic(&adaptiveAvgPool1dConfig->forwardMath, f);
         deserializeArithmetic(&adaptiveAvgPool1dConfig->propLossMath, f);
         deserializeQuantization(adaptiveAvgPool1dConfig->outputQ, f);
@@ -301,7 +299,7 @@ static void deserializeLayer(layer_t *layer, FILE *f) {
     }
     case DROPOUT: {
         dropoutConfig_t *dropoutConfig = layer->config->dropout;
-        deserialize(&dropoutConfig->p, 1, sizeof(float), f);
+        dropoutConfig->p = serialReadF32LE(f);
         deserializeArithmetic(&dropoutConfig->forwardMath, f);
         deserializeArithmetic(&dropoutConfig->propLossMath, f);
         deserializeQuantization(dropoutConfig->outputQ, f);
@@ -310,13 +308,20 @@ static void deserializeLayer(layer_t *layer, FILE *f) {
     }
     case LAYERNORM: {
         layerNormConfig_t *layerNormConfig = layer->config->layerNorm;
-        uint32_t layerNormNumNormDims;
-        deserialize(&layerNormNumNormDims, 1, sizeof(uint32_t), f);
-        layerNormConfig->numNormDims = (size_t)layerNormNumNormDims;
-        for (size_t d = 0; d < layerNormConfig->numNormDims; d++) {
-            deserialize(&layerNormConfig->normalizedShape[d], 1, sizeof(size_t), f);
+        uint32_t layerNormNumNormDims = serialReadU32LE(f);
+        /* numNormDims drives the normalizedShape read count; the skeleton's
+         * array was sized by the build-time value — reject a mismatch before
+         * file entries could be written past it. */
+        if ((size_t)layerNormNumNormDims != layerNormConfig->numNormDims) {
+            PRINT_ERROR("deserializeLayer: LayerNorm numNormDims mismatch (file %u, skeleton "
+                        "%zu)",
+                        (unsigned)layerNormNumNormDims, layerNormConfig->numNormDims);
+            exit(1);
         }
-        deserialize(&layerNormConfig->eps, 1, sizeof(float), f);
+        for (size_t d = 0; d < layerNormConfig->numNormDims; d++) {
+            layerNormConfig->normalizedShape[d] = (size_t)serialReadU32LE(f);
+        }
+        layerNormConfig->eps = serialReadF32LE(f);
         deserializeParameter(layerNormConfig->gamma, f);
         deserializeParameter(layerNormConfig->beta, f);
         deserializeArithmetic(&layerNormConfig->forwardMath, f);
@@ -327,13 +332,9 @@ static void deserializeLayer(layer_t *layer, FILE *f) {
     }
     case GROUPNORM: {
         groupNormConfig_t *groupNormConfig = layer->config->groupNorm;
-        uint32_t groupNormNumGroups;
-        deserialize(&groupNormNumGroups, 1, sizeof(uint32_t), f);
-        groupNormConfig->numGroups = (size_t)groupNormNumGroups;
-        uint32_t groupNormNumChannels;
-        deserialize(&groupNormNumChannels, 1, sizeof(uint32_t), f);
-        groupNormConfig->numChannels = (size_t)groupNormNumChannels;
-        deserialize(&groupNormConfig->eps, 1, sizeof(float), f);
+        groupNormConfig->numGroups = (size_t)serialReadU32LE(f);
+        groupNormConfig->numChannels = (size_t)serialReadU32LE(f);
+        groupNormConfig->eps = serialReadF32LE(f);
         deserializeParameter(groupNormConfig->gamma, f);
         deserializeParameter(groupNormConfig->beta, f);
         deserializeArithmetic(&groupNormConfig->forwardMath, f);

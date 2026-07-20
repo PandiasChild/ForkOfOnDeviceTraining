@@ -68,6 +68,7 @@ add_elastic_ai_unit_test(
         QuantLayerApi
 
         StorageApi
+        odt_test_death
 )
 
 target_compile_definitions(UnitTestSerialize PRIVATE

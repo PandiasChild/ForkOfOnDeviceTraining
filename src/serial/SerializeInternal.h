@@ -8,16 +8,8 @@
 #include "Layer.h"
 #include "Tensor.h"
 
-/*! Serializes array of values by given size to file.
- *
- * \param values: Pointer to first element of array
- * \param numberOfElements: Number of values in array
- * \param sizeOfElement: Size of each element
- * \param f: Pointer of file to serialize to
- */
-static void serialize(void *values, size_t numberOfElements, size_t sizeOfElement, FILE *f);
-
-/*! Serializes shape of tensor to given file.
+/*! Serializes shape of tensor to given file: u32 LE rank + u32 LE
+ *  dimensions[] + u32 LE orderOfDimensions[] (#370).
  *
  * \param shape: Pointer to shape_t struct
  * \param f: Pointer of file to serialize to
@@ -39,22 +31,13 @@ static void serializeQuantization(quantization_t *q, FILE *f);
  */
 static void serializeArithmetic(arithmetic_t *arithmetic, FILE *f);
 
-/*! Serializes kernel geometry (all kernel_t fields) to given file: size_t
- *  size, u8 paddingType, size_t stride, size_t dilation, size_t padding.
+/*! Serializes kernel geometry (all kernel_t fields) to given file: u32 LE
+ *  size, u8 paddingType, u32 LE stride, u32 LE dilation, u32 LE padding.
  *
  * \param kernel: Pointer to kernel_t
  * \param f: Pointer of file to serialize to
  */
 static void serializeKernel(kernel_t *kernel, FILE *f);
-
-/*! Serializes data field of tensor to given file.
- *
- * \param data: Pointer to first element of data array
- * \param numberOfValues: Number of values in array
- * \param bytesPerValue: Nu ber of bytes per value
- * \param f: Pointer of file to serialize to
- */
-static void serializeData(uint8_t *data, size_t numberOfValues, size_t bytesPerValue, FILE *f);
 
 /*! Serializes quantization config of tensor to given file.
  *

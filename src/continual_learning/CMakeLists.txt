@@ -28,6 +28,7 @@ target_include_directories(PpcaReplaySerialize PUBLIC include)
 target_link_libraries(PpcaReplaySerialize PRIVATE
         Common
         PpcaReplay
+        SerialWire
         Serialize
         Deserialize
         Tensor

@@ -1,4 +1,5 @@
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -10,6 +11,7 @@
 #include "Conv1dApi.h"
 #include "Conv1dTransposed.h"
 #include "Conv1dTransposedApi.h"
+#include "DeathTest.h"
 #include "Deserialize.h"
 #include "Dropout.h"
 #include "DropoutApi.h"
@@ -1482,6 +1484,281 @@ static void testSerializeTensorBoolRoundTripsPackedData(void) {
     }
 }
 
+/*! GOLDEN BYTES (#370, wire format v2): serializeTensor's exact encoding,
+ *  pinned byte-for-byte against a hand-computed fixture. Shape fields are u32
+ *  little-endian regardless of the host's size_t width and byte order — any
+ *  drift back to host-native widths changes these bytes and fails here. */
+static void testGoldenBytesTensorFloat32V2(void) {
+    size_t *dims = reserveMemory(2 * sizeof(size_t));
+    dims[0] = 2;
+    dims[1] = 3;
+    size_t *order = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, 2, order);
+    tensor_t *src = initTensor(shape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(src, (float[]){1.0f, -2.0f, 0.5f, -0.25f, 3.0f, -1.5f}, 6);
+
+    FILE *f = fopen(FILE_PATH, "wb");
+    serializeTensor(src, f);
+    fclose(f);
+    freeTensor(src);
+
+    static const uint8_t expected[] = {/* numberOfDimensions u32 LE */ 0x02,
+                                       0x00,
+                                       0x00,
+                                       0x00,
+                                       /* dimensions[2] u32 LE */ 0x02,
+                                       0x00,
+                                       0x00,
+                                       0x00,
+                                       0x03,
+                                       0x00,
+                                       0x00,
+                                       0x00,
+                                       /* orderOfDimensions[2] u32 LE */ 0x00,
+                                       0x00,
+                                       0x00,
+                                       0x00,
+                                       0x01,
+                                       0x00,
+                                       0x00,
+                                       0x00,
+                                       /* qtype FLOAT32 */ 0x01,
+                                       /* data payload: 6x f32 LE */ 0x00,
+                                       0x00,
+                                       0x80,
+                                       0x3F,
+                                       0x00,
+                                       0x00,
+                                       0x00,
+                                       0xC0,
+                                       0x00,
+                                       0x00,
+                                       0x00,
+                                       0x3F,
+                                       0x00,
+                                       0x00,
+                                       0x80,
+                                       0xBE,
+                                       0x00,
+                                       0x00,
+                                       0x40,
+                                       0x40,
+                                       0x00,
+                                       0x00,
+                                       0xC0,
+                                       0xBF};
+
+    uint8_t got[sizeof(expected) + 8] = {0};
+    f = fopen(FILE_PATH, "rb");
+    size_t fileBytes = fread(got, 1, sizeof(got), f);
+    fclose(f);
+
+    TEST_ASSERT_EQUAL_size_t(sizeof(expected), fileBytes);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, got, sizeof(expected));
+}
+
+/*! GOLDEN BYTES (#370, wire format v2): full-model header (magic + version 2 +
+ *  layerCount, all u32 LE) plus a RELU record whose outputQ/propLossQ pin the
+ *  SYM_INT32 and ASYM qConfig payload encodings — ASYM zeroPoint is i32 LE on
+ *  the wire (the in-memory int16 widens separately via #246). */
+static void testGoldenBytesModelReluV2(void) {
+    quantization_t *floatQ = quantizationInitFloat();
+    quantization_t *symIntOutputQ = quantizationInitSymInt32WithBits(SR_HALF_AWAY, 12);
+    quantization_t *asymPropLossQ = quantizationInitAsym(8, HALF_AWAY);
+
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, floatQ);
+    lq.outputQ = symIntOutputQ;
+    lq.propLossQ = asymPropLossQ;
+
+    layer_t *layer = reluLayerInitOwning(&lq);
+    reluConfig_t *cfg = layer->config->relu;
+    symInt32QConfig_t *outputCfg = cfg->outputQ->qConfig;
+    outputCfg->scale = 0.5f;
+    asymQConfig_t *propLossCfg = cfg->propLossQ->qConfig;
+    propLossCfg->scale = 0.25f;
+    propLossCfg->zeroPoint = -3;
+
+    layer_t *model[] = {layer};
+    FILE *f = fopen(FILE_PATH, "wb");
+    serializeModel(model, 1, f);
+    fclose(f);
+    freeReluLayer(layer);
+    freeQuantization(asymPropLossQ);
+    freeQuantization(symIntOutputQ);
+    freeQuantization(floatQ);
+
+    static const uint8_t expected[] = {
+        /* magic */ 'O', 'D', 'T', 'S',
+        /* version u32 LE */ 0x02, 0x00, 0x00, 0x00,
+        /* layerCount u32 LE */ 0x01, 0x00, 0x00, 0x00,
+        /* tag RELU */ 0x01,
+        /* forwardMath: ARITH_FLOAT32, HALF_AWAY */ 0x00, 0x00,
+        /* propLossMath: ARITH_FLOAT32, HALF_AWAY */ 0x00, 0x00,
+        /* outputQ: SYM_INT32, scale 0.5f f32 LE, SR_HALF_AWAY, qMaxBits 12 */
+        0x02, 0x00, 0x00, 0x00, 0x3F, 0x01, 0x0C,
+        /* propLossQ: ASYM, scale 0.25f f32 LE, qBits 8, HALF_AWAY, zeroPoint -3 i32 LE */
+        0x04, 0x00, 0x00, 0x80, 0x3E, 0x08, 0x00, 0xFD, 0xFF, 0xFF, 0xFF};
+
+    uint8_t got[sizeof(expected) + 8] = {0};
+    f = fopen(FILE_PATH, "rb");
+    size_t fileBytes = fread(got, 1, sizeof(got), f);
+    fclose(f);
+
+    TEST_ASSERT_EQUAL_size_t(sizeof(expected), fileBytes);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, got, sizeof(expected));
+}
+
+/*! GOLDEN BYTES (#370, wire format v2): MAXPOOL1D record pinning the kernel
+ *  geometry encoding (size/stride/dilation/padding as u32 LE + paddingType
+ *  u8) — the fields that were raw host size_t in v1. */
+static void testGoldenBytesModelMaxPool1dV2(void) {
+    quantization_t *floatQ = quantizationInitFloat();
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, floatQ);
+
+    maxPool1dInit_t init = {.kernelSize = 3, .inputChannels = 4, .inputLength = 10, .stride = 2};
+    layer_t *layer = maxPool1dLayerInitOwning(&init, &lq);
+
+    layer_t *model[] = {layer};
+    FILE *f = fopen(FILE_PATH, "wb");
+    serializeModel(model, 1, f);
+    fclose(f);
+    freeMaxPool1dLayer(layer);
+    freeQuantization(floatQ);
+
+    static const uint8_t expected[] = {/* magic + version 2 + layerCount 1 */ 'O',
+                                       'D',
+                                       'T',
+                                       'S',
+                                       0x02,
+                                       0x00,
+                                       0x00,
+                                       0x00,
+                                       0x01,
+                                       0x00,
+                                       0x00,
+                                       0x00,
+                                       /* tag MAXPOOL1D */ 0x04,
+                                       /* kernel size 3 u32 LE */ 0x03,
+                                       0x00,
+                                       0x00,
+                                       0x00,
+                                       /* paddingType VALID */ 0x00,
+                                       /* stride 2 u32 LE */ 0x02,
+                                       0x00,
+                                       0x00,
+                                       0x00,
+                                       /* dilation 1 u32 LE */ 0x01,
+                                       0x00,
+                                       0x00,
+                                       0x00,
+                                       /* padding 0 u32 LE */ 0x00,
+                                       0x00,
+                                       0x00,
+                                       0x00,
+                                       /* forwardMath + propLossMath */ 0x00,
+                                       0x00,
+                                       0x00,
+                                       0x00,
+                                       /* outputQ FLOAT32, propLossQ FLOAT32 */ 0x01,
+                                       0x01};
+
+    uint8_t got[sizeof(expected) + 8] = {0};
+    f = fopen(FILE_PATH, "rb");
+    size_t fileBytes = fread(got, 1, sizeof(got), f);
+    fclose(f);
+
+    TEST_ASSERT_EQUAL_size_t(sizeof(expected), fileBytes);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, got, sizeof(expected));
+}
+
+/*! #370: every fwrite is length-checked — a stream that accepts no bytes (here:
+ *  a read-only FILE*) must fail fast instead of silently producing a partial
+ *  file. */
+static void testSerializeFailsFastOnUnwritableStream(void) {
+    size_t *dims = reserveMemory(2 * sizeof(size_t));
+    dims[0] = 2;
+    dims[1] = 3;
+    size_t *order = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, 2, order);
+    tensor_t *src = initTensor(shape, quantizationInitFloat(), NULL);
+
+    FILE *f = fopen(FILE_PATH, "wb");
+    fclose(f);
+    f = fopen(FILE_PATH, "rb");
+    ASSERT_EXITS_WITH_FAILURE(serializeTensor(src, f));
+    fclose(f);
+
+    freeTensor(src);
+}
+
+#if SIZE_MAX > UINT32_MAX
+/*! #370: the wire pins counts/dims to u32 — a size_t dimension that cannot fit
+ *  must fail fast on serialize instead of silently truncating on the wire. */
+static void testSerializeFailsFastOnDimensionBeyondU32(void) {
+    size_t *dims = reserveMemory(2 * sizeof(size_t));
+    dims[0] = 2;
+    dims[1] = 3;
+    size_t *order = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, 2, order);
+    tensor_t *src = initTensor(shape, quantizationInitFloat(), NULL);
+
+    /* Lie about the first dimension AFTER allocation; the guard fires in
+     * serializeShape, before any data-payload write could read past the real
+     * 2x3 allocation. */
+    src->shape->dimensions[0] = ((size_t)UINT32_MAX) + 2u;
+
+    FILE *f = fopen(FILE_PATH, "wb");
+    ASSERT_EXITS_WITH_FAILURE(serializeTensor(src, f));
+    fclose(f);
+
+    src->shape->dimensions[0] = 2;
+    freeTensor(src);
+}
+#endif
+
+/*! #370: LayerNorm's numNormDims drives the normalizedShape read count; a
+ *  mismatched record would write file entries past the skeleton's array (and
+ *  pre-v2 did so silently — both fixtures carry 20 gamma/beta elements, so the
+ *  tensor payload checks alone cannot see it). */
+static void testDeserializeLayerNormRejectsNumNormDimsMismatch(void) {
+    quantization_t *floatQ = quantizationInitFloat();
+    layerQuant_t lq;
+    layerQuantInitUniform(&lq, floatQ);
+
+    size_t serialShapeValues[] = {4, 5};
+    layerNormInit_t serialInit = {
+        .normalizedShape = serialShapeValues, .numNormDims = 2, .eps = 1e-3f};
+    layer_t *serialLayer = layerNormLayerInitOwning(&serialInit, &lq);
+
+    size_t skeletonShapeValues[] = {20};
+    layerNormInit_t skeletonInit = {
+        .normalizedShape = skeletonShapeValues, .numNormDims = 1, .eps = 1e-3f};
+    layer_t *skeletonLayer = layerNormLayerInitOwning(&skeletonInit, &lq);
+
+    layer_t *serialModel[] = {serialLayer};
+    layer_t *skeletonModel[] = {skeletonLayer};
+
+    FILE *f = fopen(FILE_PATH, "wb");
+    serializeModel(serialModel, 1, f);
+    fclose(f);
+
+    f = fopen(FILE_PATH, "rb");
+    ASSERT_EXITS_WITH_FAILURE(deserializeModel(skeletonModel, 1, f));
+    fclose(f);
+
+    freeLayerNormLayer(skeletonLayer);
+    freeLayerNormLayer(serialLayer);
+    freeQuantization(floatQ);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(testRoundTripLinear);
@@ -1499,5 +1776,13 @@ int main(void) {
     RUN_TEST(testRoundTripQuantizationLayer);
     RUN_TEST(testSerializeTensorSymSubByteRoundTripsPackedData);
     RUN_TEST(testSerializeTensorBoolRoundTripsPackedData);
+    RUN_TEST(testGoldenBytesTensorFloat32V2);
+    RUN_TEST(testGoldenBytesModelReluV2);
+    RUN_TEST(testGoldenBytesModelMaxPool1dV2);
+    RUN_TEST(testSerializeFailsFastOnUnwritableStream);
+#if SIZE_MAX > UINT32_MAX
+    RUN_TEST(testSerializeFailsFastOnDimensionBeyondU32);
+#endif
+    RUN_TEST(testDeserializeLayerNormRejectsNumNormDimsMismatch);
     return UNITY_END();
 }

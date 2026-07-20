@@ -302,10 +302,12 @@ void ppcaReplaySetDeserialize(ppcaReplaySet_t *skeleton, FILE *f);
 ```
 
 (`PpcaReplaySerialize.h`) — the repo's first non-layer serialized state.
-Wire format: `"ODTR"` magic, `u32 version(=1)`, `u32 numClasses`, then per
+Wire format: `"ODTR"` magic, `u32 version(=2)`, `u32 numClasses`, then per
 class: `u32 dim`, `u32 rank`, `u32 count`, `f32 sigma2`, `f32 totalVar`,
 followed by the three tensors (`mean`, `basis`, `eigvals`) via the existing
-tensor-tier `serializeTensor`/`deserializeTensor`.
+tensor-tier `serializeTensor`/`deserializeTensor`. Since v2 (#370) every
+scalar is fixed-width little-endian via the checked `SerialWire` primitives,
+matching the embedded ODTS v2 tensor records.
 
 **Deserialize fills a pre-built skeleton in place** — it does not allocate a
 set for you. Build the skeleton with `ppcaReplaySetCreate(numClasses, cfg)`
@@ -326,10 +328,10 @@ This requires a **seekable stream** — the peek-validate-rewind mechanism
 does an `fseek` back to each record's start before consuming it, so a
 plain `fopen`'d file works but a pipe or socket does not.
 
-Checkpoints are **host-native** in width and endianness (inherited from the
-model-serialization format): a checkpoint written on one host architecture
-is not guaranteed portable to a host with a different `size_t` width or
-byte order.
+Checkpoints are architecture-portable since v2 (#370): all structural fields
+are fixed-width little-endian, so `size_t` width no longer leaks into the
+file. Bulk tensor DATA payloads are raw packed storage bytes — all supported
+targets are little-endian (pinned at compile time in `SerialWire.h`).
 
 ## Limitations
 

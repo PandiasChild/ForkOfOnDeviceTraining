@@ -18,17 +18,20 @@
 #include "QuantizationLayer.h"
 #include "Relu.h"
 #include "Rounding.h"
+#include "SerialWire.h"
 #include "Serialize.h"
 #include "SerializeInternal.h"
 #include "Softmax.h"
 #include "Tensor.h"
 
-/* Locked format v1 (docs/superpowers/plans/2026-07-02-arithmetic-type-split.md,
- * Task 11): magic "ODTS" + u32 version + u32 layerCount, then one Record per
- * layer (u8 tag + payload). Task 12 adds more record types; these primitives
- * do not change. */
+/* Locked format v2 (#370): magic "ODTS" + u32 version + u32 layerCount, then
+ * one Record per layer (u8 tag + payload). Every count/dim/kernel field is u32
+ * little-endian and every scalar goes through the checked SerialWire
+ * primitives, so a model written on a 64-bit host loads bit-identically on
+ * 32-bit MCU targets. ASYM zeroPoint is i32 LE on the wire (the in-memory
+ * int16 widens separately via #246, keeping the format break to one bump). */
 #define SERIALIZE_MAGIC "ODTS"
-#define SERIALIZE_FORMAT_VERSION 1u
+#define SERIALIZE_FORMAT_VERSION 2u
 
 void serializeTensor(tensor_t *tensor, FILE *f) {
     size_t numberOfValues = calcNumberOfElementsByTensor(tensor);
@@ -38,7 +41,7 @@ void serializeTensor(tensor_t *tensor, FILE *f) {
 
     serializeShape(tensor->shape, f);
     serializeQuantization(tensor->quantization, f);
-    serializeData(tensor->data, dataBytes, 1, f);
+    serialWriteBytes(tensor->data, dataBytes, f);
     serializeSparsity();
 }
 
@@ -48,59 +51,46 @@ void serializeParameter(parameter_t *parameter, FILE *f) {
 }
 
 void serializeModel(layer_t **model, size_t sizeModel, FILE *f) {
-    serialize((void *)SERIALIZE_MAGIC, 4, sizeof(char), f);
-
-    uint32_t version = SERIALIZE_FORMAT_VERSION;
-    serialize(&version, 1, sizeof(uint32_t), f);
-
-    uint32_t layerCount = (uint32_t)sizeModel;
-    serialize(&layerCount, 1, sizeof(uint32_t), f);
+    serialWriteBytes(SERIALIZE_MAGIC, 4, f);
+    serialWriteU32LE(SERIALIZE_FORMAT_VERSION, f);
+    serialWriteSizeAsU32LE(sizeModel, f);
 
     for (size_t i = 0; i < sizeModel; i++) {
         /* The tag byte is the layerType_t enum position -- append-only wire
          * contract, pinned in test/unit/serial/UnitTestSerialize.c. */
-        uint8_t tag = (uint8_t)model[i]->type;
-        serialize(&tag, 1, sizeof(uint8_t), f);
+        serialWriteU8((uint8_t)model[i]->type, f);
         serializeLayer(model[i], f);
     }
 }
 
 // Helper Functions
 
-static void serialize(void *values, size_t numberOfElements, size_t sizeOfElement, FILE *f) {
-    fwrite(values, numberOfElements, sizeOfElement, f);
-}
-
 static void serializeShape(shape_t *shape, FILE *f) {
-    serialize(&shape->numberOfDimensions, 1, sizeof(size_t), f);
-    serialize(shape->dimensions, shape->numberOfDimensions, sizeof(size_t), f);
-    serialize(shape->orderOfDimensions, shape->numberOfDimensions, sizeof(size_t), f);
+    serialWriteSizeAsU32LE(shape->numberOfDimensions, f);
+    for (size_t d = 0; d < shape->numberOfDimensions; d++) {
+        serialWriteSizeAsU32LE(shape->dimensions[d], f);
+    }
+    for (size_t d = 0; d < shape->numberOfDimensions; d++) {
+        serialWriteSizeAsU32LE(shape->orderOfDimensions[d], f);
+    }
 }
 
 static void serializeQuantization(quantization_t *q, FILE *f) {
-    uint8_t type = (uint8_t)q->type;
-    serialize(&type, 1, sizeof(uint8_t), f);
+    serialWriteU8((uint8_t)q->type, f);
     serializeQConfig(q, f);
 }
 
 static void serializeArithmetic(arithmetic_t *arithmetic, FILE *f) {
-    uint8_t type = (uint8_t)arithmetic->type;
-    uint8_t roundingMode = (uint8_t)arithmetic->roundingMode;
-    serialize(&type, 1, sizeof(uint8_t), f);
-    serialize(&roundingMode, 1, sizeof(uint8_t), f);
-}
-
-static void serializeData(uint8_t *data, size_t numberOfValues, size_t bytesPerValue, FILE *f) {
-    serialize(data, numberOfValues, bytesPerValue, f);
+    serialWriteU8((uint8_t)arithmetic->type, f);
+    serialWriteU8((uint8_t)arithmetic->roundingMode, f);
 }
 
 static void serializeKernel(kernel_t *kernel, FILE *f) {
-    serialize(&kernel->size, 1, sizeof(size_t), f);
-    uint8_t paddingType = (uint8_t)kernel->paddingType;
-    serialize(&paddingType, 1, sizeof(uint8_t), f);
-    serialize(&kernel->stride, 1, sizeof(size_t), f);
-    serialize(&kernel->dilation, 1, sizeof(size_t), f);
-    serialize(&kernel->padding, 1, sizeof(size_t), f);
+    serialWriteSizeAsU32LE(kernel->size, f);
+    serialWriteU8((uint8_t)kernel->paddingType, f);
+    serialWriteSizeAsU32LE(kernel->stride, f);
+    serialWriteSizeAsU32LE(kernel->dilation, f);
+    serialWriteSizeAsU32LE(kernel->padding, f);
 }
 
 static void serializeQConfig(quantization_t *q, FILE *f) {
@@ -111,24 +101,26 @@ static void serializeQConfig(quantization_t *q, FILE *f) {
         break;
     case SYM_INT32: {
         symInt32QConfig_t *symIntQC = q->qConfig;
-        serialize(&symIntQC->scale, 1, sizeof(float), f);
-        serialize(&symIntQC->roundingMode, 1, sizeof(roundingMode_t), f);
-        serialize(&symIntQC->qMaxBits, 1, sizeof(uint8_t), f);
+        serialWriteF32LE(symIntQC->scale, f);
+        serialWriteU8((uint8_t)symIntQC->roundingMode, f);
+        serialWriteU8(symIntQC->qMaxBits, f);
         break;
     }
     case SYM: {
         symQConfig_t *symQC = q->qConfig;
-        serialize(&symQC->scale, 1, sizeof(float), f);
-        serialize(&symQC->qBits, 1, sizeof(uint8_t), f);
-        serialize(&symQC->roundingMode, 1, sizeof(roundingMode_t), f);
+        serialWriteF32LE(symQC->scale, f);
+        serialWriteU8(symQC->qBits, f);
+        serialWriteU8((uint8_t)symQC->roundingMode, f);
         break;
     }
     case ASYM: {
         asymQConfig_t *asymQC = q->qConfig;
-        serialize(&asymQC->scale, 1, sizeof(float), f);
-        serialize(&asymQC->qBits, 1, sizeof(uint8_t), f);
-        serialize(&asymQC->roundingMode, 1, sizeof(roundingMode_t), f);
-        serialize(&asymQC->zeroPoint, 1, sizeof(int16_t), f);
+        serialWriteF32LE(asymQC->scale, f);
+        serialWriteU8(asymQC->qBits, f);
+        serialWriteU8((uint8_t)asymQC->roundingMode, f);
+        /* i32 on the wire although the field is (still) int16_t — #246 widens
+         * the in-memory side losslessly without another format break. */
+        serialWriteI32LE((int32_t)asymQC->zeroPoint, f);
         break;
     }
     default:
@@ -165,11 +157,10 @@ static void serializeLayer(layer_t *layer, FILE *f) {
     case CONV1D: {
         conv1dConfig_t *conv1dConfig = layer->config->conv1d;
         serializeKernel(conv1dConfig->kernel, f);
-        uint32_t conv1dGroups = (uint32_t)conv1dConfig->groups;
-        serialize(&conv1dGroups, 1, sizeof(uint32_t), f);
+        serialWriteSizeAsU32LE(conv1dConfig->groups, f);
         serializeParameter(conv1dConfig->weights, f);
         uint8_t conv1dHasBias = conv1dConfig->bias != NULL ? 1 : 0;
-        serialize(&conv1dHasBias, 1, sizeof(uint8_t), f);
+        serialWriteU8(conv1dHasBias, f);
         if (conv1dHasBias) {
             serializeParameter(conv1dConfig->bias, f);
         }
@@ -184,13 +175,11 @@ static void serializeLayer(layer_t *layer, FILE *f) {
     case CONV1D_TRANSPOSED: {
         conv1dTransposedConfig_t *conv1dTransposedConfig = layer->config->conv1dTransposed;
         serializeKernel(conv1dTransposedConfig->kernel, f);
-        uint32_t conv1dTransposedGroups = (uint32_t)conv1dTransposedConfig->groups;
-        serialize(&conv1dTransposedGroups, 1, sizeof(uint32_t), f);
-        uint32_t conv1dTransposedOutputPadding = (uint32_t)conv1dTransposedConfig->outputPadding;
-        serialize(&conv1dTransposedOutputPadding, 1, sizeof(uint32_t), f);
+        serialWriteSizeAsU32LE(conv1dTransposedConfig->groups, f);
+        serialWriteSizeAsU32LE(conv1dTransposedConfig->outputPadding, f);
         serializeParameter(conv1dTransposedConfig->weights, f);
         uint8_t conv1dTransposedHasBias = conv1dTransposedConfig->bias != NULL ? 1 : 0;
-        serialize(&conv1dTransposedHasBias, 1, sizeof(uint8_t), f);
+        serialWriteU8(conv1dTransposedHasBias, f);
         if (conv1dTransposedHasBias) {
             serializeParameter(conv1dTransposedConfig->bias, f);
         }
@@ -239,8 +228,7 @@ static void serializeLayer(layer_t *layer, FILE *f) {
     }
     case ADAPTIVE_AVGPOOL1D: {
         adaptiveAvgPool1dConfig_t *adaptiveAvgPool1dConfig = layer->config->adaptiveAvgPool1d;
-        uint32_t adaptiveAvgPool1dOutputSize = (uint32_t)adaptiveAvgPool1dConfig->outputSize;
-        serialize(&adaptiveAvgPool1dOutputSize, 1, sizeof(uint32_t), f);
+        serialWriteSizeAsU32LE(adaptiveAvgPool1dConfig->outputSize, f);
         serializeArithmetic(&adaptiveAvgPool1dConfig->forwardMath, f);
         serializeArithmetic(&adaptiveAvgPool1dConfig->propLossMath, f);
         serializeQuantization(adaptiveAvgPool1dConfig->outputQ, f);
@@ -249,7 +237,7 @@ static void serializeLayer(layer_t *layer, FILE *f) {
     }
     case DROPOUT: {
         dropoutConfig_t *dropoutConfig = layer->config->dropout;
-        serialize(&dropoutConfig->p, 1, sizeof(float), f);
+        serialWriteF32LE(dropoutConfig->p, f);
         serializeArithmetic(&dropoutConfig->forwardMath, f);
         serializeArithmetic(&dropoutConfig->propLossMath, f);
         serializeQuantization(dropoutConfig->outputQ, f);
@@ -258,12 +246,11 @@ static void serializeLayer(layer_t *layer, FILE *f) {
     }
     case LAYERNORM: {
         layerNormConfig_t *layerNormConfig = layer->config->layerNorm;
-        uint32_t layerNormNumNormDims = (uint32_t)layerNormConfig->numNormDims;
-        serialize(&layerNormNumNormDims, 1, sizeof(uint32_t), f);
+        serialWriteSizeAsU32LE(layerNormConfig->numNormDims, f);
         for (size_t d = 0; d < layerNormConfig->numNormDims; d++) {
-            serialize(&layerNormConfig->normalizedShape[d], 1, sizeof(size_t), f);
+            serialWriteSizeAsU32LE(layerNormConfig->normalizedShape[d], f);
         }
-        serialize(&layerNormConfig->eps, 1, sizeof(float), f);
+        serialWriteF32LE(layerNormConfig->eps, f);
         serializeParameter(layerNormConfig->gamma, f);
         serializeParameter(layerNormConfig->beta, f);
         serializeArithmetic(&layerNormConfig->forwardMath, f);
@@ -274,11 +261,9 @@ static void serializeLayer(layer_t *layer, FILE *f) {
     }
     case GROUPNORM: {
         groupNormConfig_t *groupNormConfig = layer->config->groupNorm;
-        uint32_t groupNormNumGroups = (uint32_t)groupNormConfig->numGroups;
-        serialize(&groupNormNumGroups, 1, sizeof(uint32_t), f);
-        uint32_t groupNormNumChannels = (uint32_t)groupNormConfig->numChannels;
-        serialize(&groupNormNumChannels, 1, sizeof(uint32_t), f);
-        serialize(&groupNormConfig->eps, 1, sizeof(float), f);
+        serialWriteSizeAsU32LE(groupNormConfig->numGroups, f);
+        serialWriteSizeAsU32LE(groupNormConfig->numChannels, f);
+        serialWriteF32LE(groupNormConfig->eps, f);
         serializeParameter(groupNormConfig->gamma, f);
         serializeParameter(groupNormConfig->beta, f);
         serializeArithmetic(&groupNormConfig->forwardMath, f);

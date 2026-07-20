@@ -19,6 +19,14 @@
  * LSan runs). */
 #define FILE_PATH SERIALIZE_TEST_FILE_PATH
 
+/* Fixture writer for hand-crafted v2 files: explicit little-endian bytes, so
+ * the fixtures stay valid even on a big-endian test host. */
+static void writeU32LE(FILE *f, uint32_t value) {
+    uint8_t bytes[4] = {(uint8_t)value, (uint8_t)(value >> 8), (uint8_t)(value >> 16),
+                        (uint8_t)(value >> 24)};
+    fwrite(bytes, 1, 4, f);
+}
+
 static tensor_t *makeFloatTensor2D(size_t d0, size_t d1, const float *src, size_t count) {
     /* Heap-tier construction per CONVENTIONS Rule 1. */
     size_t *dims = reserveMemory(2 * sizeof(size_t));
@@ -95,10 +103,8 @@ void testSerializeAndDeserializeTensor() {
 static void testDeserializeRejectsBadMagic(void) {
     FILE *f = fopen(FILE_PATH, "wb");
     fwrite("XXXX", 1, 4, f);
-    uint32_t version = 1;
-    fwrite(&version, sizeof(uint32_t), 1, f);
-    uint32_t layerCount = 1;
-    fwrite(&layerCount, sizeof(uint32_t), 1, f);
+    writeU32LE(f, 2); /* version */
+    writeU32LE(f, 1); /* layerCount */
     uint8_t tag = (uint8_t)FLATTEN;
     fwrite(&tag, sizeof(uint8_t), 1, f);
     fclose(f);
@@ -116,10 +122,8 @@ static void testDeserializeRejectsBadMagic(void) {
 static void testDeserializeRejectsWrongVersion(void) {
     FILE *f = fopen(FILE_PATH, "wb");
     fwrite("ODTS", 1, 4, f);
-    uint32_t version = 2;
-    fwrite(&version, sizeof(uint32_t), 1, f);
-    uint32_t layerCount = 1;
-    fwrite(&layerCount, sizeof(uint32_t), 1, f);
+    writeU32LE(f, 1); /* v1 files are host-local artifacts; no back-compat shim */
+    writeU32LE(f, 1); /* layerCount */
     uint8_t tag = (uint8_t)FLATTEN;
     fwrite(&tag, sizeof(uint8_t), 1, f);
     fclose(f);
@@ -137,10 +141,8 @@ static void testDeserializeRejectsWrongVersion(void) {
 static void testDeserializeRejectsLayerCountMismatch(void) {
     FILE *f = fopen(FILE_PATH, "wb");
     fwrite("ODTS", 1, 4, f);
-    uint32_t version = 1;
-    fwrite(&version, sizeof(uint32_t), 1, f);
-    uint32_t layerCount = 2; /* caller below passes sizeModel = 1 */
-    fwrite(&layerCount, sizeof(uint32_t), 1, f);
+    writeU32LE(f, 2); /* version */
+    writeU32LE(f, 2); /* layerCount; caller below passes sizeModel = 1 */
     uint8_t tag = (uint8_t)FLATTEN;
     fwrite(&tag, sizeof(uint8_t), 1, f);
     fclose(f);
@@ -158,10 +160,8 @@ static void testDeserializeRejectsLayerCountMismatch(void) {
 static void testDeserializeRejectsTagMismatch(void) {
     FILE *f = fopen(FILE_PATH, "wb");
     fwrite("ODTS", 1, 4, f);
-    uint32_t version = 1;
-    fwrite(&version, sizeof(uint32_t), 1, f);
-    uint32_t layerCount = 1;
-    fwrite(&layerCount, sizeof(uint32_t), 1, f);
+    writeU32LE(f, 2);              /* version */
+    writeU32LE(f, 1);              /* layerCount */
     uint8_t tag = (uint8_t)LINEAR; /* pre-built mirror layer below is FLATTEN */
     fwrite(&tag, sizeof(uint8_t), 1, f);
     fclose(f);
@@ -230,6 +230,174 @@ void testDeserializeTensorRejectsPayloadSizeMismatch(void) {
     freeTensor(bigTensor);
 }
 
+/* #370: the issue's named dtype-mismatch direction — a SYM record loaded into a
+ * FLOAT32-built skeleton (whose qConfig is NULL) must fail fast; pre-#316 this
+ * NULL-derefed in deserializeQConfig. */
+static void testDeserializeTensorRejectsSymRecordIntoFloatSkeleton(void) {
+    size_t *dims = reserveMemory(2 * sizeof(size_t));
+    dims[0] = 2;
+    dims[1] = 3;
+    size_t *order = reserveMemory(2 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(2, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, 2, order);
+    tensor_t *symTensor = initTensor(shape, quantizationInitSym(4, HALF_AWAY), NULL);
+
+    FILE *f = fopen(FILE_PATH, "wb");
+    serializeTensor(symTensor, f);
+    fclose(f);
+
+    tensor_t *floatSkeleton = makeFloatTensor2D(2, 3, NULL, 0);
+    f = fopen(FILE_PATH, "rb");
+    ASSERT_EXITS_WITH_FAILURE(deserializeTensor(floatSkeleton, f));
+    fclose(f);
+
+    freeTensor(floatSkeleton);
+    freeTensor(symTensor);
+}
+
+/* #370: a header cut mid-field (magic + half the version u32) must fail fast —
+ * pre-v2 the unchecked fread left the version uninitialized/garbage. */
+static void testDeserializeModelFailsFastOnTruncatedHeader(void) {
+    FILE *f = fopen(FILE_PATH, "wb");
+    fwrite("ODTS", 1, 4, f);
+    uint8_t partialVersion[2] = {0x02, 0x00};
+    fwrite(partialVersion, 1, 2, f);
+    fclose(f);
+
+    layer_t *layer = flattenLayerInit();
+    layer_t *model[] = {layer};
+    f = fopen(FILE_PATH, "rb");
+    ASSERT_EXITS_WITH_FAILURE(deserializeModel(model, 1, f));
+    fclose(f);
+
+    freeFlattenLayer(layer);
+}
+
+/* #370: a stream cut inside the DATA payload must fail fast at the payload
+ * read — pre-v2 the unchecked fread deserialized the truncation as silent
+ * garbage (the trailing elements simply kept their zero-init). */
+static void testDeserializeTensorFailsFastOnTruncatedPayload(void) {
+    float data[] = {1.f, 2.f, 3.f, 4.f, 5.f, 6.f};
+    tensor_t *src = makeFloatTensor2D(2, 3, data, 6);
+    FILE *f = fopen(FILE_PATH, "wb");
+    serializeTensor(src, f);
+    long full = ftell(f);
+    fclose(f);
+
+    FILE *in = fopen(FILE_PATH, "rb");
+    uint8_t *buf = reserveMemory((size_t)full);
+    fread(buf, 1, (size_t)full, in);
+    fclose(in);
+    f = fopen(FILE_PATH, "wb");
+    fwrite(buf, 1, (size_t)full - 2, f);
+    fclose(f);
+    freeReservedMemory(buf);
+
+    tensor_t *skeleton = makeFloatTensor2D(2, 3, NULL, 0);
+    f = fopen(FILE_PATH, "rb");
+    ASSERT_EXITS_WITH_FAILURE(deserializeTensor(skeleton, f));
+    fclose(f);
+
+    freeTensor(skeleton);
+    freeTensor(src);
+}
+
+/* #370: file rank 1 x [6] into a rank-2 [6,1] skeleton keeps the element count
+ * equal, so the #316 payload-size check alone cannot see it — pre-v2 the file
+ * rank silently overwrote the skeleton's (and a LARGER file rank wrote dims
+ * past the skeleton's arrays). The v2 rank guard must reject it. */
+static void testDeserializeTensorRejectsRankMismatch(void) {
+    float data[] = {1.f, 2.f, 3.f, 4.f, 5.f, 6.f};
+    size_t *dims = reserveMemory(1 * sizeof(size_t));
+    dims[0] = 6;
+    size_t *order = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, 1, order);
+    tensor_t *src = initTensor(shape, quantizationInitFloat(), NULL);
+    tensorFillFromFloatBuffer(src, data, 6);
+
+    FILE *f = fopen(FILE_PATH, "wb");
+    serializeTensor(src, f);
+    fclose(f);
+
+    tensor_t *skeleton = makeFloatTensor2D(6, 1, NULL, 0);
+    f = fopen(FILE_PATH, "rb");
+    ASSERT_EXITS_WITH_FAILURE(deserializeTensor(skeleton, f));
+    fclose(f);
+
+    freeTensor(skeleton);
+    freeTensor(src);
+}
+
+static tensor_t *makeAsymTensor1D(size_t d0) {
+    size_t *dims = reserveMemory(1 * sizeof(size_t));
+    dims[0] = d0;
+    size_t *order = reserveMemory(1 * sizeof(size_t));
+    setOrderOfDimsForNewTensor(1, order);
+    shape_t *shape = reserveMemory(sizeof(shape_t));
+    setShape(shape, dims, 1, order);
+    return initTensor(shape, quantizationInitAsym(8, HALF_AWAY), NULL);
+}
+
+/* #370: ASYM zeroPoint travels as i32 LE and must round-trip losslessly through
+ * the (still int16, until #246) in-memory field. */
+static void testDeserializeTensorRoundTripsAsymZeroPoint(void) {
+    tensor_t *src = makeAsymTensor1D(4);
+    asymQConfig_t *srcQc = src->quantization->qConfig;
+    srcQc->scale = 0.5f;
+    srcQc->zeroPoint = -3;
+
+    FILE *f = fopen(FILE_PATH, "wb");
+    serializeTensor(src, f);
+    fclose(f);
+
+    tensor_t *dst = makeAsymTensor1D(4);
+    f = fopen(FILE_PATH, "rb");
+    deserializeTensor(dst, f);
+    fclose(f);
+
+    asymQConfig_t *dstQc = dst->quantization->qConfig;
+    float capturedScale = dstQc->scale;
+    int16_t capturedZeroPoint = dstQc->zeroPoint;
+    freeTensor(dst);
+    freeTensor(src);
+
+    TEST_ASSERT_EQUAL_FLOAT(0.5f, capturedScale);
+    TEST_ASSERT_EQUAL_INT16(-3, capturedZeroPoint);
+}
+
+/* #370: the wire carries zeroPoint as i32, the in-memory field is int16 until
+ * #246 widens it — a file value outside int16 range must fail fast instead of
+ * being silently narrowed. Hand-crafted record: 1 x [4] ASYM@8 with zeroPoint
+ * 40000. Guard removal turns this into silent corruption. */
+static void testDeserializeQConfigRejectsOversizeZeroPoint(void) {
+    FILE *f = fopen(FILE_PATH, "wb");
+    writeU32LE(f, 1); /* numberOfDimensions */
+    writeU32LE(f, 4); /* dimensions[0] */
+    writeU32LE(f, 0); /* orderOfDimensions[0] */
+    uint8_t asymType = (uint8_t)ASYM;
+    fwrite(&asymType, 1, 1, f);
+    uint8_t scaleBytes[4] = {0x00, 0x00, 0x00, 0x3F}; /* 0.5f LE */
+    fwrite(scaleBytes, 1, 4, f);
+    uint8_t qBits = 8;
+    fwrite(&qBits, 1, 1, f);
+    uint8_t roundingMode = 0; /* HALF_AWAY */
+    fwrite(&roundingMode, 1, 1, f);
+    writeU32LE(f, 40000u); /* zeroPoint i32 LE, > INT16_MAX */
+    uint8_t payload[4] = {0, 0, 0, 0};
+    fwrite(payload, 1, 4, f);
+    fclose(f);
+
+    tensor_t *skeleton = makeAsymTensor1D(4);
+    f = fopen(FILE_PATH, "rb");
+    ASSERT_EXITS_WITH_FAILURE(deserializeTensor(skeleton, f));
+    fclose(f);
+
+    freeTensor(skeleton);
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -242,5 +410,11 @@ int main(void) {
     RUN_TEST(testDeserializeRejectsTagMismatch);
     RUN_TEST(testDeserializeTensorRejectsDtypeMismatch);
     RUN_TEST(testDeserializeTensorRejectsPayloadSizeMismatch);
+    RUN_TEST(testDeserializeTensorRejectsSymRecordIntoFloatSkeleton);
+    RUN_TEST(testDeserializeModelFailsFastOnTruncatedHeader);
+    RUN_TEST(testDeserializeTensorFailsFastOnTruncatedPayload);
+    RUN_TEST(testDeserializeTensorRejectsRankMismatch);
+    RUN_TEST(testDeserializeTensorRoundTripsAsymZeroPoint);
+    RUN_TEST(testDeserializeQConfigRejectsOversizeZeroPoint);
     return UNITY_END();
 }

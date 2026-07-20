@@ -6,43 +6,29 @@
 #include "Common.h"
 #include "Deserialize.h"
 #include "PpcaReplaySerialize.h"
+#include "SerialWire.h"
 #include "Serialize.h"
 #include "Tensor.h"
 
 #define PPCA_SERIALIZE_MAGIC "ODTR"
-#define PPCA_SERIALIZE_FORMAT_VERSION 1u
+/* v2 (#370): embedded ODTS tensor records switched to fixed-width LE fields
+ * and the ODTR scalars are LE-pinned via SerialWire — v1 checkpoints were
+ * host-local artifacts, no back-compat shim. */
+#define PPCA_SERIALIZE_FORMAT_VERSION 2u
 /* PPCA state tensors are rank 1 or 2 by construction (mean/eigvals, basis). */
 #define PPCA_MAX_TENSOR_RANK 2
 
-static void writeOrDie(const void *src, size_t bytes, FILE *f) {
-    if (fwrite(src, 1, bytes, f) != bytes) {
-        PRINT_ERROR("ppcaReplaySetSerialize: short write");
-        exit(1);
-    }
-}
-
-static void readOrDie(void *dst, size_t bytes, FILE *f) {
-    if (fread(dst, 1, bytes, f) != bytes) {
-        PRINT_ERROR("ppcaReplaySetDeserialize: short read / truncated file");
-        exit(1);
-    }
-}
-
 void ppcaReplaySetSerialize(const ppcaReplaySet_t *set, FILE *f) {
-    writeOrDie(PPCA_SERIALIZE_MAGIC, 4, f);
-    uint32_t version = PPCA_SERIALIZE_FORMAT_VERSION;
-    writeOrDie(&version, sizeof(uint32_t), f);
-    uint32_t numClasses = (uint32_t)set->numClasses;
-    writeOrDie(&numClasses, sizeof(uint32_t), f);
+    serialWriteBytes(PPCA_SERIALIZE_MAGIC, 4, f);
+    serialWriteU32LE(PPCA_SERIALIZE_FORMAT_VERSION, f);
+    serialWriteSizeAsU32LE(set->numClasses, f);
     for (size_t c = 0; c < set->numClasses; c++) {
         const ppcaReplay_t *g = set->generators[c];
-        uint32_t dim = (uint32_t)g->dim;
-        uint32_t rank = (uint32_t)g->rank;
-        writeOrDie(&dim, sizeof(uint32_t), f);
-        writeOrDie(&rank, sizeof(uint32_t), f);
-        writeOrDie(&g->count, sizeof(uint32_t), f);
-        writeOrDie(&g->sigma2, sizeof(float), f);
-        writeOrDie(&g->totalVar, sizeof(float), f);
+        serialWriteSizeAsU32LE(g->dim, f);
+        serialWriteSizeAsU32LE(g->rank, f);
+        serialWriteU32LE(g->count, f);
+        serialWriteF32LE(g->sigma2, f);
+        serialWriteF32LE(g->totalVar, f);
         serializeTensor(g->mean, f);
         serializeTensor(g->basis, f);
         serializeTensor(g->eigvals, f);
@@ -61,17 +47,19 @@ static void peekValidateThenDeserializeTensor(tensor_t *skeleton, FILE *f, const
         exit(1);
     }
 
-    size_t nd;
-    readOrDie(&nd, sizeof(size_t), f);
-    if (nd != skeleton->shape->numberOfDimensions || nd > PPCA_MAX_TENSOR_RANK) {
-        PRINT_ERROR("ppcaReplaySetDeserialize: %s rank mismatch (file %zu, skeleton %zu)", what, nd,
-                    skeleton->shape->numberOfDimensions);
+    uint32_t nd = serialReadU32LE(f);
+    if ((size_t)nd != skeleton->shape->numberOfDimensions || nd > PPCA_MAX_TENSOR_RANK) {
+        PRINT_ERROR("ppcaReplaySetDeserialize: %s rank mismatch (file %u, skeleton %zu)", what,
+                    (unsigned)nd, skeleton->shape->numberOfDimensions);
         exit(1);
     }
     size_t dims[PPCA_MAX_TENSOR_RANK];
-    size_t order[PPCA_MAX_TENSOR_RANK];
-    readOrDie(dims, nd * sizeof(size_t), f);
-    readOrDie(order, nd * sizeof(size_t), f);
+    for (size_t i = 0; i < nd; i++) {
+        dims[i] = (size_t)serialReadU32LE(f);
+    }
+    for (size_t i = 0; i < nd; i++) {
+        (void)serialReadU32LE(f); /* orderOfDimensions: consumed, not validated */
+    }
     for (size_t i = 0; i < nd; i++) {
         if (dims[i] != skeleton->shape->dimensions[i]) {
             PRINT_ERROR("ppcaReplaySetDeserialize: %s dim[%zu] mismatch (file %zu, skeleton %zu)",
@@ -80,8 +68,7 @@ static void peekValidateThenDeserializeTensor(tensor_t *skeleton, FILE *f, const
         }
     }
 
-    uint8_t fileType;
-    readOrDie(&fileType, sizeof(uint8_t), f);
+    uint8_t fileType = serialReadU8(f);
     if ((qtype_t)fileType != skeleton->quantization->type) {
         PRINT_ERROR("ppcaReplaySetDeserialize: %s dtype mismatch (file %u, skeleton %u) — "
                     "#316 guard: rebuild the skeleton with the checkpoint's storage config",
@@ -94,12 +81,9 @@ static void peekValidateThenDeserializeTensor(tensor_t *skeleton, FILE *f, const
     case BOOL:
         break;
     case SYM: {
-        float scale;
-        uint8_t qBits;
-        roundingMode_t rm;
-        readOrDie(&scale, sizeof(float), f);
-        readOrDie(&qBits, sizeof(uint8_t), f);
-        readOrDie(&rm, sizeof(roundingMode_t), f);
+        (void)serialReadF32LE(f); /* scale */
+        uint8_t qBits = serialReadU8(f);
+        (void)serialReadU8(f); /* roundingMode */
         symQConfig_t *skelQc = skeleton->quantization->qConfig;
         if (qBits != skelQc->qBits) {
             PRINT_ERROR("ppcaReplaySetDeserialize: %s SYM qBits mismatch (file %u, skeleton "
@@ -110,14 +94,10 @@ static void peekValidateThenDeserializeTensor(tensor_t *skeleton, FILE *f, const
         break;
     }
     case ASYM: {
-        float scale;
-        uint8_t qBits;
-        roundingMode_t rm;
-        int16_t zeroPoint;
-        readOrDie(&scale, sizeof(float), f);
-        readOrDie(&qBits, sizeof(uint8_t), f);
-        readOrDie(&rm, sizeof(roundingMode_t), f);
-        readOrDie(&zeroPoint, sizeof(int16_t), f);
+        (void)serialReadF32LE(f); /* scale */
+        uint8_t qBits = serialReadU8(f);
+        (void)serialReadU8(f);    /* roundingMode */
+        (void)serialReadI32LE(f); /* zeroPoint (i32 LE on the wire, #370) */
         asymQConfig_t *skelQc = skeleton->quantization->qConfig;
         if (qBits != skelQc->qBits) {
             PRINT_ERROR("ppcaReplaySetDeserialize: %s ASYM qBits mismatch (file %u, skeleton %u)",
@@ -134,10 +114,9 @@ static void peekValidateThenDeserializeTensor(tensor_t *skeleton, FILE *f, const
         exit(1);
     }
 
-    /* Post-read record-length check, sized from the PRE-overwrite skeleton:
-     * deserializeTensor's payload fread is UNCHECKED, so a file cut inside
-     * the payload region reads short silently — the position arithmetic
-     * below catches that, and doubles as a wire-drift alarm if the peek
+    /* Post-read record-length check, sized from the PRE-overwrite skeleton.
+     * Since #370 deserializeTensor fails fast on short reads itself; the
+     * position arithmetic remains as the wire-drift alarm in case the peek
      * ever stops mirroring the record layout deserializeTensor consumes. */
     size_t elems = calcNumberOfElementsByShape(skeleton->shape);
     size_t expectedBytes = calcNumberOfBytesForData(skeleton->quantization, elems);
@@ -158,19 +137,17 @@ static void peekValidateThenDeserializeTensor(tensor_t *skeleton, FILE *f, const
 
 void ppcaReplaySetDeserialize(ppcaReplaySet_t *skeleton, FILE *f) {
     char magic[4];
-    readOrDie(magic, 4, f);
+    serialReadBytes(magic, 4, f);
     if (memcmp(magic, PPCA_SERIALIZE_MAGIC, 4) != 0) {
         PRINT_ERROR("ppcaReplaySetDeserialize: bad magic (not an ODTR checkpoint)");
         exit(1);
     }
-    uint32_t version;
-    readOrDie(&version, sizeof(uint32_t), f);
+    uint32_t version = serialReadU32LE(f);
     if (version != PPCA_SERIALIZE_FORMAT_VERSION) {
         PRINT_ERROR("ppcaReplaySetDeserialize: unsupported version %u", version);
         exit(1);
     }
-    uint32_t numClasses;
-    readOrDie(&numClasses, sizeof(uint32_t), f);
+    uint32_t numClasses = serialReadU32LE(f);
     if (numClasses != (uint32_t)skeleton->numClasses) {
         PRINT_ERROR("ppcaReplaySetDeserialize: numClasses mismatch (file %u, skeleton %zu)",
                     numClasses, skeleton->numClasses);
@@ -178,13 +155,11 @@ void ppcaReplaySetDeserialize(ppcaReplaySet_t *skeleton, FILE *f) {
     }
     for (size_t c = 0; c < skeleton->numClasses; c++) {
         ppcaReplay_t *g = skeleton->generators[c];
-        uint32_t dim, rank, count;
-        float sigma2, totalVar;
-        readOrDie(&dim, sizeof(uint32_t), f);
-        readOrDie(&rank, sizeof(uint32_t), f);
-        readOrDie(&count, sizeof(uint32_t), f);
-        readOrDie(&sigma2, sizeof(float), f);
-        readOrDie(&totalVar, sizeof(float), f);
+        uint32_t dim = serialReadU32LE(f);
+        uint32_t rank = serialReadU32LE(f);
+        uint32_t count = serialReadU32LE(f);
+        float sigma2 = serialReadF32LE(f);
+        float totalVar = serialReadF32LE(f);
         if (dim != (uint32_t)g->dim || rank != (uint32_t)g->rank) {
             PRINT_ERROR("ppcaReplaySetDeserialize: class %zu dim/rank mismatch "
                         "(file %u/%u, skeleton %zu/%zu)",

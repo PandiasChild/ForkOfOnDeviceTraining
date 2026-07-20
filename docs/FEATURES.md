@@ -141,16 +141,18 @@ Notes on the qualified cells:
   FLOAT32/BOOL = type byte only; SYM_INT32/SYM/ASYM carry scale + rounding + bits [+
   zeroPoint]). Packed tensor data (SYM/ASYM sub-byte, BOOL 1-bit) is byte-tight via
   `calcNumberOfBytesForData` and round-trips exactly.
-- **Model format** — `"ODTS"` magic + `version` (=1) + `layerCount` + per-layer type
-  tag. Deserialize fail-fasts on magic / version / count / tag mismatch.
+- **Model format** — `"ODTS"` magic + `version` (=2) + `layerCount` + per-layer type
+  tag. Deserialize fail-fasts on magic / version / count / tag mismatch. Since v2
+  (#370) every count/dim/kernel field is `u32` little-endian via the checked
+  `SerialWire` primitives (ASYM zeroPoint: `i32` LE), so a 64-bit host writes files a
+  32-bit MCU loads bit-identically; all short reads/writes fail fast.
 - **Contract** — deserialize **fills a pre-constructed model in place** (no allocation
-  in the serial path); the caller must build a matching model first. It does not
-  validate that a tensor's file dtype matches the destination's allocated qConfig.
-- **Gaps** — `serializeSparsity` is a TODO stub (shape is fully serialized); wire format
-  is host-native (`size_t` width + endianness, no normalization → cross-arch gap for a
-  64-bit host writing an MCU-loaded model); `fwrite`/`fread` return values are ignored
-  (no truncation detection). No save-to-disk of a full model exists above this layer —
-  `StateDictApi` is weight-**load** only.
+  in the serial path); the caller must build a matching model first. A tensor record
+  whose file dtype, rank, or payload size mismatches the pre-built skeleton fail-fasts
+  before any overwrite.
+- **Gaps** — `serializeSparsity` is a TODO stub (shape is fully serialized). No
+  save-to-disk of a full model exists above this layer — `StateDictApi` is
+  weight-**load** only.
 
 ## Continual learning (`src/continual_learning/`, `src/userApi/continual_learning/`)
 
@@ -255,7 +257,8 @@ checkpointing, limitations, literature).
 - No SYM/ASYM native param storage anywhere; no per-parameter optimizer dtype.
 - Optimizer has no integer update kernel (SYM_INT32 = dequant→float→requant).
 - CrossEntropy `classWeights` field is allocated but unused.
-- Serialization: sparsity stub, non-portable wire format, no I/O error handling.
+- Serialization: sparsity stub (wire format is fixed-width LE with checked I/O
+  since v2, #370).
 - `sparsityType_t` is scaffolding only (propagated but no kernel exploits it).
 - Continual-learning (PPCA replay, #326) arithmetic is `ARITH_FLOAT32` only;
   no integer eigensolver exists yet. State storage is unaffected (FLOAT32/
