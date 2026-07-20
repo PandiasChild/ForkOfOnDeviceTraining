@@ -41,11 +41,11 @@ typedef struct {
  * sgdInit + sgdStepM), so the funnel prologue dequants every operand to
  * float and the OUT_WRITE epilogue requants rawOut into the target's own
  * dtype -- per-parameter dtype dispatch without a qtype switch here.
- * Rounding ownership (the #282 seam): updateMath.roundingMode governs the
- * funnel PROLOGUE (operand conversion into the compute format; inert for
- * ARITH_FLOAT32, dequantization does not round). The epilogue rounds by the
- * TARGET tensor's own qConfig roundingMode -- that is where a SYM param's
- * SR_HALF_AWAY dead-zone escape lives (#279, PR #284). */
+ * Rounding ownership (#282): the OUT_WRITE epilogue rounds by the op's
+ * arithmetic.roundingMode, so each step function overrides it with
+ * optim->writeBackRounding on every param/state write-back -- that is where
+ * a SYM param's SR_HALF_AWAY dead-zone escape lives (#279, PR #284). The
+ * tensors' own qConfig roundingMode stays untouched (storage/serialization). */
 
 /* operands {param, grad} -> rawOut = param - lr*(grad + wd*param) */
 static void sgdUpdateKernel(tensor_t **op, size_t n, tensor_t *rawOut, tensor_t *aux,
@@ -107,6 +107,11 @@ void sgdStepM(optimizer_t *optim) {
         exit(1);
     }
 
+    /* #282: training write-backs round by the OPTIMIZER's knob -- the update
+     * ops run with writeBackRounding as their operation-owned rounding. */
+    arithmetic_t updateMath = sgd->updateMath;
+    updateMath.roundingMode = optim->writeBackRounding;
+
     /* momentumFactor == 0: momentum state is semantically nonexistent --
      * the factory allocates no state buffers in this mode (optim->states
      * may be NULL), so run the stateless single-op update instead of the
@@ -120,18 +125,18 @@ void sgdStepM(optimizer_t *optim) {
             /* #296 Stage 1: all three update kernels are elementwise (read i before
              * write i), so the FLOAT32 fast paths may write params/state in place
              * instead of staging through rawData. */
-            executeOpWithEpilogueRounding(
+            executeOp(
                 &(opSpec_t){
                     .kernel = sgdUpdateKernel,
                     .ctx = &ctx,
                     .inputs = (tensor_t *[]){p->param, p->grad},
                     .nInputs = 2,
-                    .arithmetic = sgd->updateMath,
+                    .arithmetic = updateMath,
                     .mode = OUT_WRITE,
                     .auxOut = NULL,
                     .writesInPlaceSafe = true,
                 },
-                p->param, optim->writeBackRounding);
+                p->param);
         }
         return;
     }
@@ -141,32 +146,32 @@ void sgdStepM(optimizer_t *optim) {
         tensor_t *state = optim->states[i]->stateBuffers[0];
 
         sgdMStateCtx_t sc = {.momentum = sgd->momentumFactor, .weightDecay = sgd->weightDecay};
-        executeOpWithEpilogueRounding(
+        executeOp(
             &(opSpec_t){
                 .kernel = sgdMStateKernel,
                 .ctx = &sc,
                 .inputs = (tensor_t *[]){state, p->grad, p->param},
                 .nInputs = 3,
-                .arithmetic = sgd->updateMath,
+                .arithmetic = updateMath,
                 .mode = OUT_WRITE,
                 .auxOut = NULL,
                 .writesInPlaceSafe = true,
             },
-            state, optim->writeBackRounding);
+            state);
 
         sgdMParamCtx_t pc = {.lr = sgd->learningRate};
-        executeOpWithEpilogueRounding(
+        executeOp(
             &(opSpec_t){
                 .kernel = sgdMParamKernel,
                 .ctx = &pc,
                 .inputs = (tensor_t *[]){p->param, state},
                 .nInputs = 2,
-                .arithmetic = sgd->updateMath,
+                .arithmetic = updateMath,
                 .mode = OUT_WRITE,
                 .auxOut = NULL,
                 .writesInPlaceSafe = true,
             },
-            p->param, optim->writeBackRounding);
+            p->param);
     }
 }
 

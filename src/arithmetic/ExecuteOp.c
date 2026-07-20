@@ -35,7 +35,7 @@ void executeOpIdentityKernel(tensor_t **operands, size_t nOperands, tensor_t *ra
  * SYM->SYM must REQUANT via the conversionMatrix diagonal — convertTensor's
  * same-type branch is a memmove that would pass raw mantissas through
  * unrestored (the QuantizationLayer.c trap). */
-static void writeOut(tensor_t *intermediate, tensor_t *target) {
+static void writeOutConversion(tensor_t *intermediate, tensor_t *target) {
     if (intermediate->quantization->type == SYM_INT32 && target->quantization->type == SYM_INT32) {
         conversionMatrix[SYM_INT32][SYM_INT32](intermediate, target);
         return;
@@ -43,8 +43,46 @@ static void writeOut(tensor_t *intermediate, tensor_t *target) {
     convertTensor(intermediate, target);
 }
 
+/* #282 seam: where a quantized tensor keeps its storage-requant rounding
+ * mode. NULL for dtypes without one (FLOAT32/INT32/BOOL). */
+static roundingMode_t *storageRoundingSlot(tensor_t *tensor) {
+    switch (tensor->quantization->type) {
+    case SYM_INT32:
+        return &((symInt32QConfig_t *)tensor->quantization->qConfig)->roundingMode;
+    case SYM:
+        return &((symQConfig_t *)tensor->quantization->qConfig)->roundingMode;
+    case ASYM:
+        return &((asymQConfig_t *)tensor->quantization->qConfig)->roundingMode;
+    default:
+        return NULL;
+    }
+}
+
+/* OUT_WRITE epilogue (#282): the requant into a quantized target rounds by
+ * the OPERATION's mode, injected by transiently swapping the target's storage
+ * rounding slot around the conversion — the conversionMatrix signatures stay
+ * untouched and the swap is restored before returning (the qConfig is
+ * serialized into checkpoints and stays authoritative for storage/inference
+ * encodes). The ACC epilogues (accumulateOut) deliberately keep the TARGET's
+ * mode: accumulate is a read-modify-write under the accumulator's own storage
+ * grid, whose rounding is part of the grid discipline like scale (spec D4). */
+static void writeOut(tensor_t *intermediate, tensor_t *target, roundingMode_t opRounding) {
+    roundingMode_t *slot = storageRoundingSlot(target);
+    if (slot == NULL) {
+        writeOutConversion(intermediate, target);
+        return;
+    }
+    roundingMode_t storageMode = *slot;
+    *slot = opRounding;
+    writeOutConversion(intermediate, target);
+    *slot = storageMode;
+}
+
 void executeConvert(tensor_t *input, tensor_t *target) {
-    writeOut(input, target);
+    /* Bare storage-to-storage conversion: a conversion node's rounding IS a
+     * storage encode, so the target's own qConfig roundingMode applies here —
+     * unlike the OUT_WRITE epilogue, which rounds by the operation (#282). */
+    writeOutConversion(input, target);
 }
 
 /* Phase 4, ACC modes. The SYM_INT32->SYM_INT32 add is Strategy A via
@@ -165,44 +203,6 @@ static void accumulateOut(tensor_t *intermediate, tensor_t *target, outputMode_t
     }
 }
 
-/* #279/#282 seam: where a quantized tensor keeps its storage-requant rounding
- * mode. NULL for dtypes without one (FLOAT32/INT32/BOOL). */
-static roundingMode_t *storageRoundingSlot(tensor_t *tensor) {
-    switch (tensor->quantization->type) {
-    case SYM_INT32:
-        return &((symInt32QConfig_t *)tensor->quantization->qConfig)->roundingMode;
-    case SYM:
-        return &((symQConfig_t *)tensor->quantization->qConfig)->roundingMode;
-    case ASYM:
-        return &((asymQConfig_t *)tensor->quantization->qConfig)->roundingMode;
-    default:
-        return NULL;
-    }
-}
-
-void executeOpWithEpilogueRounding(const opSpec_t *spec, tensor_t *target,
-                                   roundingMode_t epilogueRounding) {
-    if (spec->mode != OUT_WRITE) {
-        PRINT_ERROR("executeOpWithEpilogueRounding: OUT_WRITE only -- ACC epilogues keep "
-                    "target-owned rounding (got mode %d)",
-                    (int)spec->mode);
-        exit(1);
-    }
-    roundingMode_t *slot = storageRoundingSlot(target);
-    if (slot == NULL) {
-        executeOp(spec, target);
-        return;
-    }
-    /* Swap is transient: the target's qConfig is serialized into checkpoints
-     * and read by init/storage encodes -- it must never be left mutated. The
-     * prologue is unaffected even when the target aliases an operand
-     * (dequantization does not round). */
-    roundingMode_t storageMode = *slot;
-    *slot = epilogueRounding;
-    executeOp(spec, target);
-    *slot = storageMode;
-}
-
 void executeOp(const opSpec_t *spec, tensor_t *target) {
     tensor_t **inputs = spec->inputs;
     size_t nInputs = spec->nInputs;
@@ -311,7 +311,7 @@ void executeOp(const opSpec_t *spec, tensor_t *target) {
     switch (spec->mode) {
     case OUT_WRITE:
         if (!aliasOut) {
-            writeOut(&raw, target);
+            writeOut(&raw, target, arithmetic.roundingMode);
         }
         break;
     case OUT_ACC_DYNAMIC_RESCALE:

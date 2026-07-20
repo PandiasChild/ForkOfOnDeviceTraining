@@ -189,18 +189,29 @@ paths (ASYM, BOOL, SYM width-restore), unifying the Quantization layer into a pu
 conversion node (#266). This separation keeps arithmetic orthogonal to storage,
 enabling per-op compute-dtype divergence (#218 knobs) without ownership complexity.
 
-**Training write-backs are the one operation-owned rounding exception (#279/#282).**
-The `OUT_WRITE` epilogue normally rounds by the target's own storage qConfig, but a
-deterministic `HALF_AWAY` write-back silently freezes any parameter whose per-step
-update is sub-ULP at its fixed scale (the dead-zone; catastrophic at coarse widths —
-sweep: sym4 HALF_AWAY = random-guessing from step 0). The optimizer step functions
-therefore route every param/state `OUT_WRITE` through
-`executeOpWithEpilogueRounding(spec, target, optim->writeBackRounding)` — the funnel
-swaps the target's storage rounding mode for the duration of that op and restores it
-before returning. Factories default the knob to seeded `SR_HALF_AWAY`;
-`optimizerSetWriteBackRounding(optim, HALF_AWAY)` is the explicit opt-out. Storage,
-inference, and serialization encodes keep reading the tensor's own qConfig, which
-never changes.
+**`OUT_WRITE` epilogue rounding is operation-owned (#282).** The funnel's
+`OUT_WRITE` requant into a quantized target rounds by the op's
+`arithmetic.roundingMode`, not the target's storage qConfig. The storage
+qConfig's `roundingMode` remains as the DEFAULT the op's rounding derives from
+(`arithmeticFromQuantization` copies it), so every layer that derives its
+declared math from a quantization behaves exactly as before — the two modes
+coincide there. Ops that need a rounding of their own overwrite the field
+after deriving; the in-tree case is the optimizer (#279): a deterministic
+`HALF_AWAY` write-back silently freezes any parameter whose per-step update is
+sub-ULP at its fixed scale (the dead-zone; catastrophic at coarse widths —
+sweep: sym4 HALF_AWAY = random-guessing from step 0), so the step functions
+set `arithmetic.roundingMode = optim->writeBackRounding` on every param/state
+write-back. Factories default the knob to seeded `SR_HALF_AWAY`;
+`optimizerSetWriteBackRounding(optim, HALF_AWAY)` is the explicit opt-out.
+The storage qConfig stays authoritative everywhere else: storage, inference
+and serialization encodes, bare conversions (`executeConvert`/`convertTensor`
+— a conversion node's rounding IS a storage encode), and the `OUT_ACC_*`
+epilogues (accumulate is a read-modify-write under the accumulator's own
+storage grid, whose rounding is part of the grid discipline like scale, D4 —
+grad-ACC callers also derive their declared math from the backward WIRE
+quantization, not the grad-storage config, so operation-owning ACC would
+silently re-route existing grad rounding). The tensor's own qConfig is never
+left mutated by an op.
 
 ### Validator retirement (PR1b.2)
 

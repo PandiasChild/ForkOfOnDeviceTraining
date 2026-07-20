@@ -1141,6 +1141,144 @@ void testExecuteOpNeverAliasesSymTarget(void) {
     freeTensor(out);
 }
 
+/* ---- #282: OUT_WRITE epilogue rounding is operation-owned ------------- */
+
+/* The OUT_WRITE requant into a quantized target must round by the OP's
+ * arithmetic.roundingMode, NOT the target's storage qConfig (which stays
+ * authoritative for bare conversions, ACC grids and serialization — and must
+ * be RESTORED after the call). Fixture puts element 0 exactly on a HALF_AWAY
+ * tie: floats {352.5, -2047.0} -> absMax 2047 -> scale = 2047/2047 = 1.0f
+ * EXACTLY, so the requant ratios are 352.5 (tie) and -2047.0 (integral).
+ * Seed 99 draws (verified against RNG.c's xorshift32, and matching the
+ * documented draws in testAccFixedScaleHonorsTargetSrRoundingMode):
+ * j0=0.005865..., j1=0.558617... :
+ *   SR_HALF_AWAY: round(352.5 + j0 - 0.5) = round(352.006) = 352
+ *                 round(-2047.0 + j1 - 0.5) = round(-2046.94) = -2047
+ *   HALF_AWAY:    round(352.5) = 353 (what the target's config would give —
+ *                 anti-vacuity: the two modes provably diverge on element 0) */
+void testOutWriteEpilogueRoundsByArithmeticNotTargetQConfig(void) {
+    tensor_t *in = buildFloat(2, (float[]){352.5f, -2047.0f});
+    tensor_t *out = buildSym(2, (int32_t[]){0, 0}, 1.0f); /* storage: HALF_AWAY */
+
+    rngSetSeed(99);
+    executeOp(
+        &(opSpec_t){
+            .kernel = executeOpIdentityKernel,
+            .inputs = (tensor_t *[]){in},
+            .nInputs = 1,
+            .arithmetic = (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = SR_HALF_AWAY},
+            .mode = OUT_WRITE,
+        },
+        out);
+
+    int32_t got0 = ((int32_t *)out->data)[0];
+    int32_t got1 = ((int32_t *)out->data)[1];
+    float gotScale = ((symInt32QConfig_t *)out->quantization->qConfig)->scale;
+    roundingMode_t storageModeAfter =
+        ((symInt32QConfig_t *)out->quantization->qConfig)->roundingMode;
+    freeTensor(out);
+    freeTensor(in);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(352, got0,
+                                  "#282: OUT_WRITE must round by the op's SR mode, "
+                                  "not the target's HALF_AWAY storage config");
+    TEST_ASSERT_EQUAL_INT(-2047, got1);
+    TEST_ASSERT_EQUAL_FLOAT(1.0f, gotScale);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(HALF_AWAY, storageModeAfter,
+                                  "#282: the target's storage roundingMode must be restored "
+                                  "(it is serialized into checkpoints)");
+}
+
+/* Inverse direction: a deterministic op must stay deterministic even when the
+ * target's storage config says SR — the storage mode never leaks into the op
+ * (the #279 both-directions pin, now at the funnel level). Same fixture; with
+ * the target's SR config in charge (the OLD semantics) seed 99 would yield
+ * 352 on element 0 — the pinned 353 diverges from that. */
+void testOutWriteDetArithmeticOverridesSrTargetQConfig(void) {
+    tensor_t *in = buildFloat(2, (float[]){352.5f, -2047.0f});
+    tensor_t *out = buildSym(2, (int32_t[]){0, 0}, 1.0f);
+    ((symInt32QConfig_t *)out->quantization->qConfig)->roundingMode = SR_HALF_AWAY;
+
+    rngSetSeed(99);
+    executeOp(
+        &(opSpec_t){
+            .kernel = executeOpIdentityKernel,
+            .inputs = (tensor_t *[]){in},
+            .nInputs = 1,
+            .arithmetic = (arithmetic_t){.type = ARITH_FLOAT32, .roundingMode = HALF_AWAY},
+            .mode = OUT_WRITE,
+        },
+        out);
+
+    int32_t got0 = ((int32_t *)out->data)[0];
+    int32_t got1 = ((int32_t *)out->data)[1];
+    roundingMode_t storageModeAfter =
+        ((symInt32QConfig_t *)out->quantization->qConfig)->roundingMode;
+    freeTensor(out);
+    freeTensor(in);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(353, got0,
+                                  "#282: a HALF_AWAY op must not pick up the "
+                                  "target's SR storage config");
+    TEST_ASSERT_EQUAL_INT(-2047, got1);
+    TEST_ASSERT_EQUAL_INT(SR_HALF_AWAY, storageModeAfter); /* restored */
+}
+
+/* Same contract through writeOut's OTHER branch, the SYM->SYM conversionMatrix
+ * diagonal (requantSymInt32Tensor): mantissas {705, 4094} @ 0.5 dequantize to
+ * {352.5, 2047.0} -> absMax 2047 -> scale 1.0f exactly, requant ratio
+ * 705*(0.5/1.0) = 352.5 lands on the tie for element 0. Seed 99:
+ * SR 352 vs the target config's HALF_AWAY 353. */
+void testOutWriteSymDiagonalRoundsByArithmetic(void) {
+    tensor_t *in = buildSym(2, (int32_t[]){705, 4094}, 0.5f);
+    tensor_t *out = buildSym(2, (int32_t[]){0, 0}, 1.0f); /* storage: HALF_AWAY */
+
+    rngSetSeed(99);
+    executeOp(
+        &(opSpec_t){
+            .kernel = executeOpIdentityKernel,
+            .inputs = (tensor_t *[]){in},
+            .nInputs = 1,
+            .arithmetic = (arithmetic_t){.type = ARITH_SYM_INT32, .roundingMode = SR_HALF_AWAY},
+            .mode = OUT_WRITE,
+        },
+        out);
+
+    int32_t got0 = ((int32_t *)out->data)[0];
+    int32_t got1 = ((int32_t *)out->data)[1];
+    float gotScale = ((symInt32QConfig_t *)out->quantization->qConfig)->scale;
+    roundingMode_t storageModeAfter =
+        ((symInt32QConfig_t *)out->quantization->qConfig)->roundingMode;
+    freeTensor(out);
+    freeTensor(in);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(352, got0,
+                                  "#282: the SYM->SYM diagonal requant must round "
+                                  "by the op's SR mode too");
+    TEST_ASSERT_EQUAL_INT(2047, got1);
+    TEST_ASSERT_EQUAL_FLOAT(1.0f, gotScale);
+    TEST_ASSERT_EQUAL_INT(HALF_AWAY, storageModeAfter); /* restored */
+}
+
+/* Counter-pin: executeConvert is a BARE storage-to-storage conversion — a
+ * conversion node's rounding IS a storage encode, so the TARGET's qConfig
+ * roundingMode applies there (unlike the OUT_WRITE epilogue above). Same
+ * fixture, SR on the storage config: seed 99 must yield the SR result. */
+void testExecuteConvertKeepsTargetStorageRounding(void) {
+    tensor_t *in = buildFloat(2, (float[]){352.5f, -2047.0f});
+    tensor_t *out = buildSym(2, (int32_t[]){0, 0}, 1.0f);
+    ((symInt32QConfig_t *)out->quantization->qConfig)->roundingMode = SR_HALF_AWAY;
+
+    rngSetSeed(99);
+    executeConvert(in, out);
+
+    int32_t got0 = ((int32_t *)out->data)[0];
+    int32_t got1 = ((int32_t *)out->data)[1];
+    freeTensor(out);
+    freeTensor(in);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(352, got0,
+                                  "#282: bare conversion keeps storage-owned "
+                                  "rounding (the target's SR mode applies)");
+    TEST_ASSERT_EQUAL_INT(-2047, got1);
+}
+
 /* executeConvert SYM->SYM must requant through the conversionMatrix diagonal
  * (matches writeOut's OUT_WRITE trap) — raw accumulator-range mantissas come
  * out width-restored, bit-identical to conversionMatrix[SYM_INT32][SYM_INT32],
@@ -1217,6 +1355,10 @@ int main(void) {
     RUN_TEST(testCtxReachesKernel);
     RUN_TEST(testAuxOutIsKernelWrittenVerbatimAndNeverFunnelConverted);
     RUN_TEST(testAccFixedScaleHonorsTargetSrRoundingMode);
+    RUN_TEST(testOutWriteEpilogueRoundsByArithmeticNotTargetQConfig);
+    RUN_TEST(testOutWriteDetArithmeticOverridesSrTargetQConfig);
+    RUN_TEST(testOutWriteSymDiagonalRoundsByArithmetic);
+    RUN_TEST(testExecuteConvertKeepsTargetStorageRounding);
     RUN_TEST(testExecuteConvertSymToSymRequantsThroughDiagonal);
     RUN_TEST(testExecuteConvertFloatToSymMatchesConvertTensor);
     RUN_TEST(testExecuteOpAliasesTargetForMatchingFloatWrite);

@@ -21,9 +21,10 @@
  *        for the established behavior. Only ARITH_FLOAT32 is implemented;
  *        any other type fails fast at creation (and again at step time)
  *        until the integer-update numerics design lands. Rounding
- *        ownership (#282): updateMath.roundingMode governs the funnel
- *        prologue only (inert for ARITH_FLOAT32); the OUT_WRITE epilogue
- *        rounds by each target tensor's own qConfig roundingMode.
+ *        ownership (#282): updateMath.roundingMode is superseded at step
+ *        time -- every write-back op runs with the optimizer's
+ *        writeBackRounding as its operation-owned rounding (#279; seeded
+ *        SR factory default, optimizerSetWriteBackRounding to opt out).
  *
  * \note momentumFactor is creation-fixed: it determines whether momentum-state
  *       buffers are allocated (momentumFactor == 0 → none, #308), so callers

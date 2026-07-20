@@ -12,13 +12,22 @@ typedef enum arithmeticType { ARITH_FLOAT32, ARITH_SYM_INT32 } arithmeticType_t;
 
 typedef struct arithmetic {
     arithmeticType_t type;
-    roundingMode_t roundingMode; /* SYM intermediates; ignored for ARITH_FLOAT32 */
+    /* The OPERATION's rounding (#282): governs the funnel's SYM compute
+     * intermediates AND the OUT_WRITE epilogue requant into a quantized
+     * target. Derive via arithmeticFromQuantization (rounding == the storage
+     * default; every layer does this) unless the op needs a rounding of its
+     * own — the optimizer's training write-backs set it to
+     * optim->writeBackRounding (#279). Bare conversions (executeConvert) and
+     * the ACC epilogues stay storage-owned. */
+    roundingMode_t roundingMode;
 } arithmetic_t;
 
 /* Derivation rule (spec D5): FLOAT32 -> ARITH_FLOAT32; SYM_INT32 ->
  * ARITH_SYM_INT32; storage-only dtypes -> ARITH_FLOAT32 (float is the
  * universal compute bridge). roundingMode is taken from the qConfig when
- * the dtype carries one, else HALF_AWAY. */
+ * the dtype carries one, else HALF_AWAY — the storage mode is the DEFAULT
+ * the op's rounding seeds from (#282); ops needing a different rounding
+ * overwrite the field after deriving. */
 arithmetic_t arithmeticFromQuantization(const quantization_t *q);
 
 /* NULL -> {ARITH_FLOAT32, HALF_AWAY}; else identical to

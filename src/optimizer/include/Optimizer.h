@@ -26,15 +26,16 @@ typedef struct optimizer {
     parameter_t **parameter;
     states_t **states;
     size_t sizeStates;
-    /* #279: rounding for TRAINING write-backs -- the step's OUT_WRITE requants
-     * of param/state storage run with THIS mode instead of the tensor's own
-     * qConfig roundingMode (which stays authoritative for storage/inference
-     * encodes and is what serialization persists). Factories default
-     * SR_HALF_AWAY so sub-ULP updates on quantized storage escape the
-     * fixed-scale dead-zone in expectation; deterministic HALF_AWAY is an
-     * explicit opt-out. Zero-init yields HALF_AWAY (enum value 0, pinned by
-     * the serial format) -- hand-assembled optimizers must set the field
-     * explicitly. */
+    /* #279: rounding for TRAINING write-backs -- the step functions set this
+     * as the update ops' operation-owned arithmetic.roundingMode (#282), so
+     * every OUT_WRITE requant of param/state storage rounds with THIS mode
+     * instead of the tensor's own qConfig roundingMode (which stays
+     * authoritative for storage/inference encodes and is what serialization
+     * persists). Factories default SR_HALF_AWAY so sub-ULP updates on
+     * quantized storage escape the fixed-scale dead-zone in expectation;
+     * deterministic HALF_AWAY is an explicit opt-out. Zero-init yields
+     * HALF_AWAY (enum value 0, pinned by the serial format) -- hand-assembled
+     * optimizers must set the field explicitly. */
     roundingMode_t writeBackRounding;
 } optimizer_t;
 
