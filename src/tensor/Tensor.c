@@ -190,9 +190,15 @@ int min(int a, int b) {
 
 void byteConversion(uint8_t *dataIn, size_t dataInBits, uint8_t *dataOut, size_t dataOutBits,
                     size_t numValues) {
-    /* memset also zeroes the trailing pad bits of the last byte, which the
-     * append loop leaves untouched. */
-    memset(dataOut, 0, (numValues * dataOutBits - 1) / 8 + 1);
+    if (numValues == 0) {
+        /* Skip the memset: N=0 tensor data may be NULL (#160). */
+        return;
+    }
+    /* Ceiling idiom (bits+7)/8 as in calcNumberOfBytesForData: identical to
+     * the previous (bits-1)/8+1 for bits > 0, but safely 0 instead of a
+     * size_t underflow for dataOutBits == 0. memset also zeroes the trailing
+     * pad bits of the last byte, which the append loop leaves untouched. */
+    memset(dataOut, 0, (numValues * dataOutBits + 7) / 8);
     byteConversionAppend(dataIn, dataInBits, dataOut, dataOutBits, numValues, 0);
 }
 

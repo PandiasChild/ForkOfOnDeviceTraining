@@ -198,6 +198,29 @@ void testByteConversion_NarrowingInt32ToSubByte_DoesNotOverreadOutputBuffer() {
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, captured, numBytesDataOut);
 }
 
+/* numValues == 0 is a no-op: the previous memset size expression
+ * (numValues*dataOutBits-1)/8+1 underflowed to ~SIZE_MAX and crashed. One
+ * guard away from production: convertSymTensorToInt32Tensor passes n
+ * straight through, and N=0 tensors are constructible (#160). */
+void testByteConversion_ZeroValuesIsNoOp() {
+    int32_t vals[1] = {0x7};
+    uint8_t dataOut[2] = {0xAB, 0xCD};
+    byteConversion((uint8_t *)vals, 32, dataOut, 12, 0);
+    uint8_t expectedBytes[] = {0xAB, 0xCD};
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, dataOut, 2);
+}
+
+/* dataOutBits == 0 hit the same size underflow; with the canonical (bits+7)/8
+ * ceiling it degrades to an empty write: input is consumed, nothing is
+ * written. (packChunkGuarded rejects zero widths at the production entry.) */
+void testByteConversion_ZeroOutBitsWritesNothing() {
+    int32_t vals[2] = {0x3, 0x5};
+    uint8_t dataOut[2] = {0xAB, 0xCD};
+    byteConversion((uint8_t *)vals, 32, dataOut, 0, 2);
+    uint8_t expectedBytes[] = {0xAB, 0xCD};
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, dataOut, 2);
+}
+
 /* writeByte fully defines the [startbit, endbit) range: stale 1-bits inside
  * the mask are cleared, not OR-merged; bits outside the mask are preserved.
  * byteConversion pre-zeroes via memset, so this is behavior-identical there;
@@ -562,6 +585,8 @@ int main(void) {
     RUN_TEST(testByteFlattening5);
     RUN_TEST(testByteConversion_NarrowingInt32ToSubByte_DoesNotOverreadOutputBuffer);
     RUN_TEST(testByteConversion_NarrowingInt32ToByte_DoesNotOverreadOutputBuffer);
+    RUN_TEST(testByteConversion_ZeroValuesIsNoOp);
+    RUN_TEST(testByteConversion_ZeroOutBitsWritesNothing);
 
     RUN_TEST(testByteConversionAppend_ContinuesMidByteAtBitOffset);
     RUN_TEST(testByteConversionAppend_MixedWidthDeltaLayout);
