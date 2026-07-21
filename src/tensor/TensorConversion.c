@@ -15,7 +15,6 @@
 static void packFloatBufferAsSym(const float *values, size_t n, symQConfig_t *outQC, uint8_t *dst,
                                  const char *what);
 static void quantizeFloatToAsym(const float *values, size_t n, asymQConfig_t *outQC, uint8_t *dst);
-static void unpackSignExtend(const uint8_t *src, size_t srcBits, int32_t *dst, size_t n);
 
 _Static_assert(ODT_CONVERSION_CHUNK_ELEMS % 8 == 0,
                "chunk starts must stay byte-aligned for every packed qBits");
@@ -73,7 +72,7 @@ static size_t packedByteOffset(size_t elemIndex, size_t bits) {
 
 static void unpackSignExtendChunk(const uint8_t *srcBase, size_t srcBits, size_t elemOffset,
                                   size_t count, int32_t *dst) {
-    unpackSignExtend(srcBase + packedByteOffset(elemOffset, srcBits), srcBits, dst, count);
+    unpackSignExtend(srcBase + packedByteOffset(elemOffset, srcBits), srcBits, 0, dst, count);
 }
 
 static void unpackZeroExtendChunk(const uint8_t *srcBase, size_t srcBits, size_t elemOffset,
@@ -498,13 +497,16 @@ void convertAsymTensorToSymInt32Tensor(tensor_t *inputTensor, tensor_t *outputTe
     outQC->scale = inQC->scale; /* scale copy unchanged */
 }
 
-static void unpackSignExtend(const uint8_t *src, size_t srcBits, int32_t *dst, size_t n) {
+void unpackSignExtend(const uint8_t *src, size_t srcBits, size_t srcStartBit, int32_t *dst,
+                      size_t n) {
     if (srcBits == 0) {
         /* 1 << (srcBits - 1) below underflows size_t to SIZE_MAX -> UB shift (#247). */
         PRINT_ERROR("unpackSignExtend: srcBits must be > 0");
         exit(1);
     }
-    byteConversion((uint8_t *)src, srcBits, (uint8_t *)dst, 32, n); /* zero-fills high bits */
+    /* clear-then-set writeByte actively zero-fills the high bits on widen,
+     * so no memset of dst is needed. */
+    byteConversionAppend((uint8_t *)src, srcBits, (uint8_t *)dst, 32, n, 0, srcStartBit);
     if (srcBits >= 32) {
         return;
     }
@@ -520,7 +522,7 @@ static void unpackSignExtend(const uint8_t *src, size_t srcBits, int32_t *dst, s
 void convertSymTensorToInt32Tensor(tensor_t *inputTensor, tensor_t *outputTensor) {
     size_t n = calcNumberOfElementsByTensor(inputTensor);
     symQConfig_t *inQC = inputTensor->quantization->qConfig;
-    unpackSignExtend(inputTensor->data, inQC->qBits, (int32_t *)outputTensor->data, n);
+    unpackSignExtend(inputTensor->data, inQC->qBits, 0, (int32_t *)outputTensor->data, n);
 }
 
 void convertSymTensorToFloat32Tensor(tensor_t *inputTensor, tensor_t *outputTensor) {
@@ -542,7 +544,7 @@ void convertSymTensorToSymInt32Tensor(tensor_t *inputTensor, tensor_t *outputTen
     symQConfig_t *inQC = inputTensor->quantization->qConfig;
     symInt32QConfig_t *outQC = outputTensor->quantization->qConfig;
 
-    unpackSignExtend(inputTensor->data, inQC->qBits, (int32_t *)outputTensor->data, n);
+    unpackSignExtend(inputTensor->data, inQC->qBits, 0, (int32_t *)outputTensor->data, n);
     outQC->scale = inQC->scale;
     outQC->qMaxBits = inQC->qBits;
 }

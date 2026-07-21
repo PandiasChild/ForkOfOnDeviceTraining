@@ -45,12 +45,15 @@ PR-C.
 **Sign-extend on unpack.** `byteConversion` is a pure bit-copy that ZERO-FILLS on
 widen, so a packed signed mantissa (e.g. `−3` at qBits=6 = `0b111101`) would read
 back as `61`. Every `SYM →` cell routes through the shared
-`unpackSignExtend(src, srcBits, dst, n)` helper, which widens then sign-extends the
-two's-complement payload from `srcBits` (`(v ^ signBit) − signBit`). ASYM codes are
+`unpackSignExtend(src, srcBits, srcStartBit, dst, n)` helper (public, declared in
+`TensorConversion.h`), which widens then sign-extends the two's-complement payload
+from `srcBits` (`(v ^ signBit) − signBit`); `srcStartBit` lets DeltaSym-style
+decoders start mid-byte, byte-aligned callers pass 0. ASYM codes are
 non-negative, so the ASYM **pack** path does not sign-extend. The same contract
 applies to `byteConversionAppend` (the bit-offset entry point for mixed-width
-streams, e.g. delta compression): zero-fill on widen, low-bit truncation on pack —
-signed read-back needs the `unpackSignExtend` idiom there too.
+streams, e.g. delta compression — bit-granular on BOTH sides: `dstStartBit` for
+packing, `srcStartBit` for decoding): zero-fill on widen, low-bit truncation on
+pack — signed read-back needs the `unpackSignExtend` idiom there too.
 
 **`int_repr` vs `dequantize` (deliberate, documented asymmetry).** A conversion
 whose destination is `INT32` emits the integer **codes** and drops the scale

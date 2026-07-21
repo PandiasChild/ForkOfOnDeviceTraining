@@ -199,16 +199,16 @@ void byteConversion(uint8_t *dataIn, size_t dataInBits, uint8_t *dataOut, size_t
      * size_t underflow for dataOutBits == 0. memset also zeroes the trailing
      * pad bits of the last byte, which the append loop leaves untouched. */
     memset(dataOut, 0, (numValues * dataOutBits + 7) / 8);
-    byteConversionAppend(dataIn, dataInBits, dataOut, dataOutBits, numValues, 0);
+    byteConversionAppend(dataIn, dataInBits, dataOut, dataOutBits, numValues, 0, 0);
 }
 
 void byteConversionAppend(uint8_t *dataIn, size_t dataInBits, uint8_t *dataOut, size_t dataOutBits,
-                          size_t numValues, size_t dstStartBit) {
+                          size_t numValues, size_t dstStartBit, size_t srcStartBit) {
     size_t dataOutIndex = dstStartBit / 8;
-    size_t dataInIndex = 0;
+    size_t dataInIndex = srcStartBit / 8;
     int dataOutStartbit = (int)(dstStartBit % 8);
-    int dataInStartbit = 0;
-    int dataInEndbit = (int)dataInBits;
+    int dataInStartbit = (int)(srcStartBit % 8);
+    int dataInEndbit = dataInStartbit + (int)dataInBits;
     int dataOutEndbit = dataOutStartbit + (int)dataOutBits;
     for (size_t i = 0; i < numValues; i++) {
         while ((dataInStartbit < dataInEndbit) | (dataOutStartbit < dataOutEndbit)) {

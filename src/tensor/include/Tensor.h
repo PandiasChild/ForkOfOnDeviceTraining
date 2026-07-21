@@ -46,14 +46,17 @@ uint8_t readByte(uint8_t data, uint8_t startbit, uint8_t endbit);
 void byteConversion(uint8_t *dataIn, size_t dataInBits, uint8_t *dataOut, size_t dataOutBits,
                     size_t numValues);
 
-/* Like byteConversion, but writes into dataOut starting at BIT position
- * dstStartBit and performs no leading memset: bits outside the written range
- * [dstStartBit, dstStartBit + numValues*dataOutBits) are preserved, stale
- * in-range bits are overwritten. Enables appending mixed-width segments
- * (e.g. delta compression: wide base values + narrow deltas) back to back
- * at non-byte-aligned boundaries. */
+/* Like byteConversion, but both cursors are bit-granular: writes into
+ * dataOut starting at BIT position dstStartBit, reads from dataIn starting
+ * at BIT position srcStartBit, and performs no leading memset. Bits outside
+ * the written range [dstStartBit, dstStartBit + numValues*dataOutBits) are
+ * preserved, stale in-range bits are overwritten. Enables packing AND
+ * decoding mixed-width segments (e.g. delta compression: wide base values +
+ * narrow deltas) at non-byte-aligned boundaries. Reads exactly
+ * numValues*dataInBits bits from srcStartBit, so a segment may also END
+ * mid-byte. */
 void byteConversionAppend(uint8_t *dataIn, size_t dataInBits, uint8_t *dataOut, size_t dataOutBits,
-                          size_t numValues, size_t dstStartBit);
+                          size_t numValues, size_t dstStartBit, size_t srcStartBit);
 
 bool tensorBoolGet(tensor_t const *tensor, size_t flatIndex);
 void tensorBoolSet(tensor_t *tensor, size_t flatIndex, bool value);

@@ -63,6 +63,16 @@ char *quantTypeToString(qtype_t t);
  *  cell (the rescale variant owns [SYM_INT32][SYM]); call directly. */
 void repackSymInt32ToSymNoRescale(tensor_t *inputTensor, tensor_t *outputTensor);
 
+/* Widens n packed srcBits-wide codes to int32 and sign-extends the
+ * two's-complement payload ((v ^ signBit) - signBit). srcStartBit is the BIT
+ * position of the first code within src, so DeltaSym-style decoders can
+ * sign-extend a segment that starts mid-byte; byte-aligned callers pass 0.
+ * Direct-call helper behind every SYM -> * conversionMatrix cell (see
+ * docs/conventions/tensor.md, "Sign-extend on unpack"). srcBits must be > 0;
+ * srcBits >= 32 emits the low 32 bits unextended (full-width codes). */
+void unpackSignExtend(const uint8_t *src, size_t srcBits, size_t srcStartBit, int32_t *dst,
+                      size_t n);
+
 /* Grad-accumulate primitives (PR3, #261). Direct-call only — not conversionMatrix
  * cells. FixedGrid = fit-preserving: carries the target's scale (first store after
  * a zero-fill derives it from the increment) and ABORTS on grid overflow (#227

@@ -2767,6 +2767,26 @@ void testDequantChunkToFloatRejectsOutOfRangeOffset(void) {
     ASSERT_EXITS_WITH_FAILURE(dequantChunkToFloat(&t, 8, 1, out));
 }
 
+/* unpackSignExtend is public with a srcStartBit so DeltaSym-style decoders
+ * can sign-extend a segment that starts mid-byte: -3 at 6 bits packed at bit
+ * offset 5 is bytes {0xA0, 0x07} (bit 5..7 = 1,0,1; bit 8..10 = 1,1,1). */
+void testUnpackSignExtendReadsSignedCodeAtBitOffset(void) {
+    uint8_t src[2] = {0xA0, 0x07};
+    int32_t got[1] = {12345};
+    unpackSignExtend(src, 6, 5, got, 1);
+    TEST_ASSERT_EQUAL_INT32(-3, got[0]);
+}
+
+/* srcStartBit == 0 keeps the legacy behavior: the full signed 3-bit range
+ * {-4..3} packed LSB-first ({0xAC, 0x8F, 0x68}) sign-extends back exactly. */
+void testUnpackSignExtendOffsetZeroCoversFullSignedRange(void) {
+    uint8_t src[3] = {0xAC, 0x8F, 0x68};
+    int32_t got[8];
+    unpackSignExtend(src, 3, 0, got, 8);
+    int32_t expected[8] = {-4, -3, -2, -1, 0, 1, 2, 3};
+    TEST_ASSERT_EQUAL_INT32_ARRAY(expected, got, 8);
+}
+
 void testQuantizeFloatToAsymNoOpOnEmptyTensor(void) {
     /* Fix 2 (release-review, PR #324): n==0 must no-op, never read values[0].
      * Before the fix, quantizeFloatToAsym's findMinFloat/findMaxFloat both
@@ -2919,6 +2939,8 @@ int main(void) {
     RUN_TEST(testDequantChunkToFloatRejectsCountAboveChunk);
     RUN_TEST(testDequantChunkToFloatRejectsMisalignedOffset);
     RUN_TEST(testDequantChunkToFloatRejectsOutOfRangeOffset);
+    RUN_TEST(testUnpackSignExtendReadsSignedCodeAtBitOffset);
+    RUN_TEST(testUnpackSignExtendOffsetZeroCoversFullSignedRange);
     RUN_TEST(testQuantizeFloatToAsymNoOpOnEmptyTensor);
     RUN_TEST(testAccumulateTensorIntoSymRescaleRejectsSelfAliasedIncrement);
 

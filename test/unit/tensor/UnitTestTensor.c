@@ -243,8 +243,8 @@ void testByteConversionAppend_ContinuesMidByteAtBitOffset() {
     size_t numBytesDataOut = (6 * 5 - 1) / 8 + 1; /* 30 bits -> 4 bytes */
     uint8_t *dataOut = reserveMemory(numBytesDataOut);
 
-    byteConversionAppend((uint8_t *)seg1, 32, dataOut, 5, 3, 0);
-    byteConversionAppend((uint8_t *)seg2, 32, dataOut, 5, 3, 15);
+    byteConversionAppend((uint8_t *)seg1, 32, dataOut, 5, 3, 0, 0);
+    byteConversionAppend((uint8_t *)seg2, 32, dataOut, 5, 3, 15, 0);
 
     /* CAPTURE before free. */
     uint8_t captured[numBytesDataOut];
@@ -266,10 +266,10 @@ void testByteConversionAppend_MixedWidthDeltaLayout() {
     size_t numBytesDataOut = (62 - 1) / 8 + 1; /* = 8 */
     uint8_t *dataOut = reserveMemory(numBytesDataOut);
 
-    byteConversionAppend((uint8_t *)base0, 32, dataOut, 16, 1, 0);
-    byteConversionAppend((uint8_t *)deltas0, 32, dataOut, 3, 5, 16);
-    byteConversionAppend((uint8_t *)base1, 32, dataOut, 16, 1, 31);
-    byteConversionAppend((uint8_t *)deltas1, 32, dataOut, 3, 5, 47);
+    byteConversionAppend((uint8_t *)base0, 32, dataOut, 16, 1, 0, 0);
+    byteConversionAppend((uint8_t *)deltas0, 32, dataOut, 3, 5, 16, 0);
+    byteConversionAppend((uint8_t *)base1, 32, dataOut, 16, 1, 31, 0);
+    byteConversionAppend((uint8_t *)deltas1, 32, dataOut, 3, 5, 47, 0);
 
     /* CAPTURE before free. */
     uint8_t captured[numBytesDataOut];
@@ -286,7 +286,7 @@ void testByteConversionAppend_MixedWidthDeltaLayout() {
 void testByteConversionAppend_DefinesRangePreservesOutside() {
     int32_t vals[2] = {0x5, 0xA};
     uint8_t dataOut[3] = {0xFF, 0xFF, 0xFF};
-    byteConversionAppend((uint8_t *)vals, 32, dataOut, 4, 2, 4);
+    byteConversionAppend((uint8_t *)vals, 32, dataOut, 4, 2, 4, 0);
     uint8_t expectedBytes[] = {0x5F, 0xFA, 0xFF};
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, dataOut, 3);
 }
@@ -297,7 +297,7 @@ void testByteConversionAppend_DefinesRangePreservesOutside() {
 void testByteConversionAppend_OffsetZeroMatchesByteConversion() {
     uint8_t dataIn[] = {0b11010000, 0b11101110, 0b01101111, 0b00000000};
     uint8_t dataOut[6] = {0};
-    byteConversionAppend(dataIn, 5, dataOut, 8, 6, 0);
+    byteConversionAppend(dataIn, 5, dataOut, 8, 6, 0, 0);
     uint8_t expectedBytes[] = {16, 22, 27, 31, 6, 0};
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, dataOut, 6);
 }
@@ -308,7 +308,7 @@ void testByteConversionAppend_OffsetZeroMatchesByteConversion() {
 void testByteConversionAppend_ZeroValuesIsNoOp() {
     int32_t vals[1] = {0x7};
     uint8_t dataOut[2] = {0xAB, 0xCD};
-    byteConversionAppend((uint8_t *)vals, 32, dataOut, 12, 0, 3);
+    byteConversionAppend((uint8_t *)vals, 32, dataOut, 12, 0, 3, 0);
     uint8_t expectedBytes[] = {0xAB, 0xCD};
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, dataOut, 2);
 }
@@ -327,9 +327,75 @@ void testByteConversionAppend_ZeroValuesIsNoOp() {
 void testByteConversionAppend_WidensPackedSubByteInputAtBitOffsetClearsFill() {
     uint8_t dataIn[] = {0xD5, 0x03};
     uint8_t dataOut[4] = {0xFF, 0xFF, 0xFF, 0xFF};
-    byteConversionAppend(dataIn, 3, dataOut, 6, 4, 5);
+    byteConversionAppend(dataIn, 3, dataOut, 6, 4, 5, 0);
     uint8_t expectedBytes[] = {0xBF, 0x10, 0x8E, 0xE0};
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, dataOut, 4);
+}
+
+/* Reading can start mid-byte too: 3 x 5-bit values packed at srcStartBit 7
+ * (bits 0-6 hold stale 1s that must be skipped), widened to one byte each.
+ * This is the DeltaSym decode direction: a packed segment rarely starts at
+ * a byte boundary. */
+void testByteConversionAppend_ReadsFromSrcBitOffset() {
+    uint8_t dataIn[] = {0xFF, 0xAF, 0x2A};
+    uint8_t dataOut[3] = {0};
+    byteConversionAppend(dataIn, 5, dataOut, 8, 3, 0, 7);
+    uint8_t expectedBytes[] = {0x1F, 0x0A, 0x15};
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, dataOut, 3);
+}
+
+/* Both cursors mid-byte at once: 4 x 3-bit values transcoded from
+ * srcStartBit 5 (prefix stale 1s) to dstStartBit 3 of an all-ones buffer. */
+void testByteConversionAppend_TranscodesBetweenBitOffsets() {
+    uint8_t dataIn[] = {0xBF, 0x7A, 0x00};
+    uint8_t dataOut[2] = {0xFF, 0xFF};
+    byteConversionAppend(dataIn, 3, dataOut, 3, 4, 3, 5);
+    uint8_t expectedBytes[] = {0xAF, 0x9E};
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, dataOut, 2);
+}
+
+/* Narrowing from a src bit offset: 3 x 5-bit values at srcStartBit 9 (byte
+ * index 1, phase 1; bits 0-8 stale 1s) truncated to their LOW 3 bits at
+ * dstStartBit 2 of an all-ones buffer. Values {13,19,30} at bits 9..23 give
+ * dataIn {0xFF, 0xDB, 0xF4}; low-3 codes {5,3,6} land at bits 2..10:
+ *   byte 0: bits 0-1 stale 1s; bits 2-4 = 1,0,1; bits 5-7 = 1,1,0 -> 0x77
+ *   byte 1: bits 8-10 = 0,1,1; bits 11-15 stale 1s -> 0xFE */
+void testByteConversionAppend_NarrowsFromSrcBitOffsetTruncatesLowBits() {
+    uint8_t dataIn[] = {0xFF, 0xDB, 0xF4};
+    uint8_t dataOut[2] = {0xFF, 0xFF};
+    byteConversionAppend(dataIn, 5, dataOut, 3, 3, 2, 9);
+    uint8_t expectedBytes[] = {0x77, 0xFE};
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, dataOut, 2);
+}
+
+/* DeltaSym round trip: pack the mixed-width stream from
+ * testByteConversionAppend_MixedWidthDeltaLayout (16-bit base + 5 x 3-bit
+ * deltas per group, 62 bits), then decode every segment via srcStartBit —
+ * the second group's segments start mid-byte at bits 31/47. The decode
+ * targets are UNINITIALIZED stack arrays: clear-then-set defines every bit
+ * of the widened values without a memset. */
+void testByteConversionAppend_RoundTripsMixedWidthStream() {
+    int32_t base0[1] = {0x1234};
+    int32_t deltas0[5] = {5, 2, 7, 0, 3};
+    int32_t base1[1] = {0xBEEF};
+    int32_t deltas1[5] = {1, 6, 4, 2, 5};
+    uint8_t stream[8] = {0};
+
+    byteConversionAppend((uint8_t *)base0, 32, stream, 16, 1, 0, 0);
+    byteConversionAppend((uint8_t *)deltas0, 32, stream, 3, 5, 16, 0);
+    byteConversionAppend((uint8_t *)base1, 32, stream, 16, 1, 31, 0);
+    byteConversionAppend((uint8_t *)deltas1, 32, stream, 3, 5, 47, 0);
+
+    int32_t gotBase0[1], gotDeltas0[5], gotBase1[1], gotDeltas1[5];
+    byteConversionAppend(stream, 16, (uint8_t *)gotBase0, 32, 1, 0, 0);
+    byteConversionAppend(stream, 3, (uint8_t *)gotDeltas0, 32, 5, 0, 16);
+    byteConversionAppend(stream, 16, (uint8_t *)gotBase1, 32, 1, 0, 31);
+    byteConversionAppend(stream, 3, (uint8_t *)gotDeltas1, 32, 5, 0, 47);
+
+    TEST_ASSERT_EQUAL_INT32_ARRAY(base0, gotBase0, 1);
+    TEST_ASSERT_EQUAL_INT32_ARRAY(deltas0, gotDeltas0, 5);
+    TEST_ASSERT_EQUAL_INT32_ARRAY(base1, gotBase1, 1);
+    TEST_ASSERT_EQUAL_INT32_ARRAY(deltas1, gotDeltas1, 5);
 }
 
 /* Packing is pure low-bit truncation: -3 at 6 bits stores 0b111101. Sign
@@ -337,7 +403,7 @@ void testByteConversionAppend_WidensPackedSubByteInputAtBitOffsetClearsFill() {
 void testByteConversionAppend_NegativeCodeStoresLowBits() {
     int32_t vals[1] = {-3};
     uint8_t dataOut[2] = {0, 0};
-    byteConversionAppend((uint8_t *)vals, 32, dataOut, 6, 1, 5);
+    byteConversionAppend((uint8_t *)vals, 32, dataOut, 6, 1, 5, 0);
     uint8_t expectedBytes[] = {0xA0, 0x07};
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expectedBytes, dataOut, 2);
 }
@@ -594,6 +660,10 @@ int main(void) {
     RUN_TEST(testByteConversionAppend_OffsetZeroMatchesByteConversion);
     RUN_TEST(testByteConversionAppend_ZeroValuesIsNoOp);
     RUN_TEST(testByteConversionAppend_WidensPackedSubByteInputAtBitOffsetClearsFill);
+    RUN_TEST(testByteConversionAppend_ReadsFromSrcBitOffset);
+    RUN_TEST(testByteConversionAppend_TranscodesBetweenBitOffsets);
+    RUN_TEST(testByteConversionAppend_NarrowsFromSrcBitOffsetTruncatesLowBits);
+    RUN_TEST(testByteConversionAppend_RoundTripsMixedWidthStream);
     RUN_TEST(testByteConversionAppend_NegativeCodeStoresLowBits);
 
     RUN_TEST(testGetBitmask);
