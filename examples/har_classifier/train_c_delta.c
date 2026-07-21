@@ -116,7 +116,7 @@ static int g_symWires = 0;          /* SYM_WIRES=1 -> full-SYM wires (#206 accep
 static int g_useCosine = 0;         /* LR_SCHEDULE=cosine */
 static float g_lrMin = 0.0f;        /* LR_MIN (cosine floor) */
 static optimizer_t *g_optim = NULL; /* for per-epoch LR logging in epochCallback */
-static int g_deltaBits = 12;
+static int g_deltaBits = 7;
 
 static float envFloat(const char *name, float dflt) {
     const char *v = getenv(name);
@@ -316,24 +316,6 @@ static void buildModel(layer_t **model, quantTemplate_t *sq, layerQuant_t *lqNoT
     model[10] =
         linearLayerInit(&(linearInit_t){.inFeatures = C3_OUT, .outFeatures = NUM_CLASSES}, &lqSym);
     model[11] = softmaxLayerInit(lqNoTrain);
-}
-
-/* Requantize weights + bias -> packed SYM@SYM_BITS for the 4 trainable layers.
- * Grad tensors are untouched (they stay FLOAT32, derived from the NULL grad
- * knob at construction).
- */
-static void requantizeParamsToSym(layer_t **model, quantTemplate_t *sq) {
-    const size_t convIdx[3] = {0, 3, 6};
-    for (size_t k = 0; k < 3; k++) {
-        conv1dConfig_t *cfg = model[convIdx[k]]->config->conv1d;
-        requantizeTensorInPlace(cfg->weights->param, sq->symOrDeltaQ);
-        if (cfg->bias != NULL) {
-            requantizeTensorInPlace(cfg->bias->param, sq->symOrDeltaQ);
-        }
-    }
-    linearConfig_t *fc = model[10]->config->linear;
-    requantizeTensorInPlace(fc->weights->param, sq->symOrDeltaQ);
-    requantizeTensorInPlace(fc->bias->param, sq->symOrDeltaQ);
 }
 
 /* Requantize weights + bias -> packed SYM@DELTA_BITS for the 4 trainable layers.
@@ -615,7 +597,7 @@ int main(int argc, char *argv[]) {
 
     quantTemplate_t sq = {
         .floatQ = quantizationInitFloat(),
-        .symOrDeltaQ = quantizationInitSym((uint8_t)g_symBits, HALF_AWAY),
+        .symOrDeltaQ = quantizationInitSymQDelta((uint8_t)g_symBits, HALF_AWAY, (uint8_t)g_deltaBits),
         .symWireQ = quantizationInitSymInt32(HALF_AWAY),
     };
 

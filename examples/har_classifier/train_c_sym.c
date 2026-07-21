@@ -797,3 +797,26 @@ int main(int argc, char *argv[]) {
 
     return 0;
 }
+
+
+/*
+*./build/examples/examples/har_classifier/train_c_har_classifier_delta 1
+CONFIG deltabits=12 qBits=12 lr=0.01000 momentum=0.900 epochs=50 seed=1 shuffle_seed=1
+roundingMode  1
+GATES PASS DELTA: weights+bias=DELTA@12 grads=FLOAT32 (8 param + 8 grad checks)
+initial_val_loss=1.797202 initial_val_acc=0.131973 (expected ~1.7918)
+epoch 0: train_loss=1.7338 val_loss=1.4354 val_acc=0.3905 wall_s=35.78
+epoch 1: train_loss=1.1717 val_loss=1.0388 val_acc=0.5524 wall_s=39.77
+epoch 2: train_loss=0.8679 val_loss=0.5618 val_acc=0.7429 wall_s=37.85
+epoch 3: train_loss=0.5718 val_loss=0.4162 val_acc=0.8259 wall_s=39.56
+
+./build/examples/examples/har_classifier/train_c_har_classifier_sym 1
+CONFIG sym_bits=12 lr=0.01000 momentum=0.900 epochs=50 seed=1 shuffle_seed=1
+GATES PASS SYM: weights+bias=SYM@12 grads=FLOAT32 (8 param + 8 grad checks)
+initial_val_loss=1.797160 initial_val_acc=0.127891 (expected ~1.7918)
+epoch 0: train_loss=1.6824 val_loss=1.3267 val_acc=0.3850 wall_s=40.53
+epoch 1: train_loss=1.1145 val_loss=0.9715 val_acc=0.5524 wall_s=39.55
+epoch 2: train_loss=0.7346 val_loss=0.6032 val_acc=0.7347 wall_s=36.94
+epoch 3: train_loss=0.5742 val_loss=0.5107 val_acc=0.7932 wall_s=37.47
+
+*/

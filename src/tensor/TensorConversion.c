@@ -119,14 +119,12 @@ static void packChunkGuarded(const int32_t *codes, size_t count, uint8_t *dstBas
 static void packChunkGuardedForDelta(const int32_t *codes, size_t count, uint8_t *dstBase, size_t qBits, size_t deltabits,
                              size_t elemOffset, const char *what) {
     if (deltabits == 0 || deltabits > 31) {
-        /* 1 << (dstBits - 1) needs dstBits in [1, 31]: 0 underflows size_t and
-         * >= 32 overshoots the int32 sign bit -> UB shift (#247). */
         PRINT_ERROR("%s: deltabits (%u) must be in [1, 31]", what, (unsigned)deltabits);
         exit(1);
     }
     int32_t hi = ((int32_t)1 << (deltabits - 1)) - 1;
     int32_t lo = -((int32_t)1 << (deltabits - 1));
-    for (size_t i = 1; i < (count-1); i++) {
+    for (size_t i = 0; i < count; i++) {           /* Bug 7: alle Elemente prüfen, nicht [1, count-1) */
         if (codes[i] < lo || codes[i] > hi) {
             PRINT_ERROR("%s: value %d does not fit %u-bit SYM range [%d, %d] (#227)", what, codes[i],
                         (unsigned)deltabits, lo, hi);
@@ -134,7 +132,7 @@ static void packChunkGuardedForDelta(const int32_t *codes, size_t count, uint8_t
         }
     }
     byteConversionAppend((uint8_t *)codes, 32, dstBase + packedByteOffsetForDelta(elemOffset, qBits, deltabits), deltabits,
-                        (count-1),  ((elemOffset-1) * deltabits + qBits) % 8, 0);
+                        count, ((elemOffset-1) * deltabits + qBits) % 8, 0);   /* count statt count-1 */
 }
 
 void dequantChunkToFloat(const tensor_t *src, size_t elemOffset, size_t count, float *out) {
@@ -182,16 +180,33 @@ void dequantChunkToFloat(const tensor_t *src, size_t elemOffset, size_t count, f
     case DELTA: {
         symQDeltaConfig_t *qc = src->quantization->qConfig;
         int32_t mant[ODT_CONVERSION_CHUNK_ELEMS];
-        if(elemOffset == 0)
-        {
-            unpackSignExtend(src->data , qc->qBits, 0, mant, 1);
-            unpackSignExtendChunkForDelta(src->data, qc->qBits, qc->deltabits, 1, (count-1), &mant[1]);
-        }else
-        {
-            unpackSignExtendChunk(src->data, qc->qBits, elemOffset, count, mant);
+        unpackSignExtend(src->data, qc->qBits, 0, mant, 1);
+        float running = (float)mant[0] * qc->scale;
+        size_t pos = 1;
+        while (pos < elemOffset) {
+            size_t stepCount = elemOffset - pos < ODT_CONVERSION_CHUNK_ELEMS
+                                    ? elemOffset - pos : ODT_CONVERSION_CHUNK_ELEMS;
+            unpackSignExtendChunkForDelta(src->data, qc->qBits, qc->deltabits, pos, stepCount, mant);
+            for (size_t i = 0; i < stepCount; i++) {
+                running += (float)mant[i] * qc->scale;
+            }
+            pos += stepCount;
         }
-        for (size_t i = 1; i < count; i++) {
-            out[i] = ((float)mant[i] * qc->scale) + out[i-1];
+        if (elemOffset == 0) {
+            out[0] = running;
+            if (count > 1) {
+                unpackSignExtendChunkForDelta(src->data, qc->qBits, qc->deltabits, 1, count - 1, mant);
+                for (size_t i = 0; i < count - 1; i++) {
+                    running += (float)mant[i] * qc->scale;
+                    out[i + 1] = running;
+                }
+            }
+        } else {
+            unpackSignExtendChunkForDelta(src->data, qc->qBits, qc->deltabits, elemOffset, count, mant);
+            for (size_t i = 0; i < count; i++) {
+                running += (float)mant[i] * qc->scale;
+                out[i] = running;
+            }
         }
         return;
     }
@@ -611,11 +626,11 @@ void convertDeltaTensorToFloatTensor(tensor_t *inputTensor, tensor_t *outputTens
     symQDeltaConfig_t *inQC = inputTensor->quantization->qConfig;
     float *out = (float *)outputTensor->data;
     int32_t mant[ODT_CONVERSION_CHUNK_ELEMS];
-    unpackSignExtend(inputTensor->data , inQC->qBits, 0, mant, 1);
+    unpackSignExtend(inputTensor->data, inQC->qBits, 0, mant, 1);
     out[0] = (float)mant[0] * inQC->scale;
     for (size_t off = 1; off < n; off += ODT_CONVERSION_CHUNK_ELEMS) {
         size_t count = n - off < ODT_CONVERSION_CHUNK_ELEMS ? n - off : ODT_CONVERSION_CHUNK_ELEMS;
-        unpackSignExtendChunkForDelta(inputTensor->data, inQC->qBits, inQC->deltabits, off, count, &mant[1]);
+        unpackSignExtendChunkForDelta(inputTensor->data, inQC->qBits, inQC->deltabits, off, count, mant);
         for (size_t i = 0; i < count; i++) {
             out[off + i] = ((float)mant[i] * inQC->scale) + out[off + i - 1];
         }
@@ -626,12 +641,13 @@ void convertDeltaTensorToSymInt32Tensor(tensor_t *inputTensor, tensor_t *outputT
     size_t n = calcNumberOfElementsByTensor(inputTensor);
     symQDeltaConfig_t *inQC = inputTensor->quantization->qConfig;
     symInt32QConfig_t *outQC = outputTensor->quantization->qConfig;
-    unpackSignExtend(inputTensor->data , inQC->qBits, 0, (int32_t *)outputTensor->data, 1);
-    unpackSignExtendChunkForDelta(inputTensor->data, inQC->qBits, inQC->deltabits, 0, n-1, &((int32_t *)outputTensor->data)[1]);
+    int32_t *out = (int32_t *)outputTensor->data;      /* einmalig korrekt gecastet */
+    unpackSignExtend(inputTensor->data, inQC->qBits, 0, out, 1);
+    unpackSignExtendChunkForDelta(inputTensor->data, inQC->qBits, inQC->deltabits, 1, n - 1, &out[1]);  /* elemOffset=1, nicht 0 */
     outQC->scale = inQC->scale;
     outQC->qMaxBits = inQC->qBits;
     for (size_t i = 1; i < n; i++) {
-        outputTensor->data[i] = outputTensor->data[i]  + outputTensor->data[i - 1];
+        out[i] = out[i] + out[i - 1];
     }
 }
 
@@ -788,13 +804,13 @@ static void packFloatBufferAsSymForDelta(const float *values, size_t n, symQDelt
     codes[0] = clampInt32(roundByMode(values[0] / scale, outQC->roundingMode),
                                   (int32_t)qMin, (int32_t)qMax);
     packChunkGuarded(codes, 1, dst, outQC->qBits, 0, what);
-    for (size_t off = ODT_CONVERSION_CHUNK_ELEMS; off < n; off += ODT_CONVERSION_CHUNK_ELEMS) {
+    for (size_t off = 1; off < n; off += ODT_CONVERSION_CHUNK_ELEMS) {   /* Bug 1: ab 1, nicht ab CHUNK_ELEMS */
         size_t count = n - off < ODT_CONVERSION_CHUNK_ELEMS ? n - off : ODT_CONVERSION_CHUNK_ELEMS;
         for (size_t k = 0; k < count; k++) {
             codes[k] = clampInt32(roundByMode(values[off + k] / scale, outQC->roundingMode),
                                   (int32_t)deltaMin, (int32_t)deltaMax);
         }
-        packChunkGuardedForDelta(&codes[1], count, dst, outQC->qBits, outQC->deltabits, off, what);
+        packChunkGuardedForDelta(codes, count, dst, outQC->qBits, outQC->deltabits, off, what);  /* kein &codes[1] */
     }
 }
 
@@ -1242,9 +1258,12 @@ static void convertTensorsWithSameType(tensor_t *inputTensor, tensor_t *outputTe
         break;
     }
     case DELTA: {
-        symQConfig_t *inputDeltaQC = inputTensor->quantization->qConfig;
-        symQConfig_t *outputDeltaQC = outputTensor->quantization->qConfig;
+        symQDeltaConfig_t *inputDeltaQC = inputTensor->quantization->qConfig;
+        symQDeltaConfig_t *outputDeltaQC = outputTensor->quantization->qConfig;
         outputDeltaQC->scale = inputDeltaQC->scale;
+        outputDeltaQC->qBits = inputDeltaQC->qBits;
+        outputDeltaQC->deltabits = inputDeltaQC->deltabits;
+        outputDeltaQC->roundingMode = inputDeltaQC->roundingMode;
         break;
     }
     default:
