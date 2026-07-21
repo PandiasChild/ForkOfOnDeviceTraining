@@ -631,7 +631,7 @@ int main(int argc, char *argv[]) {
 #ifdef ODT_MEM_PROFILE
     size_t markBeforeModel = memProfileMark();
 #endif
-    buildModel(model, &sq, &lqFloat);
+    buildModel(model, &sq, &lqNontrain);
     requantizeParamsToDelta(model, &sq);
 #ifdef ODT_MEM_PROFILE
     size_t markAfterModel = memProfileMark(); /* params_grads_b = delta */
