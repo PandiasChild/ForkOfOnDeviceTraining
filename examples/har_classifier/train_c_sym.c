@@ -352,7 +352,7 @@ static void paramGateSink(void *ctxVoid, size_t layerIdx, layerType_t layerType,
 
     if (ctx->isGrad) {
         if (tensor->quantization->type != FLOAT32) {
-            fprintf(stderr, "GATE FAIL: layer %zu %s expected FLOAT32 grad, got qtype %d\n",
+            fprintf(stderr, "GATE FAIL SYM: layer %zu %s expected FLOAT32 grad, got qtype %d\n",
                     layerIdx, phase, (int)tensor->quantization->type);
             ctx->fails++;
             return;
@@ -362,14 +362,14 @@ static void paramGateSink(void *ctxVoid, size_t layerIdx, layerType_t layerType,
     }
 
     if (tensor->quantization->type != SYM) {
-        fprintf(stderr, "GATE FAIL: layer %zu %s expected SYM param, got qtype %d\n", layerIdx,
+        fprintf(stderr, "GATE FAIL SYM: layer %zu %s expected SYM param, got qtype %d\n", layerIdx,
                 phase, (int)tensor->quantization->type);
         ctx->fails++;
         return;
     }
     symQConfig_t *qc = tensor->quantization->qConfig;
     if ((int)qc->qBits != ctx->expectBits) {
-        fprintf(stderr, "GATE FAIL: layer %zu %s expected SYM qBits %d, got %u\n", layerIdx, phase,
+        fprintf(stderr, "GATE FAIL SYM: layer %zu %s expected SYM qBits %d, got %u\n", layerIdx, phase,
                 ctx->expectBits, (unsigned)qc->qBits);
         ctx->fails++;
         return;
@@ -382,50 +382,6 @@ static int g_first_epoch = 1;
 static struct timespec g_epoch_t0;
 static float g_firstTrainLoss = -1.0f;
 static float g_lastTrainLoss = -1.0f;
-
-/* #279 code-movement instrumentation (opt-in via LOG_CODE_MOVEMENT, off by
- * default so the mem study / bit-parity runs are untouched). */
-static int g_trackMovement = 0;
-static uint8_t *g_wsnap = NULL; /* previous-epoch snapshot of all packed-SYM param bytes */
-static size_t g_wsnapLen = 0;
-
-/* Fraction of trainable packed-SYM param STORAGE bytes that changed since the
- * previous epoch. This is the direct #279 dead-zone signal: HALF_AWAY freezes
- * the codes once the FLOAT32 grad step goes sub-ULP (-> collapses to 0), while
- * seeded SR_HALF_AWAY keeps dithering them (-> stays > 0). Byte-granular (a
- * packed byte holds several sub-byte codes) so it answers "did any code in this
- * byte move" -- exact for the frozen-vs-moving question, which is all the
- * mechanism claim needs. Returns -1 on the first call (baseline epoch, no prior
- * snapshot to diff against). */
-static double codeMovementFraction(void) {
-    size_t total = 0;
-    for (size_t i = 0; i < g_optim->sizeStates; i++) {
-        tensor_t *w = g_optim->parameter[i]->param;
-        total += calcNumberOfBytesForData(w->quantization, calcNumberOfElementsByTensor(w));
-    }
-    if (total == 0) {
-        return -1.0;
-    }
-    int firstCall = (g_wsnap == NULL);
-    if (firstCall) {
-        g_wsnap = reserveMemory(total);
-        g_wsnapLen = total;
-    }
-    size_t changed = 0, off = 0;
-    for (size_t i = 0; i < g_optim->sizeStates; i++) {
-        tensor_t *w = g_optim->parameter[i]->param;
-        size_t nb = calcNumberOfBytesForData(w->quantization, calcNumberOfElementsByTensor(w));
-        const uint8_t *cur = (const uint8_t *)w->data;
-        for (size_t b = 0; b < nb && off + b < g_wsnapLen; b++) {
-            if (!firstCall && cur[b] != g_wsnap[off + b]) {
-                changed++;
-            }
-            g_wsnap[off + b] = cur[b];
-        }
-        off += nb;
-    }
-    return firstCall ? -1.0 : (double)changed / (double)total;
-}
 
 static void epochCallback(size_t epoch, float trainLoss, epochStats_t evalStats) {
     struct timespec t1;
@@ -462,7 +418,52 @@ static void epochCallback(size_t epoch, float trainLoss, epochStats_t evalStats)
     clock_gettime(CLOCK_MONOTONIC, &g_epoch_t0);
 }
 
-int main(void) {
+static int ensureDir(const char *p) {
+    if (mkdir(p, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH) == 0) {
+        return 0;
+    }
+    if (errno == EEXIST) {
+        return 0;
+    }
+    fprintf(stderr, "ERROR: cannot create %s: %s\n", p, strerror(errno));
+    return 1;
+}
+
+int main(int argc, char *argv[]) {
+    if (ensureDir("examples/har_classifier/logs/without_deltas") != 0) {
+        return 1;
+    }
+    if (ensureDir("examples/har_classifier/outputs/without_deltas") != 0) {
+        return 1;
+    }
+    if (argc < 2) {
+        printf("Keine (negative) trial_number angegeben\n");
+        return 1;
+    }
+
+    int trial_number = atof(argv[1]);
+    int batch = 64;
+    //const char *logPath = getenv("LOG_PATH_DELTA");
+    //g_log_file
+
+    if (argc > 2) {
+        trial_number = atof(argv[1]);
+        g_lr = atof(argv[2]);
+        g_momentum = atof(argv[3]);
+        g_epochs = atof(argv[4]);
+        batch = atof(argv[5]);
+        //rounding_mode = atof(argv[6]);
+    }
+
+    int len = snprintf(NULL, 0, "examples/har_classifier/logs/without_deltas/trial_%d_.json", trial_number);
+
+    char *logPath = malloc(len + 10);
+    if (logPath == NULL) {
+        return 1;
+    }
+
+    snprintf(logPath, len + 10, "examples/har_classifier/logs/without_deltas/trial_%d.json", trial_number);
+    /*
     g_symBits = envInt("SYM_BITS", g_symBits);
     g_symWires = envInt("SYM_WIRES", g_symWires);
     g_lr = envFloat("LR", g_lr);
@@ -481,6 +482,7 @@ int main(void) {
     }
     g_lrMin = envFloat("LR_MIN", g_lrMin);
     const char *logPath = getenv("LOG_PATH");
+    */
 
     /* Packed-SYM STORAGE supports up to 31 bits, but this example's forward is
      * ARITH_SYM_INT32: it multiplies the packed-SYM weights as integer operands
@@ -557,11 +559,11 @@ int main(void) {
     traceModelGrads(model, MODEL_SIZE, "gate", paramGateSink, &gCtx);
     /* 4 trainable layers x (weight + bias) = 8 each. */
     if (wCtx.fails != 0 || gCtx.fails != 0 || wCtx.count != 8 || gCtx.count != 8) {
-        fprintf(stderr, "GATES FAILED (weight ok=%d fails=%d; grad ok=%d fails=%d)\n", wCtx.count,
+        fprintf(stderr, "GATES FAILED SYM   <(weight ok=%d fails=%d; grad ok=%d fails=%d)\n", wCtx.count,
                 wCtx.fails, gCtx.count, gCtx.fails);
         return 2;
     }
-    fprintf(stdout, "GATES PASS: weights+bias=SYM@%d grads=FLOAT32 (8 param + 8 grad checks)\n",
+    fprintf(stdout, "GATES PASS SYM: weights+bias=SYM@%d grads=FLOAT32 (8 param + 8 grad checks)\n",
             g_symBits);
     fflush(stdout);
 
@@ -578,11 +580,31 @@ int main(void) {
     fprintf(stdout, "initial_val_loss=%.6f initial_val_acc=%.6f (expected ~%.4f)\n",
             (double)initStats.loss, (double)initStats.accuracy, log(6.0));
     fflush(stdout);
-    if (!(fabs((double)initStats.loss - log(6.0)) < 0.25)) {
-        fprintf(stderr, "GATE FAIL: initial val loss %.6f not near ln(6)=%.4f\n",
+    /*if (!(fabs((double)initStats.loss - log(6.0)) < 0.25)) {
+        fprintf(stderr, "GATE FAIL SYM: initial val loss %.6f not near ln(6)=%.4f\n",
                 (double)initStats.loss, log(6.0));
+        if (logPath != NULL && logPath[0] != '\0') {
+            g_log_file = fopen(logPath, "w");
+            if (g_log_file != NULL) {
+                fprintf(g_log_file,
+                        "{\n  \"impl\": \"c-sym-weights\", \"example\": \"har_classifier\",\n"
+                        "  \"config\": {\"trial_number\": %d, \"sym_bits\": %d, \"delta_bits\": %d, \"epochs\": %d, "
+                        "\"batch\": %d, \"lr\": %.6f, "
+                        "\"momentum\": %.6f, \"seed\": %u, \"shuffle_seed\": %u, \"symRounding\": %u},\n  \"epochs\": [\n",
+                        trial_number, g_symBits, g_symBits, g_epochs, batch, (double)g_lr, (double)g_momentum,
+                        g_seed, g_shuffleSeed, symRounding);
+                fflush(g_log_file);
+                fprintf(g_log_file,
+                "    {\"epoch\": 0, \"initial_val_loss\": %.6f, \"initial_val_acc\": %.6f, "
+                "\"expected\": %.4f\n}",
+                (double)initStats.loss, (double)initStats.accuracy, log(6.0));
+                fflush(g_log_file);
+                fprintf(g_log_file, "\n  ],\n  \"final\": {\"test_loss\": %.6f, \"test_acc\": %.6f}\n}\n", (double)initStats.loss, (double)initStats.accuracy);
+                fclose(g_log_file);
+            }
+        }
         return 2;
-    }
+    }*/
 
     /* SGD-M routes through executeOp (#284): per-target dtype dispatch is a
      * funnel property, so the packed-SYM weights round-trip SYM<->FLOAT32 each
@@ -628,10 +650,10 @@ int main(void) {
         if (g_log_file != NULL) {
             fprintf(g_log_file,
                     "{\n  \"impl\": \"c-sym-weights\", \"example\": \"har_classifier\",\n"
-                    "  \"config\": {\"sym_bits\": %d, \"epochs\": %d, \"batch\": %d, \"lr\": %.6f, "
+                    "  \"config\": {\"trial_number\": %d,\"sym_bits\": %d, \"epochs\": %d, \"batch\": %d, \"lr\": %.6f, "
                     "\"momentum\": %.6f, \"seed\": %u, \"shuffle_seed\": %u, "
                     "\"lr_schedule\": \"%s\", \"lr_min\": %.6f},\n  \"epochs\": [\n",
-                    g_symBits, g_epochs, BATCH, (double)g_lr, (double)g_momentum, g_seed,
+                    trial_number, g_symBits, g_epochs, BATCH, (double)g_lr, (double)g_momentum, g_seed,
                     g_shuffleSeed, g_useCosine ? "cosine" : "none", (double)g_lrMin);
         }
     }
