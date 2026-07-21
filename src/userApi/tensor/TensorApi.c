@@ -228,6 +228,14 @@ quantization_t *getQLike(quantization_t *quantization) {
         initSymQuantization(likeSymQC, likeQ);
         break;
     }
+    case DELTA: {
+        symQDeltaConfig_t *likeDeltaQC = reserveMemory(sizeof(symQDeltaConfig_t));
+        symQDeltaConfig_t *deltaQC = quantization->qConfig;
+
+        initSymQDeltaConfig(deltaQC->qBits, deltaQC->roundingMode, deltaQC->deltabits, likeDeltaQC);
+        initSymQDeltaQuantization(likeDeltaQC,likeQ);
+        break;
+    }
     /* BOOL deliberately unsupported here: grad/state clones must fail fast at
      * construction (see UnitTestLinear BOOL-knob death test); add an arm only
      * when a real BOOL-clone consumer appears (#269 deviation). */
@@ -251,6 +259,8 @@ uint8_t *getDataLike(quantization_t *quantization, size_t numberOfValues) {
         /* Packed/sub-byte payloads size via the single ceiling authority
          * (calcNumberOfBytesForData) — never re-derive the bit-packing
          * arithmetic inline (#269). */
+        return reserveMemory(calcNumberOfBytesForData(quantization, numberOfValues));
+    case DELTA:
         return reserveMemory(calcNumberOfBytesForData(quantization, numberOfValues));
     default:
         PRINT_ERROR("Unknown QType");

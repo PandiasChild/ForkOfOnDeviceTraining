@@ -99,6 +99,11 @@ size_t calcNumberOfBytesForData(quantization_t *q, size_t numberOfElements) {
     }
     case BOOL:
         return (numberOfElements + 7) / 8;
+    case DELTA: {
+            symQDeltaConfig_t *deltaQC = q->qConfig;
+            size_t totalBitAmount = ((numberOfElements-1) * deltaQC->deltabits) + deltaQC->qBits;
+            return (totalBitAmount + 7) / 8;
+    }
     default:
         PRINT_ERROR("Unknown QType!");
         exit(1);
@@ -172,11 +177,15 @@ uint8_t writeByte(uint8_t existingData, uint8_t data, uint8_t startbit, uint8_t 
     uint8_t endbitInternal = endbit - (startbit / 8) * 8;
     uint8_t bitmask = getBitmask(startbitInternal, endbitInternal);
     data <<= startbitInternal;
+    // print_binary_uint8(data);
     uint8_t intermediate = data & bitmask;
+    // print_binary_uint8(bitmask);
+    // print_binary_uint8(intermediate);
     /* Clear-then-set: the [startbit, endbit) range is fully defined by this
      * write, so callers may target buffers with stale in-range bits (bit-
      * offset appends); bits outside the mask are preserved. */
     existingData = (existingData & (uint8_t)~bitmask) | intermediate;
+    // print_binary_uint8(existingData);
     return existingData;
 }
 

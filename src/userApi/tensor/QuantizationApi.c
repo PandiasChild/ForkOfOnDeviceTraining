@@ -53,3 +53,12 @@ quantization_t *quantizationInitBool(void) {
     initBoolQuantization(q);
     return q;
 }
+
+quantization_t *quantizationInitSymQDelta(uint8_t qBits, roundingMode_t roundingMode, uint8_t deltabits) {
+    quantization_t *q = reserveMemory(sizeof(quantization_t));
+    symQDeltaConfig_t *qC = reserveMemory(sizeof(symQDeltaConfig_t));
+    initSymQDeltaConfig(qBits, roundingMode, deltabits, qC);
+    initSymQDeltaQuantization(qC, q);
+    return q;
+}
+
