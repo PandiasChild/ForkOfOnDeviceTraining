@@ -84,9 +84,9 @@ target_link_libraries(train_c_har_classifier PRIVATE
         har_mem_instrument
 )
 
-add_executable(train_c_har_classifier_adamw train_c_adamw.c)
+add_executable(train_c_har_classifier_sym train_c_sym.c)
 
-target_link_libraries(train_c_har_classifier_adamw PRIVATE
+target_link_libraries(train_c_har_classifier_sym PRIVATE
         DataLoaderApi
         DataLoader
         NPYLoaderApi
@@ -110,11 +110,14 @@ target_link_libraries(train_c_har_classifier_adamw PRIVATE
         MaxPool1d
         AvgPool1d
 
+        ArithmeticType
+
         QuantizationApi
         Quantization
 
         TensorApi
         Tensor
+        TensorConversion
         Rounding
 
         TrainingLoopApi
@@ -122,71 +125,7 @@ target_link_libraries(train_c_har_classifier_adamw PRIVATE
         TrainingBatchDefault
         TrainingEpochDefault
         Optimizer
-
-        LossFunction
-        CrossEntropy
-
-        SoftmaxApi
-        Softmax
-
-        Sgd
-        AdamW
-        AdamWApi
-
-        InferenceApi
-
-        StateDictApi
-        LayerWeightsApi
-        LayerQuant
-        LayerCommon
-        Distributions
-
-        Common
-        StorageApi
-        RNG
-
-        examples_shared
-        har_mem_instrument
-)
-
-add_executable(train_c_continual train_c_continual.c)
-
-target_link_libraries(train_c_continual PRIVATE
-        DataLoaderApi
-        DataLoader
-        NPYLoaderApi
-        NPYLoader
-
-        Layer
-
-        Conv1dApi
-        Conv1d
-
-        LinearApi
-        Linear
-
-        ReluApi
-        Relu
-
-        FlattenApi
-        Flatten
-
-        Pool1dApi
-        MaxPool1d
-        AvgPool1d
-
-        QuantizationApi
-        Quantization
-
-        TensorApi
-        Tensor
-        Rounding
-
-        TrainingLoopApi
-        CalculateGradsSequential
-        TrainingBatchDefault
-        TrainingEpochDefault
-        Optimizer
+        LrScheduler
 
         LossFunction
         CrossEntropy
@@ -209,23 +148,13 @@ target_link_libraries(train_c_continual PRIVATE
         StorageApi
         RNG
 
-        PpcaReplay
-        PpcaReplayApi
-        PpcaReplaySerialize
-        Axpby
-        RowBroadcast
-        JacobiEig
-        ExecuteOp
-        TensorConversion
-        ArithmeticType
-
         examples_shared
         har_mem_instrument
 )
 
-add_executable(train_c_har_classifier_sym train_c_sym.c)
+add_executable(train_c_har_classifier_delta train_c_delta.c)
 
-target_link_libraries(train_c_har_classifier_sym PRIVATE
+target_link_libraries(train_c_har_classifier_delta PRIVATE
         DataLoaderApi
         DataLoader
         NPYLoaderApi
