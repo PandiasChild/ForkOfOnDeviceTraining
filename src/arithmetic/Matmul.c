@@ -281,7 +281,7 @@ void matmulSymInt32TensorsWithBias(tensor_t *aTensor, tensor_t *bTensor, tensor_
         if (!isfinite(outputScale)) {
             PRINT_ERROR("matmulSymInt32TensorsWithBias: outputScale non-finite (aScale=%f, bScale=%f)",
                         aScale, bScale);
-            exit(1);
+            exit(5);
         }
 
         /* Rescale the bias into the accumulator's scale via the shared #189 helper

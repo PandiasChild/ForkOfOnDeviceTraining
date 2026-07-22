@@ -488,24 +488,25 @@ int main(int argc, char *argv[]) {
     int batch = 64;
     //const char *logPath = getenv("LOG_PATH_DELTA");
     //g_log_file
-
+    size_t delta_reduction = 0;
     if (argc > 2) {
         trial_number = atof(argv[1]);
-        g_lr = atof(argv[2]);
-        g_momentum = atof(argv[3]);
-        g_epochs = atof(argv[4]);
-        batch = atof(argv[5]);
-        //rounding_mode = atof(argv[6]);
+        delta_reduction = atoi(argv[2]);
+        g_lr = atof(argv[3]);
+        g_momentum = atof(argv[4]);
+        g_epochs = atof(argv[5]);
+        batch = atof(argv[6]);
+        //rounding_mode = atof(argv[7]);
     }
 
-    int len = snprintf(NULL, 0, "examples/har_classifier/logs/without_deltas/trial_%d_.json", trial_number);
+    int len = snprintf(NULL, 0, "examples/har_classifier/logs/without_deltas/delta_reduction_%dtrial_%d_.json", delta_reduction, trial_number);
 
     char *logPath = malloc(len + 10);
     if (logPath == NULL) {
         return 1;
     }
 
-    snprintf(logPath, len + 10, "examples/har_classifier/logs/without_deltas/trial_%d.json", trial_number);
+    snprintf(logPath, len + 10, "examples/har_classifier/logs/without_deltas/delta_reduction_%dtrial_%d_.json", delta_reduction, trial_number);
 
     /*
     g_symBits = envInt("SYM_BITS", g_symBits);

@@ -27,10 +27,6 @@ def send_notification(bot_token, chat_id, message):
     except:
         None
 
-
-
-
-
 def objective(trial) -> int| float:
     trial_number = trial.number
     #delta_reduction = trial.suggest_int("delta_reduction", 1, 4, step=1)
@@ -51,11 +47,11 @@ def objective(trial) -> int| float:
 
     test_loss_delta = 0
     test_acc_delta = 0
-    start = time.time()
+    #start = time.time()
     try:
         result = subprocess.run(
             [
-                './build/examples/examples/har_classifier/train_c_har_classifier_delta',
+                './build/examples_memprofile/examples/har_classifier/train_c_har_classifier_delta',
                 str(trial_number),
                 str(delta_reduction),
                 str(learning_rate),
@@ -68,13 +64,12 @@ def objective(trial) -> int| float:
             #capture_output=True,
             text=True
         )
-        result.wait()
-        print("C fertig nach", time.time() - start, "Sekunden")
-        print("Returncode:", result.returncode)
-        print("Output:", result.stdout)
+        #print("C fertig nach", time.time() - start, "Sekunden")
+        #print("Returncode:", result.returncode)
+        #print("Output:", result.stdout)
         test_duration_delta = 0
-        prefix = 'examples/har_classifier/logs/with_deltas/trial_'
-        with open(prefix + str(trial_number) + '.json', 'r') as f:
+        prefix = 'examples/har_classifier/logs/with_deltas/delta_reduction_'
+        with open(prefix + str(delta_reduction) + "trial_" + str(trial_number) + '.json', 'r') as f:
             data = json.load(f)
 
             for epochs in data["epochs"]:
@@ -88,35 +83,23 @@ def objective(trial) -> int| float:
             trial.set_user_attr("test_duration_delta", test_duration_delta)
 
     except subprocess.CalledProcessError as e:
+        if(e.returncode == 5):
+            trial.set_user_attr("error", "matmulSymInt32TensorsWithBias");
+        if(e.returncode == 5):
+            trial.set_user_attr("error", "rescaleIntoAccumulatorScale");
         if(e.returncode == 2):
-            trial.set_user_attr("gates", "GATES FAILED DELTA")
-            prefix = 'examples/har_classifier/logs/with_deltas/trial_'
-            with open(prefix + str(trial_number) + '.json', 'r') as f:
-                data = json.load(f)
+            trial.set_user_attr("error", "GATES FAILED")
+        prefix = 'examples/har_classifier/logs/with_deltas/delta_reduction_'
+        with open(prefix + str(delta_reduction) + "trial_" + str(trial_number) + '.json', 'r') as f:
+            data = json.load(f)
 
-            initial_val_loss = data.get("final", {}).get("test_loss")
-            initial_val_acc = data.get("final", {}).get("test_acc")
+        initial_val_loss = data.get("epochs", {}).get("initial_val_loss")
+        initial_val_acc = data.get("epochs", {}).get("initial_val_acc")
 
-            trial.set_user_attr("initial_val_loss", initial_val_loss)
-            trial.set_user_attr("initial_val_acc", initial_val_acc)
+        trial.set_user_attr("initial_val_loss", initial_val_loss)
+        trial.set_user_attr("initial_val_acc", initial_val_acc)
 
-            return initial_val_acc, initial_val_loss
-        with open('telegram_bot.json', 'r') as f:
-            telegram_bot = json.load(f)
-
-            bot_token = telegram_bot.get("BOT_TOKEN", {})
-            chat_id = telegram_bot.get("CHAT_ID", {})
-            message = f"Training DELTA fehlgeschlagen:\ntrial_number {trial_number}\nDas Skript ist mit Exit-Code {e.returncode} beendet worden: {e.stderr}, {e}\n"
-            send_notification(bot_token, chat_id, message)
-
-    except OSError as e:
-        with open('telegram_bot.json', 'r') as f:
-            telegram_bot = json.load(f)
-
-            bot_token = telegram_bot.get("BOT_TOKEN", {})
-            chat_id = telegram_bot.get("CHAT_ID", {})
-            message = f"Training SYM fehlgeschlagen:\ntrial_number {trial_number}\nBetriebssystemfehler: {e}\n"
-            send_notification(bot_token, chat_id, message)
+        return 0, 1
 
     except FileNotFoundError:
         with open('telegram_bot.json', 'r') as f:
@@ -126,6 +109,81 @@ def objective(trial) -> int| float:
             chat_id = telegram_bot.get("CHAT_ID", {})
             message = f"Training DELTA fehlgeschlagen:\ntrial_number {trial_number}\nPython oder das Skript wurde nicht gefunden: {e}\n"
             send_notification(bot_token, chat_id, message)
+#---------------------------------------------------------------------------------------------------------------
+    try:
+        result = subprocess.run(
+            [
+                './build/examples_memprofile/examples/har_classifier/train_c_har_classifier_sym',
+                str(trial_number),
+                str(delta_reduction),
+                str(learning_rate),
+                str(momentum),
+                str(epochs),
+                str(batch),
+                #str(rounding_mode)
+            ],
+            check=True,
+            #capture_output=True,
+            text=True
+        )
+        result.wait()
+        test_duration_sym = 0
+        prefix = 'examples/har_classifier/logs/without_deltas/delta_reduction_'
+        with open(prefix + str(delta_reduction) + "trial_" + str(trial_number) + '.json', 'r') as f:
+            data_sym = json.load(f)
+
+            for epochs in data_sym["epochs"]:
+                test_duration_sym += epochs.get("wall_s")
+
+            test_loss_sym = data_sym.get("final", {}).get("test_loss")
+            test_acc_sym = data_sym.get("final", {}).get("test_acc")
+
+            trial.set_user_attr("test_loss_sym", test_loss_sym)
+            trial.set_user_attr("test_acc_sym", test_acc_sym)
+            trial.set_user_attr("test_duration_sym", test_duration_sym)
+
+    except subprocess.CalledProcessError as e:
+        if(e.returncode == 5):
+            trial.set_user_attr("error", "matmulSymInt32TensorsWithBias");
+        if(e.returncode == 5):
+            trial.set_user_attr("error", "rescaleIntoAccumulatorScale");
+        if(e.returncode == 2):
+            trial.set_user_attr("error", "GATES FAILED")
+        prefix = 'examples/har_classifier/logs/without_deltas/delta_reduction_'
+        with open(prefix + str(delta_reduction) + "trial_" + str(trial_number) + '.json', 'r') as f:
+            data = json.load(f)
+
+        initial_val_loss = data.get("epochs", {}).get("initial_val_loss")
+        initial_val_acc = data.get("epochs", {}).get("initial_val_acc")
+
+        trial.set_user_attr("initial_val_loss", initial_val_loss)
+        trial.set_user_attr("initial_val_acc", initial_val_acc)
+
+        return 0, 1
+
+    except FileNotFoundError:
+        with open('telegram_bot.json', 'r') as f:
+            telegram_bot = json.load(f)
+
+            bot_token = telegram_bot.get("BOT_TOKEN", {})
+            chat_id = telegram_bot.get("CHAT_ID", {})
+            message = f"Training SYM fehlgeschlagen:\ntrial_number {trial_number}\nPython oder das Skript wurde nicht gefunden: {e}\n"
+            send_notification(bot_token, chat_id, message)
+
+    trial.set_user_attr("error", "NO ERROR")
+    return test_acc_delta, test_loss_delta
+''' 
+DELTA
+    except OSError as e:
+        with open('telegram_bot.json', 'r') as f:
+            telegram_bot = json.load(f)
+
+            bot_token = telegram_bot.get("BOT_TOKEN", {})
+            chat_id = telegram_bot.get("CHAT_ID", {})
+            message = f"Training SYM fehlgeschlagen:\ntrial_number {trial_number}\nBetriebssystemfehler: {e}\n"
+            send_notification(bot_token, chat_id, message)
+
+    
 
     except PermissionError:
         with open('telegram_bot.json', 'r') as f:
@@ -153,59 +211,8 @@ def objective(trial) -> int| float:
             chat_id = telegram_bot.get("CHAT_ID", {})
             message = f"Training DELTA fehlgeschlagen:\ntrial_number {trial_number}\nexception: {e}\n"
             send_notification(bot_token, chat_id, message)
-    try:
-        result = subprocess.run(
-            [
-                './build/examples/examples/har_classifier/train_c_har_classifier_sym',
-                str(trial_number),
-                str(learning_rate),
-                str(momentum),
-                str(epochs),
-                str(batch),
-                #str(rounding_mode)
-            ],
-            check=True,
-            #capture_output=True,
-            text=True
-        )
-        result.wait()
-        test_duration_sym = 0
-        prefix = 'examples/har_classifier/logs/without_deltas/trial_'
-        with open(prefix + str(trial_number) + '.json', 'r') as f:
-            data_sym = json.load(f)
-
-            for epochs in data_sym["epochs"]:
-                test_duration_sym += epochs.get("wall_s")
-
-            test_loss_sym = data_sym.get("final", {}).get("test_loss")
-            test_acc_sym = data_sym.get("final", {}).get("test_acc")
-
-            trial.set_user_attr("test_loss_sym", test_loss_sym)
-            trial.set_user_attr("test_acc_sym", test_acc_sym)
-            trial.set_user_attr("test_duration_sym", test_duration_sym)
-
-    except subprocess.CalledProcessError as e:
-        if(e.returncode == 2):
-            trial.set_user_attr("gates", "GATES FAILED DELTA")
-            prefix = 'examples/har_classifier/logs/without_deltas/trial_'
-            with open(prefix + str(trial_number) + '.json', 'r') as f:
-                data = json.load(f)
-
-            initial_val_loss = data.get("epochs", {}).get("initial_val_loss")
-            initial_val_acc = data.get("epochs", {}).get("initial_val_acc")
-
-            trial.set_user_attr("initial_val_loss", initial_val_loss)
-            trial.set_user_attr("initial_val_acc", initial_val_acc)
-
-            return initial_val_acc, initial_val_loss
-        with open('telegram_bot.json', 'r') as f:
-            telegram_bot = json.load(f)
-
-            bot_token = telegram_bot.get("BOT_TOKEN", {})
-            chat_id = telegram_bot.get("CHAT_ID", {})
-            message = f"Training SYM fehlgeschlagen:\ntrial_number {trial_number}\nDas Skript ist mit Exit-Code {e.returncode} beendet worden: {e.stderr}, {e}\n"
-            send_notification(bot_token, chat_id, message)
-
+------------------------------------------------------------------------------------------
+SYM
     except OSError as e:
         with open('telegram_bot.json', 'r') as f:
             telegram_bot = json.load(f)
@@ -214,16 +221,6 @@ def objective(trial) -> int| float:
             chat_id = telegram_bot.get("CHAT_ID", {})
             message = f"Training SYM fehlgeschlagen:\ntrial_number {trial_number}\nBetriebssystemfehler: {e}\n"
             send_notification(bot_token, chat_id, message)
-
-    except FileNotFoundError:
-        with open('telegram_bot.json', 'r') as f:
-            telegram_bot = json.load(f)
-
-            bot_token = telegram_bot.get("BOT_TOKEN", {})
-            chat_id = telegram_bot.get("CHAT_ID", {})
-            message = f"Training SYM fehlgeschlagen:\ntrial_number {trial_number}\nPython oder das Skript wurde nicht gefunden: {e}\n"
-            send_notification(bot_token, chat_id, message)
-
     except PermissionError:
         with open('telegram_bot.json', 'r') as f:
             telegram_bot = json.load(f)
@@ -250,26 +247,7 @@ def objective(trial) -> int| float:
             chat_id = telegram_bot.get("CHAT_ID", {})
             message = f"Training SYM fehlgeschlagen:\ntrial_number {trial_number}\nexception: {e}\n"
             send_notification(bot_token, chat_id, message)
-    trial.set_user_attr("gates", "GATES PASSED")
-    if (test_acc_delta == 0):
-        with open('telegram_bot.json', 'r') as f:
-            telegram_bot = json.load(f)
-
-            bot_token = telegram_bot.get("BOT_TOKEN", {})
-            chat_id = telegram_bot.get("CHAT_ID", {})
-            message = f"trial_number {trial_number} probably failed: test_acc_delta = 0\n"
-            send_notification(bot_token, chat_id, message)
-    if (test_loss_delta == 0):
-        with open('telegram_bot.json', 'r') as f:
-            telegram_bot = json.load(f)
-
-            bot_token = telegram_bot.get("BOT_TOKEN", {})
-            chat_id = telegram_bot.get("CHAT_ID", {})
-            message = f"trial_number {trial_number} probably failed: test_loss_delta = 0\n"
-            send_notification(bot_token, chat_id, message)
-    return test_acc_delta, test_loss_delta
-
-
+            '''
 def main():
     optuna_results_dir = OPTUNA_LOGS
     optuna_results_dir.mkdir(parents=True, exist_ok=True)
@@ -294,7 +272,7 @@ def main():
         storage = f"sqlite:///{study_db_path.resolve()}",
         load_if_exists=True)
 
-    study.optimize(objective, n_trials=999, n_jobs = 1)
+    study.optimize(objective, n_trials=400, n_jobs = 1)
     #space = intersection_search_space(study.get_trials())
 
     #fig = plot_optimization_history(study)

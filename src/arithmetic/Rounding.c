@@ -41,7 +41,7 @@ int32_t rescaleIntoAccumulatorScale(int32_t paramQ, float paramScale, float accu
         PRINT_ERROR("rescaleIntoAccumulatorScale: param scale incompatible with accumulator "
                 "scale — result is NaN (#189) [paramQ=%d, paramScale=%f, accumulatorScale=%f]",
                 paramQ, paramScale, accumulatorScale);
-        exit(1);
+        exit(6);
     }
 
     /* Reserve the real worst int16 product 32768*32767 (the -32768 case),

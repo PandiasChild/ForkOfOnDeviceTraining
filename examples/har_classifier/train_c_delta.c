@@ -520,16 +520,6 @@ int main(int argc, char *argv[]) {
     int trial_number = atof(argv[1]);
     int batch = 64;
 
-    int len = snprintf(NULL, 0, "examples/har_classifier/logs/with_deltas/trial_%d_.json", trial_number);
-
-    char *logPath = malloc(len + 10);
-    if (logPath == NULL) {
-        return 1;
-    }
-
-    snprintf(logPath, len + 10, "examples/har_classifier/logs/with_deltas/trial_%d.json", trial_number);
-
-
     if (argc > 2) {
         trial_number = atof(argv[1]);
         size_t delta_reduction = atoi(argv[2]);
@@ -540,6 +530,17 @@ int main(int argc, char *argv[]) {
         batch = atof(argv[6]);
         //rounding_mode = atof(argv[7]);
     }
+    int len = snprintf(NULL, 0, "examples/har_classifier/logs/with_deltas/delta_reduction_%dtrial_%d_.json", delta_reduction, trial_number);
+
+    char *logPath = malloc(len + 10);
+    if (logPath == NULL) {
+        return 1;
+    }
+
+    snprintf(logPath, len + 10, "examples/har_classifier/logs/with_deltas/delta_reduction_%dtrial_%d_.json", delta_reduction,  trial_number);
+
+
+
     /*
   g_symBits = envInt("SYM_BITS", g_symBits);
   g_symWires = envInt("SYM_WIRES", g_symWires);
@@ -817,6 +818,7 @@ int main(int argc, char *argv[]) {
         fprintf(g_log_file, "\n}\n");
         fclose(g_log_file);
     }
+
 
     /* ---- Convergence DIAGNOSTIC (advisory, never fatal) ------------------- */
     /* Whether train loss descends is the very quantity this sweep MEASURES: at
