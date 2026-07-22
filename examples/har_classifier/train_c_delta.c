@@ -437,12 +437,34 @@ static double codeMovementFraction(void) {
     }
     return firstCall ? -1.0 : (double)changed / (double)total;
 }
+/* Debug: bestätigt, dass der Optimizer nach dem write-back die Ziel-Tensoren
+ * wieder als DELTA@DELTA_BITS führt (der SYM->FLOAT32->SYM Round-Trip aus
+ * #284 landet also korrekt zurück im gepackten Format und bleibt nicht
+ * versehentlich in FLOAT32 hängen). Läuft über dieselben Tensor-Pointer, die
+ * der Optimizer selbst aktualisiert (g_optim->parameter[i]->param). */
+static void debugPrintOptimTargetDtypes(size_t epoch) {
+    for (size_t i = 0; i < g_optim->sizeStates; i++) {
+        tensor_t *w = g_optim->parameter[i]->param;
+        /*if (w->quantization->type == DELTA) {
+            symQDeltaConfig_t *qc = w->quantization->qConfig;
+            fprintf(stdout,
+                    "DEBUG WRITEBACK epoch=%zu param[%zu] qtype=DELTA qBits=%u deltabits=%u OK\n",
+                    epoch, i, (unsigned)qc->qBits, (unsigned)qc->deltabits);
+        } */
+        if (w->quantization->type != DELTA) {
+            fprintf(stderr,
+                    "DEBUG WRITEBACK epoch=%zu param[%zu] qtype=%d EXPECTED DELTA -- write-back "
+                    "landed in wrong dtype!\n",
+                    epoch, i, (int)w->quantization->type);
+        }
+    }
+}
 static void epochCallback(size_t epoch, float trainLoss, epochStats_t evalStats) {
     struct timespec t1;
     clock_gettime(CLOCK_MONOTONIC, &t1);
     double wall_s =
         (double)(t1.tv_sec - g_epoch_t0.tv_sec) + (double)(t1.tv_nsec - g_epoch_t0.tv_nsec) * 1e-9;
-
+    debugPrintOptimTargetDtypes(epoch);
     if (g_firstTrainLoss < 0.0f) {
         g_firstTrainLoss = trainLoss;
     }
