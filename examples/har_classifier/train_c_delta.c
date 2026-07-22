@@ -780,6 +780,7 @@ int main(int argc, char *argv[]) {
     report.params_grads_b = markAfterModel - markBeforeModel;
     report.optstate_b = markAfterOpt - markBeforeOpt;
     report.params_b = memInstrumentParamBytes(sgd);
+    memInstrumentSplitParamBytes(model, MODEL_SIZE, &report.weights_b, &report.bias_b);
     report.grads_b = memInstrumentGradBytes(sgd);
     report.optstate_analytic_b = memInstrumentOptStateBytes(sgd);
     report.activations_b = memInstrumentHarActivationBytes(MICRO_BATCH);

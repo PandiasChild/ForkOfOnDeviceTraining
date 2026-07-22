@@ -36,6 +36,8 @@ typedef struct memReport {
     /* Analytic categories — what an MCU deployment would actually hold. */
     size_t params_b;            /* sum of weight+bias tensor bytes (dtype-aware) */
     size_t grads_b;             /* sum of grad tensor bytes */
+    size_t weights_b;           /* weight tensor bytes (dtype-aware) */
+    size_t bias_b;              /* bias tensor bytes (dtype-aware) */
     size_t optstate_analytic_b; /* sum of optimizer momentum-buffer bytes */
     size_t activations_b;       /* peak concurrent activation bytes, one batch */
     size_t io_b;                /* batched input + one-hot label bytes */
@@ -59,6 +61,8 @@ typedef struct memReport {
  * SYM weights count as ceil(qBits*N/8), FLOAT32 grads as 4*N), so this measures
  * the ACTUAL storage whatever it is. */
 size_t memInstrumentParamBytes(optimizer_t *optim);
+void memInstrumentSplitParamBytes(layer_t **model, size_t modelSize, size_t *weightsB,
+                                   size_t *biasB);
 size_t memInstrumentGradBytes(optimizer_t *optim);
 size_t memInstrumentOptStateBytes(optimizer_t *optim);
 

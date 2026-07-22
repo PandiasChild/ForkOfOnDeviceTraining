@@ -1,5 +1,6 @@
 #define SOURCE_FILE "har_mem_instrument"
 
+
 #include "mem_instrument.h"
 
 #include "Layer.h"
@@ -7,6 +8,8 @@
 #include "MemProfile.h"
 #include "Optimizer.h"
 #include "Tensor.h"
+#include "Conv1d.h"
+#include "Linear.h"
 
 /* ---- Analytic sums over the optimizer's trainable-parameter array --------- */
 
@@ -16,6 +19,25 @@ size_t memInstrumentParamBytes(optimizer_t *optim) {
         total += calcBytesPerTensor(optim->parameter[i]->param);
     }
     return total;
+}
+void memInstrumentSplitParamBytes(layer_t **model, size_t modelSize, size_t *weightsB,
+                                   size_t *biasB) {
+    size_t w = 0, b = 0;
+    for (size_t i = 0; i < modelSize; i++) {
+        if (model[i]->type == CONV1D) {
+            conv1dConfig_t *cfg = model[i]->config->conv1d;
+            w += calcBytesPerTensor(cfg->weights->param);
+            if (cfg->bias != NULL) {
+                b += calcBytesPerTensor(cfg->bias->param);
+            }
+        } else if (model[i]->type == LINEAR) {
+            linearConfig_t *cfg = model[i]->config->linear;
+            w += calcBytesPerTensor(cfg->weights->param);
+            b += calcBytesPerTensor(cfg->bias->param);
+        }
+    }
+    *weightsB = w;
+    *biasB = b;
 }
 
 size_t memInstrumentGradBytes(optimizer_t *optim) {
@@ -158,12 +180,14 @@ void memInstrumentEmitJson(FILE *f, const memReport_t *r) {
     fprintf(f,
             "{\"sym_bits\": %d, "
             "\"dataset_b\": %zu, \"params_grads_b\": %zu, \"optstate_b\": %zu, "
-            "\"params_b\": %zu, \"grads_b\": %zu, \"optstate_analytic_b\": %zu, "
+            "\"params_b\": %zu, \"weights_b\": %zu, \"bias_b\": %zu, "
+            "\"grads_b\": %zu, \"optstate_analytic_b\": %zu, "
             "\"activations_b\": %zu, \"io_b\": %zu, "
             "\"pool_backward_b\": %zu, \"dx_peak_b\": %zu, \"mcu_total_b\": %zu, "
             "\"heap_peak_b\": %zu, \"stack_peak_b\": %zu, \"rss_peak_kb\": %zu, "
             "\"reconciliation_gap_b\": %ld}",
-            r->sym_bits, r->dataset_b, r->params_grads_b, r->optstate_b, r->params_b, r->grads_b,
+            r->sym_bits, r->dataset_b, r->params_grads_b, r->optstate_b, r->params_b,
+            r->weights_b, r->bias_b, r->grads_b,
             r->optstate_analytic_b, r->activations_b, r->io_b, r->pool_backward_b, r->dx_peak_b,
             r->mcu_total_b, r->heap_peak_b, r->stack_peak_b, r->rss_peak_kb,
             r->reconciliation_gap_b);
@@ -172,5 +196,7 @@ void memInstrumentEmitJson(FILE *f, const memReport_t *r) {
 void memInstrumentPrintReconciliation(const memReport_t *r) {
     fprintf(stdout, "RECONCILIATION heap_peak=%zu mcu_total=%zu gap=%ld\n", r->heap_peak_b,
             r->mcu_total_b, r->reconciliation_gap_b);
+    fprintf(stdout, "  params split: weights_b=%zu bias_b=%zu\n", r->weights_b,
+            r->bias_b);
     fflush(stdout);
 }
