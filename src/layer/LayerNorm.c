@@ -160,7 +160,12 @@ static void layerNormAllGroupStats(tensor_t *t, size_t numNormDims, size_t G, fl
         varianceBiasedOverTrailingAxesFloat32(t, numNormDims, &meanT, &varT);
     }
     for (size_t g = 0; g < G; g++) {
-        invSigma[g] = rsqrtFloat32(var[g], eps); /* eps INSIDE sqrt */
+        float v = var[g];
+        if (v < 0.f) {
+            fprintf(stderr, "[DEBUG] negative variance var[%zu]=%f (eps=%f)\n", g, var[g], eps);
+            v = 0.f;   /* biased variance is mathematically >= 0; clamp rounding noise */
+        }
+        invSigma[g] = rsqrtFloat32(v, eps);
     }
 }
 

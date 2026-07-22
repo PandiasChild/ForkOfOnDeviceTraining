@@ -29,7 +29,7 @@ int32_t roundByMode(const float input, const roundingMode_t roundingMode) {
     }
     return 0;
 }
-
+//TODO: Jasmin - ggf rückgängig machen!
 int32_t rescaleIntoAccumulatorScale(int32_t paramQ, float paramScale, float accumulatorScale,
                                     roundingMode_t roundingMode) {
     float rescaled = (float)paramQ * paramScale / accumulatorScale;
@@ -49,11 +49,9 @@ int32_t rescaleIntoAccumulatorScale(int32_t paramQ, float paramScale, float accu
     const float kSeedLimit = 2147483647.0f - 32768.0f * 32767.0f;
 
     if (rescaled > kSeedLimit) {
-        printf("1\n");
         return (int32_t)kSeedLimit;
     }
     if (rescaled < -kSeedLimit) {
-        printf("2\n");
         return -(int32_t)kSeedLimit;
     }
 #endif

@@ -15,11 +15,12 @@ float maxFloat32s(float a, float b) {
 
 float findAbsMaxFloat(uint8_t *bytes, size_t numberOfElements) {
     float *values = (float *)bytes;
-    float max = fabsf(values[0]);
+    float max = 0.f;
 
-    for (size_t i = 1; i < numberOfElements; i++) {
-        if (fabsf(values[i]) > max) {
-            max = fabsf(values[i]);
+    for (size_t i = 0; i < numberOfElements; i++) {
+        float v = fabsf(values[i]);
+        if (v > max) {
+            max = v;
         }
     }
     return max;
