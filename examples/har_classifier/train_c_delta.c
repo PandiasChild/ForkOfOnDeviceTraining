@@ -520,9 +520,10 @@ int main(int argc, char *argv[]) {
     int trial_number = atof(argv[1]);
     int batch = 64;
 
+    size_t delta_reduction = 0;
     if (argc > 2) {
         trial_number = atof(argv[1]);
-        size_t delta_reduction = atoi(argv[2]);
+        delta_reduction = atoi(argv[2]);
         g_deltaBits = g_symBits - delta_reduction;
         g_lr = atof(argv[3]);
         g_momentum = atof(argv[4]);
