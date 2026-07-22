@@ -7,6 +7,8 @@
 #include "Rounding.h"
 #include "SlidingWindow1d.h"
 
+#include <math.h>
+
 void convTranspose1dKernelFloat32(tensor_t const *input, tensor_t const *weight,
                                   tensor_t const *bias, kernel_t const *kernel, size_t groups,
                                   size_t outputPadding, tensor_t *output) {
@@ -204,6 +206,11 @@ void convTranspose1dKernelSymInt32(tensor_t const *input, tensor_t const *weight
     float inScale = ((symInt32QConfig_t *)input->quantization->qConfig)->scale;
     float wScale = ((symInt32QConfig_t *)weight->quantization->qConfig)->scale;
     float outputScale = inScale * wScale;
+    if (!isfinite(outputScale)) {
+        PRINT_ERROR("conv1dKernelSymInt32: outputScale non-finite (inScale=%f, wScale=%f)",
+                    inScale, wScale);
+        exit(1);
+    }
 
     size_t totalOut = batch * outChannels * outputLength;
     for (size_t i = 0; i < totalOut; i++) {

@@ -799,6 +799,10 @@ static void packFloatBufferAsSymForDelta(const float *values, size_t n, symQDelt
     const float deltaMax = powf(2, (float)outQC->deltabits - 1) - 1;
     const float deltaMin = -powf(2, (float)outQC->deltabits - 1);
     float scale = (absMax == 0.f) ? 1.f : absMax / qMax;
+    if (!isfinite(scale)) {
+        fprintf(stderr, "[DEBUG] scale wurde non-finite! qBits=%d, qMax=%f, absMax=%f, what=%s\n",
+                outQC->qBits, qMax, absMax, what);
+    }
     outQC->scale = scale;
     int32_t codes[ODT_CONVERSION_CHUNK_ELEMS];
     codes[0] = clampInt32(roundByMode(values[0] / scale, outQC->roundingMode),

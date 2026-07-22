@@ -232,6 +232,11 @@ static void groupNormAffineSymInt32(groupNormConfig_t *cfg, tensor_t *gamma, ten
     symInt32QConfig_t *betaQC = beta->quantization->qConfig;
 
     float sY = mulFloat32s(sNorm, gammaQC->scale);
+    if (!isfinite(sY)) {
+        PRINT_ERROR("groupNormAffineSymInt32: sY non-finite (sNorm=%f, gammaScale=%f)",
+                    sNorm, gammaQC->scale);
+        exit(1);
+    }
 
     size_t K;
     size_t N;

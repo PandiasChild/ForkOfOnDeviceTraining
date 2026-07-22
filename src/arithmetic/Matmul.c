@@ -1,4 +1,5 @@
 #define SOURCE_FILE "MATMUL"
+#include <math.h>
 
 #ifdef TRACK_INSTRUCTIONS
 #define MATMUL_FUNC_INT matmulIntTensorsWithInstructionCounter
@@ -277,6 +278,11 @@ void matmulSymInt32TensorsWithBias(tensor_t *aTensor, tensor_t *bTensor, tensor_
         float bScale = ((symInt32QConfig_t *)bTensor->quantization->qConfig)->scale;
         float biasScale = biasQC->scale;
         float outputScale = aScale * bScale;
+        if (!isfinite(outputScale)) {
+            PRINT_ERROR("matmulSymInt32TensorsWithBias: outputScale non-finite (aScale=%f, bScale=%f)",
+                        aScale, bScale);
+            exit(1);
+        }
 
         /* Rescale the bias into the accumulator's scale via the shared #189 helper
          * (guarded float->int32 cast): one fixed-point op per output column. */

@@ -218,6 +218,11 @@ static void layerNormAffineSymInt32(size_t numNormDims, tensor_t *gamma, tensor_
     symInt32QConfig_t *betaQC = beta->quantization->qConfig;
 
     float sY = sNorm * gammaQC->scale;
+    if (!isfinite(sY)) {
+        PRINT_ERROR("layerNormAffineSymInt32: sY non-finite (sNorm=%f, gammaScale=%f)",
+                    sNorm, gammaQC->scale);
+        exit(1);
+    }
 
     size_t G, N;
     layerNormGroupSizes(output, numNormDims, &G, &N);
