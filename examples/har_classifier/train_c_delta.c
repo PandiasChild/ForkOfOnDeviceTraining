@@ -183,8 +183,8 @@ static tensorArray_t *buildOneHotLabels(tensorArray_t *intLabels) {
 /* Requantize FLOAT32 tensor `t` into targetQ's dtype in place (mixed_width_mlp
  * pattern): fresh buffer sized for t's element count, dynamic-quantize via * convertTensor, then
  * swap data + quantization pointers and free the old ones. shape/sparsity untouched.
- * Here targetQ is packed DELTA@DELTA_BITS, so the conversion is
- * convertFloatTensorToDeltaTensor (packFloatBufferAsSym).
+ * Here targetQ is packed SYM@DELTA_BITS, so the conversion is
+ * convertFloatTensorToDeltaTensor (packFloatBufferAsSymForDelta).
  */
 static void requantizeTensorInPlace(tensor_t *t, quantization_t *targetQ) {
     size_t numElements = calcNumberOfElementsByTensor(t);
@@ -242,7 +242,7 @@ static size_t getTestSize(void) {
 /* Shared quantization templates (borrowed by every layer for the whole run). */
 typedef struct quantTemplate {
     quantization_t *floatQ;   /* FLOAT32 wire + temp weight/bias init storage */
-    quantization_t *symOrDeltaQ;     /* packed SYM@SYM_BITS — post-init weight+bias storage */
+    quantization_t *symOrDeltaQ;     /* packed SYM@DELTA — post-init weight+bias storage */
     quantization_t *symWireQ; /* SYM_INT32 int12 wires (SYM_WIRES=1, #206) */
 } quantTemplate_t;
 
@@ -606,6 +606,9 @@ int main(int argc, char *argv[]) {
    * forward/propLoss dispatch selects the native SYM arms (#205) and Softmax
    * runs its funnel dequant->stable-float->requant path. */
     layerQuant_t lqNontrain;
+    if (g_symWires) {
+        printf("g_symWires are TRUE -> calculation in SYM_INT32\n");
+    }else {printf("g_symWires are TRUE -> calculation in FLOAT32\n");}
     layerQuantInitUniform(&lqNontrain, g_symWires ? sq.symWireQ : quantizationInitFloat());
 
     layer_t *model[MODEL_SIZE];
