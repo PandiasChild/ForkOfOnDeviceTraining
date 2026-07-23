@@ -632,7 +632,7 @@ int main(int argc, char *argv[]) {
     layerQuant_t lqNontrain;
     if (g_symWires) {
         printf("g_symWires are TRUE -> calculation in SYM_INT32\n");
-    }else {printf("g_symWires are TRUE -> calculation in FLOAT32\n");}
+    }else {printf("g_symWires are FALSE -> calculation in FLOAT32\n");}
     layerQuantInitUniform(&lqNontrain, g_symWires ? sq.symWireQ : quantizationInitFloat());
 
     layer_t *model[MODEL_SIZE];
