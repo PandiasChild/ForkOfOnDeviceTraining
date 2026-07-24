@@ -531,14 +531,14 @@ int main(int argc, char *argv[]) {
         batch = atof(argv[6]);
         //rounding_mode = atof(argv[7]);
     }
-    int len = snprintf(NULL, 0, "examples/har_classifier/logs/with_deltas/delta_reduction_%dtrial_%d_.json", delta_reduction, trial_number);
+    int len = snprintf(NULL, 0, "examples/har_classifier/logs/with_deltas/delta_reduction_%dtrial_%d.json", delta_reduction, trial_number);
 
     char *logPath = malloc(len + 10);
     if (logPath == NULL) {
         return 1;
     }
 
-    snprintf(logPath, len + 10, "examples/har_classifier/logs/with_deltas/delta_reduction_%dtrial_%d_.json", delta_reduction,  trial_number);
+    snprintf(logPath, len + 10, "examples/har_classifier/logs/with_deltas/delta_reduction_%dtrial_%d.json", delta_reduction,  trial_number);
 
 
 
