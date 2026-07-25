@@ -484,18 +484,18 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    int trial_number = atof(argv[1]);
+    int trial_number = atoi(argv[1]);
     int batch = 64;
     //const char *logPath = getenv("LOG_PATH_DELTA");
     //g_log_file
-    size_t delta_reduction = 0;
+    int delta_reduction = 0;
     if (argc > 2) {
-        trial_number = atof(argv[1]);
+        trial_number = atoi(argv[1]);
         delta_reduction = atoi(argv[2]);
         g_lr = atof(argv[3]);
         g_momentum = atof(argv[4]);
-        g_epochs = atof(argv[5]);
-        batch = atof(argv[6]);
+        g_epochs = atoi(argv[5]);
+        batch = atoi(argv[6]);
         //rounding_mode = atof(argv[7]);
     }
 
