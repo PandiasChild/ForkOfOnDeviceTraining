@@ -509,9 +509,6 @@ int main(int argc, char *argv[]) {
     if (ensureDir("examples/har_classifier/logs/with_deltas") != 0) {
         return 1;
     }
-    if (ensureDir("examples/har_classifier/outputs/with_deltas") != 0) {
-        return 1;
-    }
     if (argc < 2) {
         printf("Keine (negative) trial_number angegeben\n");
         return 1;
@@ -617,7 +614,7 @@ int main(int argc, char *argv[]) {
     const char *roundingEnv = getenv("SYM_ROUNDING");
     roundingMode_t symRounding =
         (roundingEnv != NULL && strcmp(roundingEnv, "det") == 0) ? HALF_AWAY : SR_HALF_AWAY;
-    printf("roundingMode  %d\n", symRounding);
+    //printf("roundingMode  %d\n", symRounding);
 
     quantTemplate_t sq = {
         .floatQ = quantizationInitFloat(),

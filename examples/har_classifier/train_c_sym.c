@@ -476,9 +476,6 @@ int main(int argc, char *argv[]) {
     if (ensureDir("examples/har_classifier/logs/without_deltas") != 0) {
         return 1;
     }
-    if (ensureDir("examples/har_classifier/outputs/without_deltas") != 0) {
-        return 1;
-    }
     if (argc < 2) {
         printf("Keine (negative) trial_number angegeben\n");
         return 1;
