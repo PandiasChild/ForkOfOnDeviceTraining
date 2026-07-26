@@ -8,23 +8,27 @@ from optuna.visualization import (
 )
 
 
-def analyze_study(study_name: str, storage: str, minimize: bool = False):
+def analyze_study(study_name: str, storage: str, objective: int = 0, minimize: bool = False):
     study = optuna.load_study(study_name=study_name, storage=storage)
 
     print(f"Anzahl Trials: {len(study.trials)}")
 
     is_multi_objective = len(study.directions) > 1
-
+    name = ""
     if is_multi_objective:
-        print(f"Multi-Objective Study mit {len(study.directions)} Zielgrößen: {study.directions}")
+        if(objective == 0):
+         name = "accuracy"
+        if(objective == 1):
+            name = "loss"
+        print(f"Multi-Objective Study mit {len(study.directions)} Objectives, Zielgrößen: {study.directions}")
         print(f"Anzahl Pareto-optimaler Trials: {len(study.best_trials)}\n")
         for t in study.best_trials:
             print(f"Trial {t.number}: values={t.values}, params={t.params}")
         print()
         # Für Slice/Contour/Importance muss bei Multi-Objective das Target angegeben werden
-        target_idx = 0  # ggf. anpassen: welche Zielgröße dich interessiert
+        target_idx = objective  # ggf. anpassen: welche Zielgröße dich interessiert
         target = lambda t: t.values[target_idx]
-        target_name = f"Objective {target_idx}"
+        target_name = f"Objective {name}"
     else:
         print(f"Bester Wert: {study.best_value}")
         print(f"Beste Params: {study.best_params}\n")
@@ -44,19 +48,19 @@ def analyze_study(study_name: str, storage: str, minimize: bool = False):
     # --------------------------------------------
 
     fig1 = plot_slice(study, params=["learning_rate", "momentum"], target=target, target_name=target_name)
-    fig1.write_html("examples/har_classifier/logs/slice_plot.html")
+    fig1.write_html(f"examples/har_classifier/logs/slice_plot_{study_name}_{name}.html")
 
     fig2 = plot_contour(study, params=["learning_rate", "momentum"], target=target, target_name=target_name)
-    fig2.write_html("examples/har_classifier/logs/contour_plot.html")
+    fig2.write_html(f"examples/har_classifier/logs/contour_plot_{study_name}_{name}.html")
 
     fig3 = plot_param_importances(study, target=target, target_name=target_name)
-    fig3.write_html("examples/har_classifier/logs/param_importances.html")
+    fig3.write_html(f"examples/har_classifier/logs/param_importances_{study_name}_{name}.html")
 
     fig4 = plot_optimization_history(study, target=target, target_name=target_name)
-    fig4.write_html("examples/har_classifier/logs/optimization_history.html")
+    fig4.write_html(f"examples/har_classifier/logs/optimization_history_{study_name}_{name}.html")
 
-    print("Plots gespeichert: slice_plot.html, contour_plot.html, "
-          "param_importances.html, optimization_history.html")
+    print(f"Plots gespeichert: slice_plot_{study_name}_{name}.html, contour_plot_{study_name}_{name}.html, "
+          f"param_importances_{study_name}_{name}.html, optimization_history_{study_name}_{name}.html")
 
     df = study.trials_dataframe()
     if not is_multi_objective:
@@ -75,11 +79,13 @@ def main():
                         help="Name der Optuna-Study")
     parser.add_argument("--storage", type=str, required=True,
                         help="Storage-URL, z.B. sqlite:///dein_pfad.db")
+    parser.add_argument("--objective", type=int,
+                        help="Setzen, falls es eine multi objective Study ist")
     parser.add_argument("--minimize", action="store_true",
                         help="Setzen, falls die Study minimiert statt maximiert")
     args = parser.parse_args()
 
-    analyze_study(args.study_name, args.storage, args.minimize)
+    analyze_study(args.study_name, args.storage, args.objective, args.minimize)
 
 if __name__ == "__main__":
     main()
