@@ -30,8 +30,8 @@ def send_notification(bot_token, chat_id, message):
 def _objective_impl(trial):
     trial_number = trial.number
     #delta_reduction = trial.suggest_int("delta_reduction", 1, 4, step=1)
-    learning_rate = trial.suggest_float("learning_rate", 0.00001, 0.001, log=True) #0.001 = 1e-3 & 1e-5 = 0.00001
-    momentum = trial.suggest_float("momentum", 0.7, 0.95, step=0.05) #0.9
+    learning_rate = trial.suggest_float("learning_rate", 0.000001, 0.0001, log=True) #0.001 = 1e-3 & 1e-5 = 0.00001
+    momentum = trial.suggest_float("momentum", 0.7, 0.95, log=True) #0.9
     # rounding_mode = 0 # HALF_AWAY
     epochs = 50
     batch = 64 # möchte ich klein haben, weil für embedded device
