@@ -15,7 +15,7 @@ PROJECT_ROOT=HERE.parents[1]
 HAR_CLASSIFIER_LOGS = PROJECT_ROOT/ "examples" / "har_classifier" / "logs"
 OPTUNA_LOGS = HAR_CLASSIFIER_LOGS / "optuna_logs"
 DELTA_REDUCTION = int(sys.argv[1])
-STUDY_NAME = "har_classifier_sym_vs_delta_" + str(DELTA_REDUCTION)
+STUDY_NAME = "har_classifier_sym_vs_delta_update" + str(DELTA_REDUCTION)
 
 def send_notification(bot_token, chat_id, message):
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
@@ -30,8 +30,8 @@ def send_notification(bot_token, chat_id, message):
 def _objective_impl(trial):
     trial_number = trial.number
     #delta_reduction = trial.suggest_int("delta_reduction", 1, 4, step=1)
-    learning_rate = trial.suggest_float("learning_rate", 0.000001, 0.0001, log=True) #0.001 = 1e-3 & 1e-5 = 0.00001
-    momentum = trial.suggest_float("momentum", 0.7, 0.95, log=True) #0.9
+    learning_rate = trial.suggest_float("learning_rate", 0.000001, 0.0001, step=0.000001) #0.001 = 1e-3 & 1e-5 = 0.00001
+    momentum = trial.suggest_float("momentum", 0.7, 0.95, step=0.000001) #0.9
     # rounding_mode = 0 # HALF_AWAY
     epochs = 50
     batch = 64 # möchte ich klein haben, weil für embedded device
@@ -318,7 +318,7 @@ def main():
         storage = f"sqlite:///{study_db_path.resolve()}",
         load_if_exists=True)
 
-    study.optimize(objective, n_trials=500, n_jobs = 1, catch=(Exception,))
+    study.optimize(objective, n_trials=200, n_jobs = 1, catch=(Exception,))
     #space = intersection_search_space(study.get_trials())
 
     #fig = plot_optimization_history(study)
