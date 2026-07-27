@@ -516,7 +516,7 @@ int main(int argc, char *argv[]) {
 
     int trial_number = atoi(argv[1]);
     int batch = 64;
-
+    char *study_name;
     int delta_reduction = 0;
     if (argc > 2) {
         trial_number = atoi(argv[1]);
@@ -526,16 +526,19 @@ int main(int argc, char *argv[]) {
         g_momentum = atof(argv[4]);
         g_epochs = atoi(argv[5]);
         batch = atoi(argv[6]);
-        //rounding_mode = atof(argv[7]);
+        study_name = argv[7];
+        //rounding_mode = atof(argv[8]);
+    }else {
+        study_name = "no_optuna";
     }
-    int len = snprintf(NULL, 0, "examples/har_classifier/logs/with_deltas/delta_reduction_%dtrial_%d.json", delta_reduction, trial_number);
+    int len = snprintf(NULL, 0, "examples/har_classifier/logs/with_deltas/%s_trial_%d.json", study_name, trial_number);
 
     char *logPath = malloc(len + 10);
     if (logPath == NULL) {
         return 1;
     }
 
-    snprintf(logPath, len + 10, "examples/har_classifier/logs/with_deltas/delta_reduction_%dtrial_%d.json", delta_reduction,  trial_number);
+    snprintf(logPath, len + 10, "examples/har_classifier/logs/with_deltas/%s_trial_%d.json", study_name,  trial_number);
 
 
 

@@ -486,6 +486,7 @@ int main(int argc, char *argv[]) {
     //const char *logPath = getenv("LOG_PATH_DELTA");
     //g_log_file
     int delta_reduction = 0;
+    char *study_name;
     if (argc > 2) {
         trial_number = atoi(argv[1]);
         delta_reduction = atoi(argv[2]);
@@ -493,18 +494,19 @@ int main(int argc, char *argv[]) {
         g_momentum = atof(argv[4]);
         g_epochs = atoi(argv[5]);
         batch = atoi(argv[6]);
-        //rounding_mode = atof(argv[7]);
+        study_name = argv[7];
+        //rounding_mode = atof(argv[8]);
+    }else {
+        study_name = "no_optuna";
     }
-
-    int len = snprintf(NULL, 0, "examples/har_classifier/logs/without_deltas/delta_reduction_%dtrial_%d.json", delta_reduction, trial_number);
+    int len = snprintf(NULL, 0, "examples/har_classifier/logs/without_deltas/%s_trial_%d.json", study_name, trial_number);
 
     char *logPath = malloc(len + 10);
     if (logPath == NULL) {
         return 1;
     }
 
-    snprintf(logPath, len + 10, "examples/har_classifier/logs/without_deltas/delta_reduction_%dtrial_%d.json", delta_reduction, trial_number);
-
+    snprintf(logPath, len + 10, "examples/har_classifier/logs/without_deltas/%s_trial_%d.json", study_name,  trial_number);
     /*
     g_symBits = envInt("SYM_BITS", g_symBits);
     g_symWires = envInt("SYM_WIRES", g_symWires);

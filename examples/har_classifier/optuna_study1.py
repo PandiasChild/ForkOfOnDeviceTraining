@@ -14,8 +14,8 @@ HERE = Path(__file__).resolve().parent
 PROJECT_ROOT=HERE.parents[1]
 HAR_CLASSIFIER_LOGS = PROJECT_ROOT/ "examples" / "har_classifier" / "logs"
 OPTUNA_LOGS = HAR_CLASSIFIER_LOGS / "optuna_logs"
-DELTA_REDUCTION = int(sys.argv[1])
-STUDY_NAME = "har_classifier_sym_vs_delta_update_delta1" + str(DELTA_REDUCTION)
+ID = int(sys.argv[2])
+STUDY_NAME = "study_" + str(ID) + "reduce" + str(DELTA_REDUCTION)
 
 def send_notification(bot_token, chat_id, message):
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
@@ -57,6 +57,7 @@ def _objective_impl(trial):
                 str(momentum),
                 str(epochs),
                 str(batch),
+                STUDY_NAME
                 #str(rounding_mode)
             ],
             check = True,
