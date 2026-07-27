@@ -8,6 +8,53 @@ from optuna.visualization import (
 )
 
 
+def _add_trial_numbers_to_slice(fig, study, params):
+    """Fügt die Trial-Nummer zum Hover-Text der Slice-Plot-Punkte hinzu."""
+    completed = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+    scatter_traces = [tr for tr in fig.data if tr.type == "scatter"]
+    if len(scatter_traces) != len(params):
+        print(f"WARNUNG: {len(scatter_traces)} Scatter-Traces gefunden, "
+              f"aber {len(params)} Parameter erwartet - Zuordnung evtl. falsch!")
+
+    for param, trace in zip(params, scatter_traces):
+        trial_numbers = [t.number for t in completed if param in t.params]
+        if trace.x is None or len(trace.x) != len(trial_numbers):
+            print(f"WARNUNG: Punkte ({len(trace.x) if trace.x is not None else 0}) != "
+                  f"Trials ({len(trial_numbers)}) für Param '{param}' - Hover-Zuordnung evtl. falsch!")
+            continue
+        trace.customdata = trial_numbers
+        y_label = fig.layout.yaxis.title.text or "Objective"
+        trace.hovertemplate = (
+            f"{param}=%{{x}}<br>"
+            f"{y_label}=%{{y}}<br>"
+            f"Trial=%{{customdata}}<extra></extra>"
+        )
+
+
+def _add_trial_numbers_to_contour(fig, study, params):
+    """Fügt die Trial-Nummer zum Hover-Text der Scatter-Punkte im Contour-Plot hinzu."""
+    completed = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+    trial_numbers = [t.number for t in completed if all(p in t.params for p in params)]
+
+    matched = False
+    for trace in fig.data:
+        if trace.type != "scatter":
+            continue
+        if trace.x is None or len(trace.x) != len(trial_numbers):
+            continue
+        trace.customdata = trial_numbers
+        trace.hovertemplate = (
+            f"{params[0]}=%{{x}}<br>"
+            f"{params[1]}=%{{y}}<br>"
+            f"Trial=%{{customdata}}<extra></extra>"
+        )
+        matched = True
+
+    if not matched:
+        print(f"WARNUNG: Keine Scatter-Trace mit {len(trial_numbers)} Punkten gefunden "
+              f"- Hover-Zuordnung für Contour-Plot fehlgeschlagen!")
+
+
 def analyze_study(study_name: str, storage: str, objective: int = 0, minimize: bool = False):
     study = optuna.load_study(study_name=study_name, storage=storage)
 
@@ -17,7 +64,7 @@ def analyze_study(study_name: str, storage: str, objective: int = 0, minimize: b
     name = ""
     if is_multi_objective:
         if(objective == 0):
-         name = "accuracy"
+            name = "accuracy"
         if(objective == 1):
             name = "loss"
         print(f"Multi-Objective Study mit {len(study.directions)} Objectives, Zielgrößen: {study.directions}")
@@ -25,8 +72,7 @@ def analyze_study(study_name: str, storage: str, objective: int = 0, minimize: b
         for t in study.best_trials:
             print(f"Trial {t.number}: values={t.values}, params={t.params}")
         print()
-        # Für Slice/Contour/Importance muss bei Multi-Objective das Target angegeben werden
-        target_idx = objective  # ggf. anpassen: welche Zielgröße dich interessiert
+        target_idx = objective
         target = lambda t: t.values[target_idx]
         target_name = f"Objective {name}"
     else:
@@ -47,10 +93,14 @@ def analyze_study(study_name: str, storage: str, objective: int = 0, minimize: b
     print()
     # --------------------------------------------
 
-    fig1 = plot_slice(study, params=["learning_rate", "momentum"], target=target, target_name=target_name)
+    params = ["learning_rate", "momentum"]
+
+    fig1 = plot_slice(study, params=params, target=target, target_name=target_name)
+    _add_trial_numbers_to_slice(fig1, study, params)
     fig1.write_html(f"examples/har_classifier/logs/slice_plot_{study_name}_{name}.html")
 
-    fig2 = plot_contour(study, params=["learning_rate", "momentum"], target=target, target_name=target_name)
+    fig2 = plot_contour(study, params=params, target=target, target_name=target_name)
+    _add_trial_numbers_to_contour(fig2, study, params)
     fig2.write_html(f"examples/har_classifier/logs/contour_plot_{study_name}_{name}.html")
 
     fig3 = plot_param_importances(study, target=target, target_name=target_name)
