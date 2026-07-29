@@ -527,7 +527,10 @@ int main(int argc, char *argv[]) {
         g_epochs = atoi(argv[5]);
         batch = atoi(argv[6]);
         study_name = argv[7];
-        //rounding_mode = atof(argv[8]);
+        if (argc > 7) {
+            g_seed = (unsigned)(atoi(argv[8]));
+            //rounding_mode = atof(argv[9]);
+        }
     }else {
         study_name = "no_optuna";
     }

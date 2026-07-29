@@ -14,8 +14,9 @@ HERE = Path(__file__).resolve().parent
 PROJECT_ROOT=HERE.parents[1]
 HAR_CLASSIFIER_LOGS = PROJECT_ROOT/ "examples" / "har_classifier" / "logs"
 OPTUNA_LOGS = HAR_CLASSIFIER_LOGS / "optuna_logs"
-DELTA_REDUCTION = int(sys.argv[2])
-ID = str(sys.argv[1])
+DELTA_REDUCTION = int(sys.argv[3])
+ID = str(sys.argv[2])
+SEED = int(sys.argv[1])
 STUDY_NAME = "study_" + str(ID) + "reduce" + str(DELTA_REDUCTION)
 
 def send_notification(bot_token, chat_id, message):
@@ -58,7 +59,8 @@ def _objective_impl(trial):
                 str(momentum),
                 str(epochs),
                 str(batch),
-                STUDY_NAME
+                STUDY_NAME,
+                SEED
                 #str(rounding_mode)
             ],
             check = True,
